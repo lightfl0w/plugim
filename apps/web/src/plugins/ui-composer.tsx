@@ -40,14 +40,14 @@ export const uiComposerPlugin: Plugin = {
             };
 
             return (
-                <div className="w-full relative">
+                <div className="w-full flex items-center gap-2.5">
                     <Textarea
                         value={draft}
                         placeholder={
                             status === "open" ? "输入消息..." : "等待连接..."
                         }
                         disabled={status !== "open"}
-                        className="flex-1 max-h-40 pr-12"
+                        className="max-h-32 border-0 bg-transparent px-1 focus-visible:border-0 focus-visible:ring-0 shadow-none"
                         onChange={(e) => setDraft(e.target.value)}
                         onKeyDown={(e) => {
                             if (e.key === "Enter" && !e.shiftKey) {
@@ -58,7 +58,7 @@ export const uiComposerPlugin: Plugin = {
                     />
                     <Button
                         size="icon"
-                        className="absolute right-2 bottom-2 size-8"
+                        className="shrink-0 rounded-xl"
                         disabled={status !== "open" || sending || !draft.trim()}
                         onClick={() => void submit()}
                     >

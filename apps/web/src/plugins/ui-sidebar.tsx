@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Separator } from "../components/ui/separator";
 import { UserAvatar } from "../components/ui/user-avatar";
+import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
@@ -57,8 +58,13 @@ export const uiSidebarPlugin: Plugin = {
             ) => (
                 <Button
                     key={session}
-                    variant={active === session ? "default" : "ghost"}
-                    className="w-full justify-start gap-2"
+                    variant="ghost"
+                    className={cn(
+                        "h-10 w-full justify-start gap-2 rounded-lg",
+                        active === session
+                            ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                            : "text-foreground hover:bg-accent",
+                    )}
                     onClick={() =>
                         ctx.emit("ui:chat:open", { session, title: label })
                     }
@@ -74,10 +80,11 @@ export const uiSidebarPlugin: Plugin = {
 
             return (
                 <>
-                    <div className="p-3">
-                        <h3 className="text-lg font-semibold">会话</h3>
+                    <div className="px-3 pt-4 pb-2">
+                        <h3 className="text-sm font-semibold text-muted-foreground">
+                            会话
+                        </h3>
                     </div>
-                    <Separator />
                     <div className="flex flex-col gap-1 overflow-y-auto p-2">
                         {roomButton("general", "综合频道")}
                         <p className="px-2 pt-3 pb-1 text-xs font-semibold text-muted-foreground">

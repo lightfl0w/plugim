@@ -82,7 +82,7 @@ export const uiFriendsPanelPlugin: Plugin = {
             return (
                 <div className="pointer-events-auto absolute inset-0 z-10 flex items-center justify-center bg-black/20 p-4">
                     <Card className="flex max-h-[560px] w-full max-w-sm flex-col">
-                        <CardHeader className="flex-row items-center justify-between border-b border-border">
+                        <CardHeader className="flex-row items-center justify-between">
                             <span className="text-sm font-semibold">好友</span>
                             <Button
                                 variant="ghost"

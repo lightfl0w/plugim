@@ -113,8 +113,7 @@ export const uiMessagesPlugin: Plugin = {
                 <div className="flex flex-col gap-4">
                     {groups.map((group) => (
                         <MessageGroup key={group.sender + group.items[0].id}>
-                            {group.items.map((message, index) => {
-                                const isLast = index === group.items.length - 1;
+                            {group.items.map((message) => {
                                 const mine = group.mine;
                                 return (
                                     <Message
@@ -122,37 +121,24 @@ export const uiMessagesPlugin: Plugin = {
                                         align={mine ? "end" : "start"}
                                     >
                                         <MessageAvatar>
-                                            {isLast ? (
-                                                <UserAvatar
-                                                    name={message.sender}
-                                                />
-                                            ) : null}
+                                            <UserAvatar name={message.sender} />
                                         </MessageAvatar>
                                         <MessageContent>
-                                            {isLast ? (
-                                                <MessageHeader>
-                                                    {message.sender} {" "}
-                                                    {formatTime(
-                                                        message.createdAt,
-                                                    )}
-                                                </MessageHeader>
-                                            ) : null}
+                                            <MessageHeader>
+                                                {message.sender}{" "}
+                                                {formatTime(message.createdAt)}
+                                            </MessageHeader>
                                             <Bubble
                                                 variant={
-                                                    mine ? "default" : "outline"
+                                                    mine ? "default" : "muted"
                                                 }
                                                 align={mine ? "end" : "start"}
-                                                className={
-                                                    mine
-                                                        ? "rounded-2xl rounded-br-none shadow-sm"
-                                                        : "rounded-2xl rounded-bl-none bg-muted/50 shadow-sm"
-                                                }
                                             >
                                                 <BubbleContent
                                                     className={
                                                         mine
-                                                            ? "text-primary-foreground"
-                                                            : undefined
+                                                            ? "rounded-2xl rounded-br-none"
+                                                            : "rounded-2xl rounded-bl-none"
                                                     }
                                                 >
                                                     {message.content}

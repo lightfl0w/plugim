@@ -8,6 +8,12 @@ import {
     CardFooter,
     CardHeader,
 } from "../components/ui/card";
+import {
+    Field,
+    FieldError,
+    FieldGroup,
+    FieldLabel,
+} from "../components/ui/field";
 import { Input } from "../components/ui/input";
 import type { AuthService } from "./auth";
 import type { UiService } from "./shell";
@@ -42,41 +48,71 @@ export const uiAuthPlugin: Plugin = {
 
             return (
                 <Card className="w-full">
-                    <CardHeader className="flex-row items-center justify-between border-b border-border">
-                        <span className="text-sm font-semibold">Plugim</span>
+                    <CardHeader className="flex-row items-center justify-between">
+                        <span className="text-lg font-semibold">Plugim</span>
                         <Badge variant="secondary">
                             {mode === "login" ? "登录" : "注册"}
                         </Badge>
                     </CardHeader>
-                    <CardContent className="flex flex-col gap-3 p-6">
-                        <Input
-                            placeholder="用户名（a-z 0-9 _）"
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                        />
-                        <Input
-                            type="password"
-                            placeholder="密码（至少 6 位）"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") void submit();
+                    <CardContent>
+                        <form
+                            onSubmit={(e) => {
+                                e.preventDefault();
+                                void submit();
                             }}
-                        />
-                        {error ? (
-                            <p className="text-xs text-red-500">{error}</p>
-                        ) : null}
-                    </CardContent>
-                    <CardFooter className="flex-col gap-2 border-t border-border py-4">
-                        <Button
-                            className="w-full"
-                            disabled={
-                                busy || !username.trim() || password.length < 6
-                            }
-                            onClick={() => void submit()}
                         >
-                            {mode === "login" ? "登录" : "注册"}
-                        </Button>
+                            <FieldGroup>
+                                <Field>
+                                    <FieldLabel htmlFor="auth-username">
+                                        用户名
+                                    </FieldLabel>
+                                    <Input
+                                        id="auth-username"
+                                        placeholder="a-z 0-9 _"
+                                        autoComplete="username"
+                                        value={username}
+                                        onChange={(e) =>
+                                            setUsername(e.target.value)
+                                        }
+                                    />
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="auth-password">
+                                        密码
+                                    </FieldLabel>
+                                    <Input
+                                        id="auth-password"
+                                        type="password"
+                                        placeholder="至少 6 位"
+                                        autoComplete={
+                                            mode === "login"
+                                                ? "current-password"
+                                                : "new-password"
+                                        }
+                                        value={password}
+                                        onChange={(e) =>
+                                            setPassword(e.target.value)
+                                        }
+                                    />
+                                    {error ? (
+                                        <FieldError>{error}</FieldError>
+                                    ) : null}
+                                </Field>
+                                <Button
+                                    type="submit"
+                                    className="w-full"
+                                    disabled={
+                                        busy ||
+                                        !username.trim() ||
+                                        password.length < 6
+                                    }
+                                >
+                                    {mode === "login" ? "登录" : "注册"}
+                                </Button>
+                            </FieldGroup>
+                        </form>
+                    </CardContent>
+                    <CardFooter className="justify-center">
                         <Button
                             variant="ghost"
                             size="sm"
