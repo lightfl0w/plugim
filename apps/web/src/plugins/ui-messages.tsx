@@ -131,7 +131,7 @@ export const uiMessagesPlugin: Plugin = {
                                         <MessageContent>
                                             {isLast ? (
                                                 <MessageHeader>
-                                                    {message.sender} ·{" "}
+                                                    {message.sender} {" "}
                                                     {formatTime(
                                                         message.createdAt,
                                                     )}
