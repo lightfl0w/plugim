@@ -1,8 +1,6 @@
 import type { Plugin } from "@plugim/core";
-import { UsersIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
 import type { ConnStatus, RpcService } from "./connection";
 import type { UiService } from "./shell";
 
@@ -37,24 +35,11 @@ export const uiHeaderPlugin: Plugin = {
 
             const badge = statusLabel[status];
             return (
-                <>
-                    <div className="flex items-center gap-2">
-                        <Badge
-                            variant={badge.variant}
-                            className={badge.className}
-                        >
-                            {badge.text}
-                        </Badge>
-                    </div>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => ctx.emit("ui:friends:toggle")}
-                    >
-                        <UsersIcon />
-                        好友
-                    </Button>
-                </>
+                <div className="flex items-center gap-2">
+                    <Badge variant={badge.variant} className={badge.className}>
+                        {badge.text}
+                    </Badge>
+                </div>
             );
         };
 
