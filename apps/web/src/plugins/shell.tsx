@@ -8,6 +8,7 @@ import {
     Outlet,
     Route,
     Routes,
+    useLocation,
 } from "react-router-dom";
 import type { AuthService } from "./auth";
 
@@ -15,11 +16,11 @@ export type UiSlot =
     | "auth"
     | "nav"
     | "sidebar"
-    | "sidebar-footer"
     | "header"
     | "messages"
     | "composer"
-    | "friends-page"
+    | "friends-list"
+    | "friends-detail"
     | "overlay";
 
 export interface UiService {
@@ -104,50 +105,56 @@ export const shellPlugin: Plugin = {
                         className="flex min-h-0 flex-1 flex-col items-center gap-2"
                     />
                 </aside>
-                <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-background">
-                    <Slot
-                        slot="sidebar"
-                        className="flex min-h-0 flex-1 flex-col"
-                    />
-                </aside>
-                <main className="relative flex min-w-0 flex-1 flex-col">
+                <main className="flex min-w-0 flex-1">
                     <Outlet />
                 </main>
             </div>
         );
 
         const ChatPage = () => (
-            <>
-                <Slot
-                    slot="header"
-                    className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3"
-                />
-                <Slot
-                    slot="messages"
-                    className="min-h-0 flex-1 overflow-y-auto p-4"
-                />
-                <Slot
-                    slot="composer"
-                    className="shrink-0 border-t border-border p-3"
-                />
-                <Slot
-                    slot="overlay"
-                    className="pointer-events-none absolute inset-0 z-10"
-                />
-            </>
+            <div className="flex min-h-0 w-full flex-1">
+                <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-background">
+                    <Slot
+                        slot="sidebar"
+                        className="flex min-h-0 flex-1 flex-col"
+                    />
+                </aside>
+                <div className="relative flex min-w-0 flex-1 flex-col">
+                    <Slot
+                        slot="header"
+                        className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3"
+                    />
+                    <Slot
+                        slot="messages"
+                        className="min-h-0 flex-1 overflow-y-auto p-4"
+                    />
+                    <Slot
+                        slot="composer"
+                        className="shrink-0 border-t border-border p-3"
+                    />
+                    <Slot
+                        slot="overlay"
+                        className="pointer-events-none absolute inset-0 z-10"
+                    />
+                </div>
+            </div>
         );
 
         const FriendsPage = () => (
-            <>
-                <Slot
-                    slot="header"
-                    className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3"
-                />
-                <Slot
-                    slot="friends-page"
-                    className="min-h-0 flex-1 overflow-y-auto p-4"
-                />
-            </>
+            <div className="flex min-h-0 w-full flex-1">
+                <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-background">
+                    <Slot
+                        slot="friends-list"
+                        className="flex min-h-0 flex-1 flex-col"
+                    />
+                </aside>
+                <div className="flex min-w-0 flex-1 flex-col">
+                    <Slot
+                        slot="friends-detail"
+                        className="min-h-0 flex-1 overflow-y-auto"
+                    />
+                </div>
+            </div>
         );
 
         const LoginPage = () => (
@@ -156,8 +163,16 @@ export const shellPlugin: Plugin = {
             </div>
         );
 
-        const Shell = () => {
+        const BackHome = () => {
+            const location = useLocation();
+            const from =
+                (location.state as { from?: string } | null)?.from ?? "/chat";
+            return <Navigate to={from} replace />;
+        };
+
+        const AppRoutes = () => {
             const [, bump] = useReducer(bumpReducer, 0);
+            const location = useLocation();
             useEffect(() => {
                 const unRegistry = subscribe(bump);
                 const unAuth = auth.onChange(bump);
@@ -168,42 +183,46 @@ export const shellPlugin: Plugin = {
             }, []);
             const logged = Boolean(auth.user());
             return (
-                <BrowserRouter>
-                    <Routes>
-                        {logged ? (
-                            <>
-                                <Route element={<AppLayout />}>
-                                    <Route
-                                        path="/chat"
-                                        element={<ChatPage />}
+                <Routes>
+                    {logged ? (
+                        <>
+                            <Route element={<AppLayout />}>
+                                <Route path="/chat" element={<ChatPage />} />
+                                <Route
+                                    path="/friends"
+                                    element={<FriendsPage />}
+                                />
+                            </Route>
+                            <Route path="/login" element={<BackHome />} />
+                            <Route
+                                path="*"
+                                element={<Navigate to="/chat" replace />}
+                            />
+                        </>
+                    ) : (
+                        <>
+                            <Route path="/login" element={<LoginPage />} />
+                            <Route
+                                path="*"
+                                element={
+                                    <Navigate
+                                        to="/login"
+                                        replace
+                                        state={{ from: location.pathname }}
                                     />
-                                    <Route
-                                        path="/friends"
-                                        element={<FriendsPage />}
-                                    />
-                                </Route>
-                                <Route
-                                    path="/login"
-                                    element={<Navigate to="/chat" replace />}
-                                />
-                                <Route
-                                    path="*"
-                                    element={<Navigate to="/chat" replace />}
-                                />
-                            </>
-                        ) : (
-                            <>
-                                <Route path="/login" element={<LoginPage />} />
-                                <Route
-                                    path="*"
-                                    element={<Navigate to="/login" replace />}
-                                />
-                            </>
-                        )}
-                    </Routes>
-                </BrowserRouter>
+                                }
+                            />
+                        </>
+                    )}
+                </Routes>
             );
         };
+
+        const Shell = () => (
+            <BrowserRouter>
+                <AppRoutes />
+            </BrowserRouter>
+        );
 
         const root = document.getElementById("root");
         if (!root) throw new Error("missing #root element");

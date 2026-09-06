@@ -69,7 +69,7 @@ export const gatewayPlugin: Plugin = {
             conn: ConnInfo,
         ) => {
             const handler = handlers.get(method);
-            if (!handler) throw new Error(`unknown method: ${method}`);
+            if (!handler) throw new Error(`未知方法: ${method}`);
             return handler(params, conn);
         };
 

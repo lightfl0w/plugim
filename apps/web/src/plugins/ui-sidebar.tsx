@@ -80,7 +80,9 @@ export const uiSidebarPlugin: Plugin = {
         };
 
         const Sessions = () => {
-            const [list, setList] = useState<FriendListResult | null>(null);
+            const [list, setList] = useState<FriendListResult | null>(
+                friends.cached(),
+            );
             const [status, setStatus] = useState(rpc.status());
             const [active, setActive] = useState("general");
             const navigate = useNavigate();
@@ -97,18 +99,10 @@ export const uiSidebarPlugin: Plugin = {
             }, [ctx]);
 
             useEffect(() => {
-                if (status !== "open") return;
-                friends
-                    .list()
-                    .then(setList)
-                    .catch(() => undefined);
-                return friends.onUpdate(() => {
-                    friends
-                        .list()
-                        .then(setList)
-                        .catch(() => undefined);
-                });
-            }, [friends, status]);
+                setList(friends.cached());
+                void friends.refresh().catch(() => undefined);
+                return friends.onUpdate(() => setList(friends.cached()));
+            }, [friends]);
 
             const roomButton = (
                 session: string,
@@ -143,21 +137,11 @@ export const uiSidebarPlugin: Plugin = {
                     <div className="flex h-12 min-h-12 items-center px-4">
                         <p className="text-sm font-semibold">会话</p>
                     </div>
-                    <div className="flex flex-col gap-1 px-2">
-                        {roomButton("general", "综合频道")}
-                    </div>
-                    <p className="px-4 pt-3 pb-1 text-xs font-semibold text-muted-foreground">
-                        好友（{list?.friends.length ?? 0}）
-                    </p>
                     <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
+                        {roomButton("general", "群聊")}
                         {(list?.friends ?? []).map((name) =>
                             roomButton(`p2p:${name}`, name, name),
                         )}
-                        {list?.friends.length === 0 ? (
-                            <p className="px-2 py-1 text-xs text-muted-foreground">
-                                去「好友」页添加
-                            </p>
-                        ) : null}
                     </div>
                 </>
             );

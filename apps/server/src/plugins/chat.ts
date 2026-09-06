@@ -6,7 +6,7 @@ import type { AppConfig } from "./config";
 const requireUser = (conn: {
     user: { id: string; username: string } | null;
 }) => {
-    if (!conn.user) throw new Error("unauthorized");
+    if (!conn.user) throw new Error("未登录或登录已过期");
     return conn.user;
 };
 
@@ -21,7 +21,7 @@ export const chatPlugin: Plugin = {
         gateway.rpc("message.send", async (raw, conn) => {
             const user = requireUser(conn);
             const params = raw as unknown as SendMessageParams;
-            if (!params.content) throw new Error("content is required");
+            if (!params.content) throw new Error("消息内容不能为空");
             const session = params.session || config.defaultSession;
             const saved = await store.save({
                 session,

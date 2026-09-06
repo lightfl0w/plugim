@@ -13,7 +13,7 @@ import type { AppConfig } from "./config";
 const USERNAME_RE = /^[a-z0-9_]{2,24}$/;
 const TOKEN_TTL = "30d";
 
-const unauthorized = (): Error => new Error("unauthorized");
+const unauthorized = (): Error => new Error("未登录或登录已过期");
 
 export const authPlugin: Plugin = {
     name: "auth",
@@ -70,11 +70,11 @@ export const authPlugin: Plugin = {
                 .toLowerCase();
             const password = String(params.password ?? "");
             if (!USERNAME_RE.test(username))
-                throw new Error("username must be 2-24 chars: a-z 0-9 _");
+                throw new Error("用户名需为 2-24 位小写字母、数字或下划线");
             if (password.length < 6)
-                throw new Error("password must be at least 6 chars");
+                throw new Error("密码至少需要 6 位");
             if (await accounts.byUsername(username))
-                throw new Error("username already taken");
+                throw new Error("用户名已被占用");
             const passwordHash = await hash(password);
             const user = await accounts.create(username, passwordHash);
             return toAuthSuccess(user, await signToken(user));
@@ -89,12 +89,12 @@ export const authPlugin: Plugin = {
                 .trim()
                 .toLowerCase();
             const row = await accounts.byUsername(username);
-            if (!row) throw new Error("invalid username or password");
+            if (!row) throw new Error("用户名或密码错误");
             const ok = await verify(
                 row.passwordHash,
                 String(params.password ?? ""),
             ).catch(() => false);
-            if (!ok) throw new Error("invalid username or password");
+            if (!ok) throw new Error("用户名或密码错误");
             const user: User = {
                 id: row.id,
                 username: row.username,

@@ -9,7 +9,7 @@ import type {
 } from "../types";
 
 const requireUser = (conn: ConnInfo): AuthUser => {
-    if (!conn.user) throw new Error("unauthorized");
+    if (!conn.user) throw new Error("未登录或登录已过期");
     return conn.user;
 };
 
@@ -26,7 +26,7 @@ export const friendsPlugin: Plugin = {
 
         const usernameToUser = async (username: string) => {
             const user = await accounts.byUsername(username.toLowerCase());
-            if (!user) throw new Error(`user not found: ${username}`);
+            if (!user) throw new Error(`用户 ${username} 不存在`);
             return user;
         };
 
@@ -73,7 +73,7 @@ export const friendsPlugin: Plugin = {
         gateway.rpc("friend.request", async (raw, conn) => {
             const me = requireUser(conn);
             const target = await usernameToUser(requireParams(raw).username);
-            if (target.id === me.id) throw new Error("cannot add yourself");
+            if (target.id === me.id) throw new Error("不能添加自己为好友");
             const edges = await friendships.edgesOf(me.id);
             const existing = edges.find(
                 (edge) =>
@@ -84,11 +84,11 @@ export const friendsPlugin: Plugin = {
             );
             if (existing) {
                 if (existing.status === "blocked")
-                    throw new Error("cannot send request");
+                    throw new Error("当前无法发送好友申请");
                 if (existing.status === "accepted")
-                    throw new Error("already friends");
+                    throw new Error("你们已经是好友了");
                 if (existing.requesterId === me.id)
-                    throw new Error("request already sent");
+                    throw new Error("已发送过好友申请，等待对方处理");
                 await friendships.accept(me.id, target.id);
                 await notify(target.id);
                 return buildList(me);

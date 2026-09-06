@@ -3,13 +3,14 @@ import type { FriendListResult } from "@plugim/protocol";
 import type { RpcService } from "./connection";
 
 export interface FriendsService {
-    list(): Promise<FriendListResult>;
-    request(username: string): Promise<FriendListResult>;
-    accept(username: string): Promise<FriendListResult>;
-    reject(username: string): Promise<FriendListResult>;
-    remove(username: string): Promise<FriendListResult>;
-    block(username: string): Promise<FriendListResult>;
-    unblock(username: string): Promise<FriendListResult>;
+    cached(): FriendListResult | null;
+    refresh(): Promise<FriendListResult>;
+    request(username: string): Promise<void>;
+    accept(username: string): Promise<void>;
+    reject(username: string): Promise<void>;
+    remove(username: string): Promise<void>;
+    block(username: string): Promise<void>;
+    unblock(username: string): Promise<void>;
     onUpdate(cb: () => void): () => void;
 }
 
@@ -18,21 +19,60 @@ export const friendsPlugin: Plugin = {
     inject: ["rpc"],
     async apply(ctx) {
         const rpc = ctx.get<RpcService>("rpc");
+        const listeners = new Set<() => void>();
+        let cache: FriendListResult | null = null;
+        let inflight: Promise<FriendListResult> | null = null;
 
-        const call = (method: string, username: string) =>
-            rpc.call(method, { username }) as Promise<FriendListResult>;
+        const emit = () => {
+            for (const cb of listeners) cb();
+        };
+
+        const fetchList = () => {
+            if (!inflight) {
+                inflight = rpc
+                    .call("friend.list", {})
+                    .then((result) => {
+                        inflight = null;
+                        cache = result as FriendListResult;
+                        emit();
+                        return cache;
+                    })
+                    .catch((err) => {
+                        inflight = null;
+                        throw err;
+                    });
+            }
+            return inflight;
+        };
+
+        const mutate = (method: string, username: string) =>
+            rpc.call(method, { username }).then((result) => {
+                cache = result as FriendListResult;
+                emit();
+            });
+
+        ctx.on("server:friend:update", () => {
+            void fetchList().catch(() => undefined);
+        });
+
+        const refreshOnOpen = (status: string) => {
+            if (status === "open") void fetchList().catch(() => undefined);
+        };
+        if (rpc.status() === "open") void fetchList().catch(() => undefined);
+        rpc.onStatus(refreshOnOpen);
 
         ctx.provide<FriendsService>("friends", {
-            list: () =>
-                rpc.call("friend.list", {}) as Promise<FriendListResult>,
-            request: (username) => call("friend.request", username),
-            accept: (username) => call("friend.accept", username),
-            reject: (username) => call("friend.reject", username),
-            remove: (username) => call("friend.remove", username),
-            block: (username) => call("friend.block", username),
-            unblock: (username) => call("friend.unblock", username),
+            cached: () => cache,
+            refresh: fetchList,
+            request: (u) => mutate("friend.request", u),
+            accept: (u) => mutate("friend.accept", u),
+            reject: (u) => mutate("friend.reject", u),
+            remove: (u) => mutate("friend.remove", u),
+            block: (u) => mutate("friend.block", u),
+            unblock: (u) => mutate("friend.unblock", u),
             onUpdate(cb) {
-                return ctx.on("server:friend:update", () => cb());
+                listeners.add(cb);
+                return () => listeners.delete(cb);
             },
         });
         return undefined;

@@ -263,7 +263,7 @@ export const storagePlugin: Plugin = {
                         )
                         .returning();
                     if (rows.length === 0)
-                        throw new Error("no pending friend request");
+                        throw new Error("没有待处理的好友申请");
                 },
                 async removeBetween(aId, bId) {
                     await db
@@ -445,7 +445,7 @@ export const storagePlugin: Plugin = {
                         )
                         .returning();
                     if (rows.length === 0)
-                        throw new Error("no pending friend request");
+                        throw new Error("没有待处理的好友申请");
                 },
                 async removeBetween(aId, bId) {
                     await db
