@@ -1,0 +1,15 @@
+{
+    "name": "plugim",
+    "private": true,
+    "packageManager": "pnpm@12.3.4",
+    "scripts": {
+        "dev:server": "pnpm --filter @plugim/server dev",
+        "dev:web": "pnpm --filter @plugim/web dev",
+        "typecheck": "pnpm -r typecheck",
+        "lint": "biome check .",
+        "lint:fix": "biome check --write ."
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.5.12"
+    }
+}
