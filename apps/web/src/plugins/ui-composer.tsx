@@ -1,4 +1,5 @@
 import type { Plugin } from "@plugim/core";
+import { SendHorizontalIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -43,20 +44,21 @@ export const uiComposerPlugin: Plugin = {
                     <Input
                         value={draft}
                         placeholder={
-                            status === "open" ? "输入消息…" : "等待连接…"
+                            status === "open" ? "输入消息..." : "等待连接..."
                         }
                         disabled={status !== "open"}
+                        className="flex-1"
                         onChange={(e) => setDraft(e.target.value)}
                         onKeyDown={(e) => {
                             if (e.key === "Enter") void submit();
                         }}
                     />
                     <Button
+                        size="icon"
                         disabled={status !== "open" || sending || !draft.trim()}
                         onClick={() => void submit()}
-                        className="shrink-0 whitespace-nowrap"
                     >
-                        发送
+                        <SendHorizontalIcon />
                     </Button>
                 </>
             );

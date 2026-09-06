@@ -1,6 +1,15 @@
 import type { Plugin } from "@plugim/core";
 import type { ChatMessage } from "@plugim/protocol";
 import { useEffect, useRef, useState } from "react";
+import { Bubble, BubbleContent } from "../components/ui/bubble";
+import {
+    Message,
+    MessageAvatar,
+    MessageContent,
+    MessageGroup,
+    MessageHeader,
+} from "../components/ui/message";
+import { UserAvatar } from "../components/ui/user-avatar";
 import type { AuthService } from "./auth";
 import type { ConnStatus, RpcService } from "./connection";
 import type { UiService } from "./shell";
@@ -8,6 +17,29 @@ import type { UiService } from "./shell";
 function formatTime(iso: string): string {
     const d = new Date(iso);
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+interface Group {
+    sender: string;
+    mine: boolean;
+    items: ChatMessage[];
+}
+
+function groupMessages(messages: ChatMessage[], me: string): Group[] {
+    const groups: Group[] = [];
+    for (const message of messages) {
+        const last = groups[groups.length - 1];
+        if (last && last.sender === message.sender) {
+            last.items.push(message);
+        } else {
+            groups.push({
+                sender: message.sender,
+                mine: message.sender === me,
+                items: [message],
+            });
+        }
+    }
+    return groups;
 }
 
 export const uiMessagesPlugin: Plugin = {
@@ -75,43 +107,63 @@ export const uiMessagesPlugin: Plugin = {
                 }
             }, [count]);
 
+            const groups = groupMessages(messages, user?.username ?? "");
+
             return (
-                <div className="flex flex-col gap-3">
-                    {messages.map((message) => {
-                        const mine = message.sender === user?.username;
-                        return (
-                            <div
-                                key={message.id}
-                                className={
-                                    mine
-                                        ? "flex justify-end"
-                                        : "flex justify-start"
-                                }
-                            >
-                                <div
-                                    className={
-                                        mine
-                                            ? "max-w-[75%] rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-sm text-primary-foreground"
-                                            : "max-w-[75%] rounded-2xl rounded-bl-sm bg-muted px-3.5 py-2 text-sm"
-                                    }
-                                >
-                                    <div
-                                        className={
-                                            mine
-                                                ? "text-xs opacity-70"
-                                                : "text-xs text-muted-foreground"
-                                        }
+                <div className="flex flex-col gap-4">
+                    {groups.map((group) => (
+                        <MessageGroup key={group.sender + group.items[0].id}>
+                            {group.items.map((message, index) => {
+                                const isLast = index === group.items.length - 1;
+                                const mine = group.mine;
+                                return (
+                                    <Message
+                                        key={message.id}
+                                        align={mine ? "end" : "start"}
                                     >
-                                        {message.sender} ·{" "}
-                                        {formatTime(message.createdAt)}
-                                    </div>
-                                    <div className="mt-0.5 break-words">
-                                        {message.content}
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    })}
+                                        <MessageAvatar>
+                                            {isLast ? (
+                                                <UserAvatar
+                                                    name={message.sender}
+                                                />
+                                            ) : null}
+                                        </MessageAvatar>
+                                        <MessageContent>
+                                            {isLast ? (
+                                                <MessageHeader>
+                                                    {message.sender} ·{" "}
+                                                    {formatTime(
+                                                        message.createdAt,
+                                                    )}
+                                                </MessageHeader>
+                                            ) : null}
+                                            <Bubble
+                                                variant={
+                                                    mine ? "default" : "outline"
+                                                }
+                                                align={mine ? "end" : "start"}
+                                                className={
+                                                    mine
+                                                        ? "rounded-2xl rounded-br-none shadow-sm"
+                                                        : "rounded-2xl rounded-bl-none bg-muted/50 shadow-sm"
+                                                }
+                                            >
+                                                <BubbleContent
+                                                    className={
+                                                        mine
+                                                            ? "text-primary-foreground"
+                                                            : undefined
+                                                    }
+                                                >
+                                                    {message.content}
+                                                </BubbleContent>
+                                            </Bubble>
+                                        </MessageContent>
+                                    </Message>
+                                );
+                            })}
+                        </MessageGroup>
+                    ))}
                     <div ref={bottomRef} />
                 </div>
             );

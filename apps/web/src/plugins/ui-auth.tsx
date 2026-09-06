@@ -44,7 +44,7 @@ export const uiAuthPlugin: Plugin = {
                 <Card className="w-full">
                     <CardHeader className="flex-row items-center justify-between border-b border-border">
                         <span className="text-sm font-semibold">Plugim</span>
-                        <Badge variant="muted">
+                        <Badge variant="secondary">
                             {mode === "login" ? "登录" : "注册"}
                         </Badge>
                     </CardHeader>

@@ -105,22 +105,24 @@ export const shellPlugin: Plugin = {
             }
             return (
                 <div className="relative flex h-full">
-                    <Slot
-                        slot="sidebar"
-                        className="flex w-60 shrink-0 flex-col border-r border-border"
-                    />
+                    <div className="flex w-64 shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground">
+                        <Slot
+                            slot="sidebar"
+                            className="flex min-h-0 flex-1 flex-col"
+                        />
+                    </div>
                     <div className="relative flex min-w-0 flex-1 flex-col">
                         <Slot
                             slot="header"
-                            className="flex items-center justify-between gap-2 border-b border-border px-4 py-3"
+                            className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5"
                         />
                         <Slot
                             slot="messages"
-                            className="flex-1 overflow-y-auto p-4"
+                            className="min-h-0 flex-1 overflow-y-auto p-4"
                         />
                         <Slot
                             slot="composer"
-                            className="flex gap-2 border-t border-border p-3"
+                            className="shrink-0 border-t border-border bg-background p-3"
                         />
                         <Slot
                             slot="overlay"
