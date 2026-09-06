@@ -6,7 +6,30 @@ export interface ChatMessage {
     createdAt: string;
 }
 
-export type ServerEventName = "message:new";
+export interface User {
+    id: string;
+    username: string;
+    createdAt: string;
+}
+
+export interface AuthSuccess {
+    token: string;
+    user: User;
+}
+
+export interface CredentialsParams {
+    username: string;
+    password: string;
+}
+
+export interface FriendListResult {
+    friends: string[];
+    incoming: string[];
+    outgoing: string[];
+    blocked: string[];
+}
+
+export type ServerEventName = "message:new" | "friend:update";
 
 export interface ServerEvent<P = unknown> {
     kind: "event";
@@ -37,11 +60,14 @@ export type Envelope = ServerEvent | RpcRequest | RpcOk | RpcErr;
 
 export interface SendMessageParams {
     session: string;
-    sender: string;
     content: string;
 }
 
 export interface HistoryParams {
     session: string;
     limit?: number;
+}
+
+export interface FriendTargetParams {
+    username: string;
 }

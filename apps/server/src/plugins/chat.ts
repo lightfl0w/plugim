@@ -3,6 +3,13 @@ import type { HistoryParams, SendMessageParams } from "@plugim/protocol";
 import type { GatewayService, MessageStore } from "../types";
 import type { AppConfig } from "./config";
 
+const requireUser = (conn: {
+    user: { id: string; username: string } | null;
+}) => {
+    if (!conn.user) throw new Error("unauthorized");
+    return conn.user;
+};
+
 export const chatPlugin: Plugin = {
     name: "chat",
     inject: ["gateway", "store", "config"],
@@ -11,21 +18,22 @@ export const chatPlugin: Plugin = {
         const store = ctx.get<MessageStore>("store");
         const config = ctx.get<AppConfig>("config");
 
-        gateway.rpc("message.send", async (raw) => {
+        gateway.rpc("message.send", async (raw, conn) => {
+            const user = requireUser(conn);
             const params = raw as unknown as SendMessageParams;
-            if (!params.sender || !params.content)
-                throw new Error("sender and content are required");
+            if (!params.content) throw new Error("content is required");
             const session = params.session || config.defaultSession;
             const saved = await store.save({
                 session,
-                sender: params.sender,
+                sender: user.username,
                 content: params.content,
             });
             gateway.broadcast("message:new", { message: saved });
             return saved;
         });
 
-        gateway.rpc("history.list", (raw) => {
+        gateway.rpc("history.list", (raw, conn) => {
+            requireUser(conn);
             const params = raw as unknown as HistoryParams;
             return store.list(
                 params.session || config.defaultSession,

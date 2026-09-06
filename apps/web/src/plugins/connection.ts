@@ -1,5 +1,6 @@
 import type { Plugin } from "@plugim/core";
 import type { Envelope } from "@plugim/protocol";
+import type { AuthService } from "./auth";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
@@ -11,7 +12,9 @@ export interface RpcService {
 
 export const connectionPlugin: Plugin = {
     name: "connection",
+    inject: ["auth"],
     async apply(ctx) {
+        const auth = ctx.get<AuthService>("auth");
         const pending = new Map<
             string,
             { resolve: (v: unknown) => void; reject: (e: Error) => void }
@@ -20,6 +23,7 @@ export const connectionPlugin: Plugin = {
         let seq = 0;
         let socket: WebSocket | undefined;
         let current: ConnStatus = "connecting";
+        let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
         const setStatus = (next: ConnStatus) => {
             current = next;
@@ -28,11 +32,14 @@ export const connectionPlugin: Plugin = {
 
         const connect = () => {
             const proto = location.protocol === "https:" ? "wss" : "ws";
-            socket = new WebSocket(`${proto}://${location.host}/ws`);
+            const token = auth.token();
+            const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
+            socket = new WebSocket(`${proto}://${location.host}/ws${suffix}`);
             socket.onopen = () => setStatus("open");
             socket.onclose = () => {
                 setStatus("closed");
-                setTimeout(connect, 2000);
+                clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(connect, 2000);
             };
             socket.onerror = () => socket?.close();
             socket.onmessage = (evt) => {
@@ -55,6 +62,12 @@ export const connectionPlugin: Plugin = {
         };
 
         connect();
+        auth.onChange(() => {
+            for (const { reject } of pending.values())
+                reject(new Error("connection reset"));
+            pending.clear();
+            socket?.close();
+        });
 
         ctx.provide<RpcService>("rpc", {
             call(method, params) {
