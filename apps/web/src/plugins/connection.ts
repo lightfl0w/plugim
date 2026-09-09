@@ -26,6 +26,7 @@ export const connectionPlugin: Plugin = {
         let socket: WebSocket | undefined;
         let current: ConnStatus = "connecting";
         let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+        let retryDelay = 1000;
         let disposed = false;
 
         const setStatus = (next: ConnStatus) => {
@@ -39,11 +40,15 @@ export const connectionPlugin: Plugin = {
             const token = auth.token();
             const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
             socket = new WebSocket(`${proto}://${location.host}/ws${suffix}`);
-            socket.onopen = () => setStatus("open");
+            socket.onopen = () => {
+                retryDelay = 1000;
+                setStatus("open");
+            };
             socket.onclose = () => {
                 setStatus("closed");
                 clearTimeout(reconnectTimer);
-                reconnectTimer = setTimeout(connect, 2000);
+                reconnectTimer = setTimeout(connect, retryDelay);
+                retryDelay = Math.min(retryDelay * 2, 30_000);
             };
             socket.onerror = () => socket?.close();
             socket.onmessage = (evt) => {

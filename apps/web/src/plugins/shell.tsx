@@ -1,11 +1,9 @@
 import type { Plugin } from "@plugim/core";
 import type { ReactNode } from "react";
-import { useEffect, useReducer } from "react";
+import { useSyncExternalStore } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import type { AuthService } from "./auth";
 import type { UiService } from "./ui";
-
-const bumpReducer = (count: number) => count + 1;
 
 export const shellPlugin: Plugin = {
     name: "shell",
@@ -15,11 +13,16 @@ export const shellPlugin: Plugin = {
         const ui = ctx.get<UiService>("ui");
         const auth = ctx.get<AuthService>("auth");
 
+        const useAuthUser = () =>
+            useSyncExternalStore(
+                (cb) => auth.onChange(cb),
+                () => auth.user(),
+            );
+
         const RequireAuth = ({ children }: { children: ReactNode }) => {
-            const [, bump] = useReducer(bumpReducer, 0);
+            const user = useAuthUser();
             const location = useLocation();
-            useEffect(() => auth.onChange(bump), []);
-            if (!auth.user()) {
+            if (!user) {
                 return (
                     <Navigate
                         to="/login"
@@ -47,7 +50,7 @@ export const shellPlugin: Plugin = {
                         />
                         <ui.Slot
                             slot="messages"
-                            className="min-h-0 flex-1 overflow-y-auto p-4"
+                            className="flex min-h-0 flex-1 flex-col"
                         />
                         <ui.Slot
                             slot="composer"
@@ -82,11 +85,9 @@ export const shellPlugin: Plugin = {
         );
 
         const LoginPage = () => {
-            const [, bump] = useReducer(bumpReducer, 0);
-            useEffect(() => auth.onChange(bump), []);
+            const user = useAuthUser();
             const from = useLocation().state as { from?: string } | null;
-            if (auth.user())
-                return <Navigate to={from?.from ?? "/chat"} replace />;
+            if (user) return <Navigate to={from?.from ?? "/chat"} replace />;
             return (
                 <div className="flex h-full items-center justify-center p-4">
                     <ui.Slot slot="auth" className="w-full max-w-sm" />

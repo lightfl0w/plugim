@@ -30,7 +30,13 @@ export interface MessageStore {
         sender: string;
         content: string;
     }): Promise<ChatMessage>;
-    list(session: string, limit: number): Promise<ChatMessage[]>;
+    list(
+        session: string,
+        limit: number,
+        before?: string,
+    ): Promise<ChatMessage[]>;
+    byId(id: string): Promise<ChatMessage | null>;
+    markRecalled(id: string): Promise<string | null>;
 }
 
 export interface UserWithHash extends User {

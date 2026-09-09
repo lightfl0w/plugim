@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Plugin } from "@plugim/core";
 import Database from "better-sqlite3";
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, lt, or } from "drizzle-orm";
 import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
 import {
     primaryKey as pgPrimaryKey,
@@ -33,6 +33,7 @@ const messagesSqlite = sqliteTable("messages", {
     sender: sqliteText("sender").notNull(),
     content: sqliteText("content").notNull(),
     createdAt: integer("created_at").notNull(),
+    recalledAt: integer("recalled_at"),
 });
 
 const messagesPg = pgTable("messages", {
@@ -43,6 +44,7 @@ const messagesPg = pgTable("messages", {
     createdAt: timestamp("created_at", { withTimezone: true })
         .notNull()
         .defaultNow(),
+    recalledAt: timestamp("recalled_at", { withTimezone: true }),
 });
 
 const usersSqlite = sqliteTable("users", {
@@ -97,7 +99,8 @@ CREATE TABLE IF NOT EXISTS messages (
   session TEXT NOT NULL,
   sender TEXT NOT NULL,
   content TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  recalled_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -120,7 +123,8 @@ CREATE TABLE IF NOT EXISTS messages (
   session TEXT NOT NULL,
   sender TEXT NOT NULL,
   content TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  recalled_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -168,6 +172,9 @@ export const storagePlugin: Plugin = {
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
             await client.unsafe(CREATE_PG);
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS recalled_at TIMESTAMPTZ",
+            );
             const db = drizzlePg(client);
 
             const userToRow = (row: UserRow) => ({
@@ -197,13 +204,19 @@ export const storagePlugin: Plugin = {
                         sender: row.sender,
                         content: row.content,
                         createdAt: row.createdAt.toISOString(),
+                        recalledAt: row.recalledAt
+                            ? row.recalledAt.toISOString()
+                            : null,
                     };
                 },
-                async list(session, limit) {
+                async list(session, limit, before) {
+                    const conds = [eq(messagesPg.session, session)];
+                    if (before)
+                        conds.push(lt(messagesPg.createdAt, new Date(before)));
                     const rows = await db
                         .select()
                         .from(messagesPg)
-                        .where(eq(messagesPg.session, session))
+                        .where(and(...conds))
                         .orderBy(desc(messagesPg.createdAt))
                         .limit(limit);
                     return rows
@@ -213,8 +226,41 @@ export const storagePlugin: Plugin = {
                             sender: row.sender,
                             content: row.content,
                             createdAt: row.createdAt.toISOString(),
+                            recalledAt: row.recalledAt
+                                ? row.recalledAt.toISOString()
+                                : null,
                         }))
                         .reverse();
+                },
+                async byId(id) {
+                    const rows = await db
+                        .select()
+                        .from(messagesPg)
+                        .where(eq(messagesPg.id, id))
+                        .limit(1);
+                    const row = rows[0];
+                    if (!row) return null;
+                    return {
+                        id: row.id,
+                        session: row.session,
+                        sender: row.sender,
+                        content: row.content,
+                        createdAt: row.createdAt.toISOString(),
+                        recalledAt: row.recalledAt
+                            ? row.recalledAt.toISOString()
+                            : null,
+                    };
+                },
+                async markRecalled(id) {
+                    const rows = await db
+                        .update(messagesPg)
+                        .set({ recalledAt: new Date() })
+                        .where(eq(messagesPg.id, id))
+                        .returning();
+                    const row = rows[0];
+                    return row?.recalledAt
+                        ? row.recalledAt.toISOString()
+                        : null;
                 },
             };
 
@@ -352,6 +398,14 @@ export const storagePlugin: Plugin = {
             mkdirSync(dirname(file), { recursive: true });
             const client = new Database(file);
             client.exec(CREATE_SQLITE);
+            const columns = client.pragma("table_info(messages)") as Array<{
+                name: string;
+            }>;
+            if (!columns.some((col) => col.name === "recalled_at")) {
+                client.exec(
+                    "ALTER TABLE messages ADD COLUMN recalled_at INTEGER",
+                );
+            }
             const db = drizzleSqlite(client);
 
             const userToRow = (row: UserRow): UserWithHash => ({
@@ -378,21 +432,64 @@ export const storagePlugin: Plugin = {
                         id,
                         ...input,
                         createdAt: new Date(now).toISOString(),
+                        recalledAt: null,
                     };
                 },
-                async list(session, limit) {
+                async list(session, limit, before) {
+                    const conds = [eq(messagesSqlite.session, session)];
+                    if (before)
+                        conds.push(
+                            lt(
+                                messagesSqlite.createdAt,
+                                new Date(before).getTime(),
+                            ),
+                        );
                     const rows = await db
                         .select()
                         .from(messagesSqlite)
-                        .where(eq(messagesSqlite.session, session))
+                        .where(and(...conds))
                         .orderBy(desc(messagesSqlite.createdAt))
                         .limit(limit);
                     return rows
                         .map((row) => ({
                             ...row,
                             createdAt: new Date(row.createdAt).toISOString(),
+                            recalledAt: row.recalledAt
+                                ? new Date(row.recalledAt).toISOString()
+                                : null,
                         }))
                         .reverse();
+                },
+                async byId(id) {
+                    const rows = await db
+                        .select()
+                        .from(messagesSqlite)
+                        .where(eq(messagesSqlite.id, id))
+                        .limit(1);
+                    const row = rows[0];
+                    if (!row) return null;
+                    return {
+                        id: row.id,
+                        session: row.session,
+                        sender: row.sender,
+                        content: row.content,
+                        createdAt: new Date(row.createdAt).toISOString(),
+                        recalledAt: row.recalledAt
+                            ? new Date(row.recalledAt).toISOString()
+                            : null,
+                    };
+                },
+                async markRecalled(id) {
+                    const now = Date.now();
+                    const rows = await db
+                        .update(messagesSqlite)
+                        .set({ recalledAt: now })
+                        .where(eq(messagesSqlite.id, id))
+                        .returning();
+                    const row = rows[0];
+                    return row?.recalledAt
+                        ? new Date(row.recalledAt).toISOString()
+                        : null;
                 },
             };
 

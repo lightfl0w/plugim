@@ -1,5 +1,6 @@
 import type { Plugin } from "@plugim/core";
 import { authPlugin } from "./auth";
+import { cachePlugin } from "./cache";
 import { connectionPlugin } from "./connection";
 import { friendsPlugin } from "./friends";
 import { senderPlugin } from "./sender";
@@ -16,6 +17,7 @@ export const globalPlugins: Plugin[] = [
     connectionPlugin,
     senderPlugin,
     friendsPlugin,
+    cachePlugin,
     shellPlugin,
     uiAuthPlugin,
     uiSidebarPlugin,

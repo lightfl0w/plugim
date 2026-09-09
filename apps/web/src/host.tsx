@@ -205,7 +205,7 @@ export const mountHost = (ctx: Context): void => {
         const [, bump] = useReducer(bumpReducer, 0);
         useEffect(() => subscribe(bump), []);
         return (
-            <div className="flex h-full">
+            <div className="flex h-dvh w-full">
                 <aside className="flex w-16 shrink-0 flex-col items-center border-r border-border bg-muted/40 py-3">
                     <Slot
                         slot="nav"

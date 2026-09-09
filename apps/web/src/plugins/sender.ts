@@ -15,6 +15,12 @@ export const senderPlugin: Plugin = {
         const rpc = ctx.get<RpcService>("rpc");
         ctx.provide<SenderService>("sender", {
             send(session, content) {
+                if (
+                    typeof Notification !== "undefined" &&
+                    Notification.permission === "default"
+                ) {
+                    void Notification.requestPermission();
+                }
                 return rpc.call("message.send", {
                     session,
                     content,

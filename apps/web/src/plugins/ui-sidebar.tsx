@@ -2,14 +2,33 @@ import type { Plugin } from "@plugim/core";
 import type { ChatMessage, FriendListResult } from "@plugim/protocol";
 import { LogOutIcon, MessagesSquareIcon, UsersIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
+import type { CacheService } from "./cache";
 import type { FriendsService } from "./friends";
 import type { UiService } from "./ui";
+
+const BASE_TITLE = "plugim";
+
+const notifyInBackground = (message: ChatMessage) => {
+    if (document.visibilityState !== "hidden") return;
+    if (
+        typeof Notification === "undefined" ||
+        Notification.permission !== "granted"
+    )
+        return;
+    try {
+        new Notification(message.sender, {
+            body: message.content.slice(0, 80),
+            tag: message.session,
+        });
+    } catch {
+    }
+};
 
 function NavIcon({
     to,
@@ -41,11 +60,12 @@ function NavIcon({
 export const uiSidebarPlugin: Plugin = {
     name: "ui-sidebar",
     description: "会话与好友侧边栏",
-    inject: ["ui", "auth", "friends"],
+    inject: ["ui", "auth", "friends", "cache"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
         const auth = ctx.get<AuthService>("auth");
         const friends = ctx.get<FriendsService>("friends");
+        const cache = ctx.get<CacheService>("cache");
 
         const Nav = () => {
             const user = auth.user();
@@ -85,34 +105,65 @@ export const uiSidebarPlugin: Plugin = {
             const [active, setActive] = useState("general");
             const [unread, setUnread] = useState<Record<string, number>>({});
             const activeRef = useRef(active);
+            const unreadRef = useRef<Record<string, number>>({});
             const navigate = useNavigate();
+            const me = auth.user()?.username ?? "";
+
+            const applyUnread = useCallback(
+                (next: Record<string, number>) => {
+                    unreadRef.current = next;
+                    setUnread(next);
+                    if (me)
+                        void cache.setUnread(me, next).catch(() => undefined);
+                    const total = Object.values(next).reduce(
+                        (sum, n) => sum + n,
+                        0,
+                    );
+                    document.title =
+                        total > 0 ? `(${total}) ${BASE_TITLE}` : BASE_TITLE;
+                },
+                [me],
+            );
+
+            useEffect(() => {
+                if (!me) return;
+                void cache
+                    .getUnread(me)
+                    .then((saved) => {
+                        if (Object.keys(saved).length === 0) return;
+                        applyUnread(saved);
+                    })
+                    .catch(() => undefined);
+            }, [me, applyUnread]);
 
             useEffect(() => {
                 const disposeOpen = ctx.on("ui:chat:open", (payload) => {
                     const session = (payload as { session: string }).session;
                     activeRef.current = session;
                     setActive(session);
-                    setUnread((prev) => {
-                        if (!prev[session]) return prev;
-                        const { [session]: _drop, ...rest } = prev;
-                        return rest;
-                    });
+                    const current = unreadRef.current;
+                    if (current[session]) {
+                        const { [session]: _drop, ...rest } = current;
+                        applyUnread(rest);
+                    }
                 });
                 const disposeMsg = ctx.on("server:message:new", (payload) => {
                     const message = (payload as { message: ChatMessage })
                         .message;
                     if (message.sender === auth.user()?.username) return;
                     if (message.session === activeRef.current) return;
-                    setUnread((prev) => ({
-                        ...prev,
-                        [message.session]: (prev[message.session] ?? 0) + 1,
-                    }));
+                    applyUnread({
+                        ...unreadRef.current,
+                        [message.session]:
+                            (unreadRef.current[message.session] ?? 0) + 1,
+                    });
+                    notifyInBackground(message);
                 });
                 return () => {
                     void disposeOpen();
                     void disposeMsg();
                 };
-            }, []);
+            }, [applyUnread]);
 
             useEffect(() => {
                 setList(friends.cached());

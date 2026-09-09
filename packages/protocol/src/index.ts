@@ -4,6 +4,7 @@ export interface ChatMessage {
     sender: string;
     content: string;
     createdAt: string;
+    recalledAt?: string | null;
 }
 
 export interface User {
@@ -29,7 +30,16 @@ export interface FriendListResult {
     blocked: string[];
 }
 
-export type ServerEventName = "message:new" | "friend:update";
+export interface MessageRecalledEvent {
+    id: string;
+    session: string;
+    recalledAt: string;
+}
+
+export type ServerEventName =
+    | "message:new"
+    | "message:recalled"
+    | "friend:update";
 
 export interface ServerEvent<P = unknown> {
     kind: "event";
@@ -66,6 +76,11 @@ export interface SendMessageParams {
 export interface HistoryParams {
     session: string;
     limit?: number;
+    before?: string;
+}
+
+export interface RecallParams {
+    id: string;
 }
 
 export interface FriendTargetParams {

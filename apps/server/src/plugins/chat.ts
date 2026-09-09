@@ -2,6 +2,7 @@ import type { Plugin } from "@plugim/core";
 import type {
     ChatMessage,
     HistoryParams,
+    RecallParams,
     SendMessageParams,
 } from "@plugim/protocol";
 import type {
@@ -100,7 +101,49 @@ export const chatPlugin: Plugin = {
             return store.list(
                 session,
                 Math.min(Number(params.limit ?? 50), 200),
+                params.before,
             );
+        });
+
+        gateway.rpc("message.recall", async (raw, conn) => {
+            const user = requireUser(conn);
+            const { id } = raw as unknown as RecallParams;
+            const message = await store.byId(id);
+            if (!message) throw new Error("消息不存在");
+            if (message.sender !== user.username)
+                throw new Error("只能撤回自己的消息");
+            if (message.recalledAt)
+                return { id, recalledAt: message.recalledAt };
+            if (Date.now() - Date.parse(message.createdAt) > 2 * 60 * 1000)
+                throw new Error("已超过可撤回时限");
+
+            const recalledAt = await store.markRecalled(id);
+            if (!recalledAt) throw new Error("消息不存在");
+
+            if (message.session.startsWith("p2p:")) {
+                const [a, b] = message.session.slice(4).split("|");
+                const userA = await accounts.byUsername(a);
+                const userB = await accounts.byUsername(b);
+                if (userA)
+                    gateway.emitToUser(userA.id, "message:recalled", {
+                        id,
+                        session: `p2p:${b}`,
+                        recalledAt,
+                    });
+                if (userB)
+                    gateway.emitToUser(userB.id, "message:recalled", {
+                        id,
+                        session: `p2p:${a}`,
+                        recalledAt,
+                    });
+            } else {
+                gateway.broadcast("message:recalled", {
+                    id,
+                    session: message.session,
+                    recalledAt,
+                });
+            }
+            return { id, recalledAt };
         });
         return undefined;
     },
