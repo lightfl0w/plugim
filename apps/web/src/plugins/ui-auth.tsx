@@ -16,12 +16,11 @@ import {
 } from "../components/ui/field";
 import { Input } from "../components/ui/input";
 import type { AuthService } from "./auth";
-import type { UiService } from "./shell";
+import type { UiService } from "./ui";
 
 export const uiAuthPlugin: Plugin = {
     name: "ui-auth",
     description: "登录 / 注册卡片",
-    core: true,
     inject: ["ui", "auth"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");

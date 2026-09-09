@@ -8,7 +8,7 @@ import { Input } from "../components/ui/input";
 import { Separator } from "../components/ui/separator";
 import { UserAvatar } from "../components/ui/user-avatar";
 import type { FriendsService } from "./friends";
-import type { UiService } from "./shell";
+import type { UiService } from "./ui";
 
 type DetailView =
     | { type: "friend"; name: string }

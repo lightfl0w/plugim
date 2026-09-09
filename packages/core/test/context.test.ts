@@ -204,12 +204,12 @@ describe("runtime enable / disable", () => {
         expect(() => ctx.get("friends")).toThrowError();
     });
 
-    it("refuses to disable core plugins", async () => {
+    it("allows disabling any plugin (no core lock)", async () => {
         const ctx = new Context();
-        ctx.plugin(makePlugin("shell", { core: true }));
+        ctx.plugin(makePlugin("shell"));
         await ctx.start();
-        await expect(ctx.disable("shell")).resolves.toBe(false);
-        expect(ctx.list()[0].state).toBe("started");
+        await expect(ctx.disable("shell")).resolves.toBe(true);
+        expect(ctx.list()[0].state).toBe("disabled");
     });
 
     it("restarts a plugin on enable", async () => {
@@ -302,7 +302,6 @@ describe("plugin inventory", () => {
         expect(info).toMatchObject({
             name: "ui-chat",
             description: "聊天界面",
-            core: false,
             provides: ["chat"],
             inject: ["rpc"],
             state: "started",

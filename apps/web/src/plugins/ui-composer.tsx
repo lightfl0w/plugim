@@ -5,7 +5,7 @@ import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/textarea";
 import type { ConnStatus, RpcService } from "./connection";
 import type { SenderService } from "./sender";
-import type { UiService } from "./shell";
+import type { UiService } from "./ui";
 
 export const uiComposerPlugin: Plugin = {
     name: "ui-composer",

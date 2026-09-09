@@ -13,7 +13,6 @@ export interface RpcService {
 export const connectionPlugin: Plugin = {
     name: "connection",
     description: "WebSocket 连接与 RPC 通道",
-    core: true,
     provides: ["rpc"],
     inject: ["auth"],
     async apply(ctx) {

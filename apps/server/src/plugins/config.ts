@@ -12,7 +12,6 @@ export interface AppConfig {
 export const configPlugin: Plugin = {
     name: "config",
     description: "环境配置(端口 / DB / JWT)",
-    core: true,
     provides: ["config"],
     async apply(ctx) {
         const driver = process.env.PLUGIM_DB_DRIVER;

@@ -9,7 +9,6 @@ import { uiComposerPlugin } from "./ui-composer";
 import { uiFriendsPanelPlugin } from "./ui-friends-panel";
 import { uiHeaderPlugin } from "./ui-header";
 import { uiMessagesPlugin } from "./ui-messages";
-import { uiPluginsPlugin } from "./ui-plugins";
 import { uiSidebarPlugin } from "./ui-sidebar";
 
 export const globalPlugins: Plugin[] = [
@@ -24,7 +23,6 @@ export const globalPlugins: Plugin[] = [
     uiMessagesPlugin,
     uiComposerPlugin,
     uiFriendsPanelPlugin,
-    uiPluginsPlugin,
 ];
 
 export const DISABLED_PLUGINS_KEY = "plugim_disabled_plugins";

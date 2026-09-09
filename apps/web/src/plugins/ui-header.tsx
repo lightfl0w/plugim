@@ -2,7 +2,7 @@ import type { Plugin } from "@plugim/core";
 import { useEffect, useState } from "react";
 import { Badge } from "../components/ui/badge";
 import type { ConnStatus, RpcService } from "./connection";
-import type { UiService } from "./shell";
+import type { UiService } from "./ui";
 
 const statusLabel: Record<
     ConnStatus,

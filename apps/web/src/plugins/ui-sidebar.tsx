@@ -9,7 +9,7 @@ import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { FriendsService } from "./friends";
-import type { UiService } from "./shell";
+import type { UiService } from "./ui";
 
 function NavIcon({
     to,

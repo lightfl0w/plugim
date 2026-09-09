@@ -157,7 +157,6 @@ const toIso = (value: Date | number): string =>
 export const storagePlugin: Plugin = {
     name: "storage",
     description: "存储驱动(sqlite / postgres)",
-    core: true,
     provides: ["store", "accounts", "friendships"],
     inject: ["config"],
     async apply(ctx) {

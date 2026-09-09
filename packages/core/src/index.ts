@@ -15,7 +15,6 @@ export const defaultLogger: Logger = {
 export interface Plugin {
     name: string;
     description?: string;
-    core?: boolean;
     provides?: string[];
     inject?: string[];
     apply(ctx: Context): Promise<Dispose | undefined>;
@@ -31,7 +30,6 @@ export type PluginState =
 export interface PluginInfo {
     name: string;
     description?: string;
-    core: boolean;
     provides: string[];
     inject: string[];
     state: PluginState;
@@ -145,7 +143,6 @@ export class Context {
         return this.entries.map((entry) => ({
             name: entry.plugin.name,
             description: entry.plugin.description,
-            core: Boolean(entry.plugin.core),
             provides: entry.plugin.provides ?? [],
             inject: entry.plugin.inject ?? [],
             state: entry.state,
@@ -161,7 +158,7 @@ export class Context {
 
     async disable(name: string): Promise<boolean> {
         const entry = this.byName.get(name);
-        if (!entry || entry.plugin.core) return false;
+        if (!entry) return false;
         if (entry.state === "disabled" || entry.state === "stopped") {
             return false;
         }

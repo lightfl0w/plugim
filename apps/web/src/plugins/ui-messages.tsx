@@ -12,7 +12,7 @@ import {
 import { UserAvatar } from "../components/ui/user-avatar";
 import type { AuthService } from "./auth";
 import type { ConnStatus, RpcService } from "./connection";
-import type { UiService } from "./shell";
+import type { UiService } from "./ui";
 
 function formatTime(iso: string): string {
     const d = new Date(iso);

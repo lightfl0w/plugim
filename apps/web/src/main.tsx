@@ -1,4 +1,5 @@
 import { Context } from "@plugim/core";
+import { mountHost } from "./host";
 import { globalPlugins, loadDisabledPlugins } from "./plugins/registry";
 import "./index.css";
 
@@ -11,8 +12,8 @@ declare global {
 }
 window.__ctx = ctx;
 
+mountHost(ctx);
 for (const plugin of globalPlugins) {
     ctx.plugin(plugin);
 }
-
 void ctx.start();
