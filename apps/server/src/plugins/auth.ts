@@ -17,6 +17,8 @@ const unauthorized = (): Error => new Error("未登录或登录已过期");
 
 export const authPlugin: Plugin = {
     name: "auth",
+    description: "注册登录",
+    provides: ["auth"],
     inject: ["gateway", "store", "config"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
@@ -71,8 +73,7 @@ export const authPlugin: Plugin = {
             const password = String(params.password ?? "");
             if (!USERNAME_RE.test(username))
                 throw new Error("用户名需为 2-24 位小写字母、数字或下划线");
-            if (password.length < 6)
-                throw new Error("密码至少需要 6 位");
+            if (password.length < 6) throw new Error("密码至少需要 6 位");
             if (await accounts.byUsername(username))
                 throw new Error("用户名已被占用");
             const passwordHash = await hash(password);

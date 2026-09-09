@@ -3,6 +3,7 @@ import type * as React from "react";
 
 function Label({ className, ...props }: React.ComponentProps<"label">) {
     return (
+        // biome-ignore lint/a11y/noLabelWithoutControl: 通用基础组件,htmlFor 由调用方传入
         <label
             data-slot="label"
             className={cn(

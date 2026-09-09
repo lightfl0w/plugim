@@ -18,6 +18,8 @@ const requireParams = (raw: unknown): FriendTargetParams =>
 
 export const friendsPlugin: Plugin = {
     name: "friends",
+    description: "好友关系链 RPC",
+    provides: ["friend-rpc"],
     inject: ["gateway", "store", "accounts"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");

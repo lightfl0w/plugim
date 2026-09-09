@@ -8,6 +8,8 @@ export interface SenderService {
 
 export const senderPlugin: Plugin = {
     name: "sender",
+    description: "消息发送能力",
+    provides: ["sender"],
     inject: ["rpc"],
     async apply(ctx) {
         const rpc = ctx.get<RpcService>("rpc");

@@ -35,6 +35,9 @@ const callAuthRpc = async (
 
 export const authPlugin: Plugin = {
     name: "auth",
+    description: "登录注册与本地会话",
+    core: true,
+    provides: ["auth"],
     async apply(ctx) {
         let currentToken = localStorage.getItem(TOKEN_KEY);
         let currentUser: User | null = null;

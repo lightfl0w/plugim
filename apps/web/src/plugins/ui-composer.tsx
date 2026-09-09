@@ -9,6 +9,7 @@ import type { UiService } from "./shell";
 
 export const uiComposerPlugin: Plugin = {
     name: "ui-composer",
+    description: "消息输入框",
     inject: ["ui", "rpc", "sender"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
@@ -16,7 +17,7 @@ export const uiComposerPlugin: Plugin = {
         const sender = ctx.get<SenderService>("sender");
         let currentSession = "general";
 
-        ctx.on("ui:chat:open", (payload) => {
+        const disposeOpen = ctx.on("ui:chat:open", (payload) => {
             currentSession = (payload as { session: string }).session;
         });
 
@@ -68,7 +69,10 @@ export const uiComposerPlugin: Plugin = {
             );
         };
 
-        ui.register("composer", Composer);
-        return undefined;
+        const unregister = ui.register("composer", Composer);
+        return () => {
+            unregister();
+            disposeOpen();
+        };
     },
 };

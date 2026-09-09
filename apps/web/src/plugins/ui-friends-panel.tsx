@@ -17,6 +17,7 @@ type DetailView =
 
 export const uiFriendsPanelPlugin: Plugin = {
     name: "ui-friends-panel",
+    description: "好友管理页面",
     inject: ["ui", "friends"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
@@ -30,7 +31,7 @@ export const uiFriendsPanelPlugin: Plugin = {
                 setList(friends.cached());
                 void friends.refresh().catch(() => undefined);
                 return friends.onUpdate(() => setList(friends.cached()));
-            }, [friends]);
+            }, []);
             return list;
         };
 
@@ -126,81 +127,78 @@ export const uiFriendsPanelPlugin: Plugin = {
                         )}
                         {section(
                             "收到的申请",
-                            <>
-                                {(list?.incoming ?? []).map((name) => (
-                                    <div
-                                        key={name}
-                                        className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 hover:bg-accent/60"
-                                    >
-                                        <span className="flex min-w-0 items-center gap-2">
-                                            <UserAvatar name={name} size="sm" />
-                                            <span className="truncate text-sm">
-                                                {name}
-                                            </span>
+                            (list?.incoming ?? []).map((name) => (
+                                <div
+                                    key={name}
+                                    className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 hover:bg-accent/60"
+                                >
+                                    <span className="flex min-w-0 items-center gap-2">
+                                        <UserAvatar name={name} size="sm" />
+                                        <span className="truncate text-sm">
+                                            {name}
                                         </span>
-                                        <div className="flex shrink-0 gap-1">
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-7 px-2 text-xs"
-                                                onClick={() =>
-                                                    void friends
-                                                        .accept(name)
-                                                        .catch(() => undefined)
-                                                }
-                                            >
-                                                同意
-                                            </Button>
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-7 px-2 text-xs"
-                                                onClick={() =>
-                                                    void friends
-                                                        .reject(name)
-                                                        .catch(() => undefined)
-                                                }
-                                            >
-                                                拒绝
-                                            </Button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </>,
-                            list?.incoming.length ?? 0,
-                        )}
-                        {section(
-                            "已屏蔽",
-                            <>
-                                {(list?.blocked ?? []).map((name) => (
-                                    <div
-                                        key={name}
-                                        className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 hover:bg-accent/60"
-                                    >
-                                        <span className="flex min-w-0 items-center gap-2">
-                                            <UserAvatar name={name} size="sm" />
-                                            <span className="truncate text-sm">
-                                                {name}
-                                            </span>
-                                        </span>
+                                    </span>
+                                    <div className="flex shrink-0 gap-1">
                                         <Button
                                             variant="outline"
                                             size="sm"
                                             className="h-7 px-2 text-xs"
                                             onClick={() =>
                                                 void friends
-                                                    .unblock(name)
+                                                    .accept(name)
                                                     .catch(() => undefined)
                                             }
                                         >
-                                            取消屏蔽
+                                            同意
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 px-2 text-xs"
+                                            onClick={() =>
+                                                void friends
+                                                    .reject(name)
+                                                    .catch(() => undefined)
+                                            }
+                                        >
+                                            拒绝
                                         </Button>
                                     </div>
-                                ))}
-                            </>,
+                                </div>
+                            )),
+                            list?.incoming.length ?? 0,
+                        )}
+                        {section(
+                            "已屏蔽",
+                            (list?.blocked ?? []).map((name) => (
+                                <div
+                                    key={name}
+                                    className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 hover:bg-accent/60"
+                                >
+                                    <span className="flex min-w-0 items-center gap-2">
+                                        <UserAvatar name={name} size="sm" />
+                                        <span className="truncate text-sm">
+                                            {name}
+                                        </span>
+                                    </span>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 px-2 text-xs"
+                                        onClick={() =>
+                                            void friends
+                                                .unblock(name)
+                                                .catch(() => undefined)
+                                        }
+                                    >
+                                        取消屏蔽
+                                    </Button>
+                                </div>
+                            )),
                             list?.blocked.length ?? 0,
                         )}
                         <button
+                            type="button"
                             className="mt-auto flex h-10 shrink-0 items-center justify-between rounded-lg px-3 text-sm text-muted-foreground hover:bg-accent/60"
                             onClick={() => ctx.emit("ui:friends:view", {})}
                         >
@@ -331,7 +329,7 @@ export const uiFriendsPanelPlugin: Plugin = {
                     void disposeSelect();
                     void disposeView();
                 };
-            }, [ctx]);
+            }, []);
 
             if (!view) {
                 return (
@@ -344,8 +342,11 @@ export const uiFriendsPanelPlugin: Plugin = {
             return <FriendDetail name={view.name} />;
         };
 
-        ui.register("friends-list", FriendsList);
-        ui.register("friends-detail", FriendsDetail);
-        return undefined;
+        const unregisterList = ui.register("friends-list", FriendsList);
+        const unregisterDetail = ui.register("friends-detail", FriendsDetail);
+        return () => {
+            unregisterList();
+            unregisterDetail();
+        };
     },
 };

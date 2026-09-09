@@ -20,6 +20,8 @@ import type { UiService } from "./shell";
 
 export const uiAuthPlugin: Plugin = {
     name: "ui-auth",
+    description: "登录 / 注册卡片",
+    core: true,
     inject: ["ui", "auth"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
@@ -132,7 +134,6 @@ export const uiAuthPlugin: Plugin = {
             );
         };
 
-        ui.register("auth", AuthCard);
-        return undefined;
+        return ui.register("auth", AuthCard);
     },
 };

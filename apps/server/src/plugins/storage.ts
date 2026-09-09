@@ -92,6 +92,14 @@ const friendshipsPg = pgTable(
 );
 
 const CREATE_SQLITE = `
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  session TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
@@ -107,6 +115,14 @@ CREATE TABLE IF NOT EXISTS friendships (
 )`;
 
 const CREATE_PG = `
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  session TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
@@ -140,6 +156,9 @@ const toIso = (value: Date | number): string =>
 
 export const storagePlugin: Plugin = {
     name: "storage",
+    description: "存储驱动(sqlite / postgres)",
+    core: true,
+    provides: ["store", "accounts", "friendships"],
     inject: ["config"],
     async apply(ctx) {
         const config = ctx.get<AppConfig>("config");

@@ -21,7 +21,8 @@ export type UiSlot =
     | "composer"
     | "friends-list"
     | "friends-detail"
-    | "overlay";
+    | "overlay"
+    | "settings";
 
 export interface UiService {
     register(slot: UiSlot, component: FC, order?: number): () => void;
@@ -37,6 +38,9 @@ const bumpReducer = (count: number) => count + 1;
 
 export const shellPlugin: Plugin = {
     name: "shell",
+    description: "应用骨架与 UI 插槽",
+    core: true,
+    provides: ["ui"],
     inject: ["auth"],
     async apply(ctx) {
         const auth = ctx.get<AuthService>("auth");
@@ -163,6 +167,15 @@ export const shellPlugin: Plugin = {
             </div>
         );
 
+        const SettingsPage = () => (
+            <div className="flex min-h-0 w-full flex-1 flex-col">
+                <Slot
+                    slot="settings"
+                    className="flex min-h-0 flex-1 flex-col"
+                />
+            </div>
+        );
+
         const BackHome = () => {
             const location = useLocation();
             const from =
@@ -191,6 +204,10 @@ export const shellPlugin: Plugin = {
                                 <Route
                                     path="/friends"
                                     element={<FriendsPage />}
+                                />
+                                <Route
+                                    path="/settings/plugins"
+                                    element={<SettingsPage />}
                                 />
                             </Route>
                             <Route path="/login" element={<BackHome />} />

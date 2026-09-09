@@ -44,38 +44,44 @@ function groupMessages(messages: ChatMessage[], me: string): Group[] {
 
 export const uiMessagesPlugin: Plugin = {
     name: "ui-messages",
+    description: "消息流展示",
     inject: ["ui", "auth", "rpc"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
         const auth = ctx.get<AuthService>("auth");
         const rpc = ctx.get<RpcService>("rpc");
-        let currentSession = "general";
-
-        const disposeChatOpen = ctx.on("ui:chat:open", (payload) => {
-            const { session } = payload as { session: string };
-            currentSession = session;
-        });
 
         const Messages = () => {
+            const [session, setSession] = useState("general");
             const [messages, setMessages] = useState<ChatMessage[]>([]);
             const [status, setStatus] = useState<ConnStatus>(rpc.status());
             const bottomRef = useRef<HTMLDivElement>(null);
-            const sessionRef = useRef(currentSession);
-            sessionRef.current = currentSession;
+            const sessionRef = useRef(session);
+            sessionRef.current = session;
             const user = auth.user();
 
-            useEffect(() => rpc.onStatus(setStatus), [rpc]);
+            useEffect(() => rpc.onStatus(setStatus), []);
+
+            useEffect(() => {
+                const dispose = ctx.on("ui:chat:open", (payload) => {
+                    setSession((payload as { session: string }).session);
+                });
+                return () => {
+                    void dispose();
+                };
+            }, []);
 
             useEffect(() => {
                 if (status !== "open") return;
+                setMessages([]);
                 void rpc
-                    .call("history.list", {
-                        session: sessionRef.current,
-                        limit: 50,
+                    .call("history.list", { session, limit: 50 })
+                    .then((result) => {
+                        if (sessionRef.current !== session) return;
+                        setMessages(result as ChatMessage[]);
                     })
-                    .then((result) => setMessages(result as ChatMessage[]))
                     .catch(() => undefined);
-            }, [rpc, status]);
+            }, [status, session]);
 
             useEffect(() => {
                 const dispose = ctx.on("server:message:new", (payload) => {
@@ -88,16 +94,7 @@ export const uiMessagesPlugin: Plugin = {
                 return () => {
                     void dispose();
                 };
-            }, [ctx]);
-
-            useEffect(() => {
-                const dispose = ctx.on("ui:chat:open", () => {
-                    setMessages([]);
-                });
-                return () => {
-                    void dispose();
-                };
-            }, [ctx]);
+            }, []);
 
             const count = messages.length;
 
@@ -155,7 +152,6 @@ export const uiMessagesPlugin: Plugin = {
             );
         };
 
-        ui.register("messages", Messages);
-        return () => disposeChatOpen();
+        return ui.register("messages", Messages);
     },
 };

@@ -16,6 +16,8 @@ export interface FriendsService {
 
 export const friendsPlugin: Plugin = {
     name: "friends",
+    description: "好友列表与关系操作",
+    provides: ["friends"],
     inject: ["rpc"],
     async apply(ctx) {
         const rpc = ctx.get<RpcService>("rpc");
@@ -51,7 +53,7 @@ export const friendsPlugin: Plugin = {
                 emit();
             });
 
-        ctx.on("server:friend:update", () => {
+        const disposeUpdate = ctx.on("server:friend:update", () => {
             void fetchList().catch(() => undefined);
         });
 
@@ -59,7 +61,7 @@ export const friendsPlugin: Plugin = {
             if (status === "open") void fetchList().catch(() => undefined);
         };
         if (rpc.status() === "open") void fetchList().catch(() => undefined);
-        rpc.onStatus(refreshOnOpen);
+        const unstatus = rpc.onStatus(refreshOnOpen);
 
         ctx.provide<FriendsService>("friends", {
             cached: () => cache,
@@ -75,6 +77,9 @@ export const friendsPlugin: Plugin = {
                 return () => listeners.delete(cb);
             },
         });
-        return undefined;
+        return () => {
+            disposeUpdate();
+            unstatus();
+        };
     },
 };

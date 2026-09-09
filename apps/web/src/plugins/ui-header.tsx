@@ -23,6 +23,7 @@ const statusLabel: Record<
 
 export const uiHeaderPlugin: Plugin = {
     name: "ui-header",
+    description: "聊天顶部状态栏",
     inject: ["ui", "rpc"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
@@ -30,12 +31,23 @@ export const uiHeaderPlugin: Plugin = {
 
         const Header = () => {
             const [status, setStatus] = useState(rpc.status());
+            const [title, setTitle] = useState("群聊");
 
-            useEffect(() => rpc.onStatus(setStatus), [rpc]);
+            useEffect(() => rpc.onStatus(setStatus), []);
+
+            useEffect(() => {
+                const dispose = ctx.on("ui:chat:open", (payload) => {
+                    setTitle((payload as { title?: string }).title ?? "群聊");
+                });
+                return () => {
+                    void dispose();
+                };
+            }, []);
 
             const badge = statusLabel[status];
             return (
                 <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold">{title}</p>
                     <Badge variant={badge.variant} className={badge.className}>
                         {badge.text}
                     </Badge>
@@ -43,7 +55,6 @@ export const uiHeaderPlugin: Plugin = {
             );
         };
 
-        ui.register("header", Header);
-        return undefined;
+        return ui.register("header", Header);
     },
 };

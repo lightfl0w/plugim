@@ -22,6 +22,9 @@ const nullVerifier: TokenVerifier = () => Promise.resolve(null);
 
 export const gatewayPlugin: Plugin = {
     name: "gateway",
+    description: "WebSocket 网关与 RPC 注册表",
+    core: true,
+    provides: ["gateway"],
     inject: ["config"],
     async apply(ctx): Promise<Dispose> {
         const config = ctx.get<AppConfig>("config");

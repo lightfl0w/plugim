@@ -6,6 +6,7 @@
         "dev:server": "pnpm --filter @plugim/server dev",
         "dev:web": "pnpm --filter @plugim/web dev",
         "typecheck": "pnpm -r typecheck",
+        "test": "pnpm -r test",
         "lint": "biome check .",
         "lint:fix": "biome check --write ."
     },

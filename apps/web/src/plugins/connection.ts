@@ -12,6 +12,9 @@ export interface RpcService {
 
 export const connectionPlugin: Plugin = {
     name: "connection",
+    description: "WebSocket 连接与 RPC 通道",
+    core: true,
+    provides: ["rpc"],
     inject: ["auth"],
     async apply(ctx) {
         const auth = ctx.get<AuthService>("auth");
@@ -24,6 +27,7 @@ export const connectionPlugin: Plugin = {
         let socket: WebSocket | undefined;
         let current: ConnStatus = "connecting";
         let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+        let disposed = false;
 
         const setStatus = (next: ConnStatus) => {
             current = next;
@@ -31,6 +35,7 @@ export const connectionPlugin: Plugin = {
         };
 
         const connect = () => {
+            if (disposed) return;
             const proto = location.protocol === "https:" ? "wss" : "ws";
             const token = auth.token();
             const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
@@ -89,6 +94,15 @@ export const connectionPlugin: Plugin = {
                 return () => statusListeners.delete(cb);
             },
         });
-        return undefined;
+        return () => {
+            disposed = true;
+            clearTimeout(reconnectTimer);
+            socket?.close();
+            socket = undefined;
+            for (const { reject } of pending.values()) {
+                reject(new Error("connection reset"));
+            }
+            pending.clear();
+        };
     },
 };
