@@ -1,6 +1,13 @@
 import type { Plugin } from "@plugim/core";
 import type { ChatMessage } from "@plugim/protocol";
 
+export interface SessionPreview {
+    id: string;
+    sender: string;
+    content: string;
+    at: number;
+}
+
 export interface CacheService {
     getMessages(owner: string, session: string): Promise<ChatMessage[]>;
     putMessages(
@@ -16,6 +23,7 @@ export interface CacheService {
     ): Promise<void>;
     getUnread(owner: string): Promise<Record<string, number>>;
     setUnread(owner: string, unread: Record<string, number>): Promise<void>;
+    getPreviews(owner: string): Promise<Record<string, SessionPreview>>;
 }
 
 interface CachedMessage {
@@ -100,6 +108,28 @@ export const cachePlugin: Plugin = {
                 }
                 await txDone(tx);
 
+                const prevTx = db.transaction("kv", "readonly");
+                const previews =
+                    ((await toPromise(
+                        prevTx.objectStore("kv").get(`previews:${owner}`),
+                    )) as Record<string, SessionPreview> | undefined) ?? {};
+                for (const message of messages) {
+                    const at = Date.parse(message.createdAt);
+                    const current = previews[message.session];
+                    if (current && current.at > at) continue;
+                    previews[message.session] = {
+                        id: message.id,
+                        sender: message.sender,
+                        content: message.recalledAt
+                            ? "[消息已撤回]"
+                            : message.content,
+                        at,
+                    };
+                }
+                const kvTx = db.transaction("kv", "readwrite");
+                kvTx.objectStore("kv").put(previews, `previews:${owner}`);
+                await txDone(kvTx);
+
                 const countTx = db.transaction("messages", "readonly");
                 const count = await toPromise(
                     countTx
@@ -136,6 +166,22 @@ export const cachePlugin: Plugin = {
                     store.put(row);
                 }
                 await txDone(tx);
+                if (!row) return;
+
+                const prevTx = db.transaction("kv", "readwrite");
+                const kv = prevTx.objectStore("kv");
+                const previews =
+                    ((await toPromise(kv.get(`previews:${owner}`))) as
+                        | Record<string, SessionPreview>
+                        | undefined) ?? {};
+                if (previews[session]?.id === id) {
+                    previews[session] = {
+                        ...previews[session],
+                        content: "[消息已撤回]",
+                    };
+                    kv.put(previews, `previews:${owner}`);
+                }
+                await txDone(prevTx);
             },
 
             async getUnread(owner) {
@@ -145,6 +191,17 @@ export const cachePlugin: Plugin = {
                     tx.objectStore("kv").get(`unread:${owner}`),
                 );
                 return (value as Record<string, number> | undefined) ?? {};
+            },
+
+            async getPreviews(owner) {
+                const db = await openDb();
+                const tx = db.transaction("kv", "readonly");
+                const value = await toPromise(
+                    tx.objectStore("kv").get(`previews:${owner}`),
+                );
+                return (
+                    (value as Record<string, SessionPreview> | undefined) ?? {}
+                );
             },
 
             async setUnread(owner, unread) {

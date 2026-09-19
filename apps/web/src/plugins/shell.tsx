@@ -50,11 +50,11 @@ export const shellPlugin: Plugin = {
                         />
                         <ui.Slot
                             slot="messages"
-                            className="flex min-h-0 flex-1 flex-col"
+                            className="flex min-h-0 flex-1 flex-col bg-chat-bg"
                         />
                         <ui.Slot
                             slot="composer"
-                            className="shrink-0 border-t border-border p-3"
+                            className="shrink-0 border-t border-border bg-background p-3"
                         />
                         <ui.Slot
                             slot="overlay"

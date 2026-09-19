@@ -1,4 +1,4 @@
-import type { ChatMessage, User } from "@plugim/protocol";
+import type { ChatMessage, MessageQuote, User } from "@plugim/protocol";
 
 export interface AuthUser {
     id: string;
@@ -29,6 +29,7 @@ export interface MessageStore {
         session: string;
         sender: string;
         content: string;
+        quote?: MessageQuote | null;
     }): Promise<ChatMessage>;
     list(
         session: string,

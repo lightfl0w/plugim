@@ -12,7 +12,7 @@
   --card-foreground: oklch(0.1408 0.0044 285.8229);
   --popover: oklch(1.0000 0 0);
   --popover-foreground: oklch(0.1408 0.0044 285.8229);
-  --primary: oklch(0.6231 0.1880 259.8145);
+  --primary: oklch(0.7000 0.1400 234.0000);
   --primary-foreground: oklch(0.9842 0.0034 247.8575);
   --secondary: oklch(0.9683 0.0069 247.8956);
   --secondary-foreground: oklch(0.2795 0.0368 260.0310);
@@ -24,7 +24,9 @@
   --destructive-foreground: oklch(0.9842 0.0034 247.8575);
   --border: oklch(0.9288 0.0126 255.5078);
   --input: oklch(0.9288 0.0126 255.5078);
-  --ring: oklch(0.6231 0.1880 259.8145);
+  --ring: oklch(0.7000 0.1400 234.0000);
+  --chat-bg: oklch(0.9620 0.0030 255.0000);
+  --chat-item-active: oklch(0.9350 0.0050 255.0000);
   --chart-1: oklch(0.6231 0.1880 259.8145);
   --chart-2: oklch(0.6959 0.1491 162.4796);
   --chart-3: oklch(0.7686 0.1647 70.0804);
@@ -67,7 +69,7 @@
   --card-foreground: oklch(0.9842 0.0034 247.8575);
   --popover: oklch(0.1831 0.0040 285.9940);
   --popover-foreground: oklch(0.9842 0.0034 247.8575);
-  --primary: oklch(0.6231 0.1880 259.8145);
+  --primary: oklch(0.7000 0.1400 234.0000);
   --primary-foreground: oklch(0.9842 0.0034 247.8575);
   --secondary: oklch(0.2795 0.0368 260.0310);
   --secondary-foreground: oklch(0.9683 0.0069 247.8956);
@@ -79,7 +81,9 @@
   --destructive-foreground: oklch(0.9842 0.0034 247.8575);
   --border: oklch(0.2739 0.0055 286.0326);
   --input: oklch(0.2739 0.0055 286.0326);
-  --ring: oklch(0.6231 0.1880 259.8145);
+  --ring: oklch(0.7000 0.1400 234.0000);
+  --chat-bg: oklch(0.2050 0.0060 285.0000);
+  --chat-item-active: oklch(0.2700 0.0080 280.0000);
   --chart-1: oklch(0.6231 0.1880 259.8145);
   --chart-2: oklch(0.6959 0.1491 162.4796);
   --chart-3: oklch(0.7686 0.1647 70.0804);
@@ -146,6 +150,8 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-chat-bg: var(--chat-bg);
+  --color-chat-item-active: var(--chat-item-active);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
@@ -181,15 +187,6 @@
     @apply bg-background text-foreground;
     letter-spacing: var(--tracking-normal);
   }
-}
-
-@layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
   html {
     @apply font-sans;
   }
@@ -198,7 +195,4 @@
   #root {
     height: 100%;
   }
-}
-body {
-    background-color: #fafafa;
 }

@@ -8,7 +8,7 @@ import { Button } from "../components/ui/button";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
-import type { CacheService } from "./cache";
+import type { CacheService, SessionPreview } from "./cache";
 import type { FriendsService } from "./friends";
 import type { UiService } from "./ui";
 
@@ -23,12 +23,29 @@ const notifyInBackground = (message: ChatMessage) => {
         return;
     try {
         new Notification(message.sender, {
-            body: message.content.slice(0, 80),
+            body: previewText(message.content).slice(0, 80),
             tag: message.session,
         });
-    } catch {
-    }
+    } catch {}
 };
+
+const previewText = (content: string) =>
+    content.startsWith("data:image/") ? "[图片]" : content.replace(/\s+/g, " ");
+
+function previewTime(at: number): string {
+    const d = new Date(at);
+    const now = new Date();
+    const startOf = (x: Date) =>
+        new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diffDays = Math.round((startOf(now) - startOf(d)) / 86_400_000);
+    if (diffDays === 0)
+        return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    if (diffDays === 1) return "昨天";
+    if (diffDays < 7) return `星期${"日一二三四五六"[d.getDay()]}`;
+    if (d.getFullYear() === now.getFullYear())
+        return `${d.getMonth() + 1}月${d.getDate()}日`;
+    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
 
 function NavIcon({
     to,
@@ -59,7 +76,7 @@ function NavIcon({
 
 export const uiSidebarPlugin: Plugin = {
     name: "ui-sidebar",
-    description: "会话与好友侧边栏",
+    description: "QQ 风格会话列表(预览 / 时间 / 未读)",
     inject: ["ui", "auth", "friends", "cache"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
@@ -104,8 +121,12 @@ export const uiSidebarPlugin: Plugin = {
             );
             const [active, setActive] = useState("general");
             const [unread, setUnread] = useState<Record<string, number>>({});
+            const [previews, setPreviews] = useState<
+                Record<string, SessionPreview>
+            >({});
             const activeRef = useRef(active);
             const unreadRef = useRef<Record<string, number>>({});
+            const previewsRef = useRef<Record<string, SessionPreview>>({});
             const navigate = useNavigate();
             const me = auth.user()?.username ?? "";
 
@@ -125,6 +146,25 @@ export const uiSidebarPlugin: Plugin = {
                 [me],
             );
 
+            const applyPreview = useCallback((message: ChatMessage) => {
+                const at = Date.parse(message.createdAt);
+                const current = previewsRef.current[message.session];
+                if (current && current.at > at) return;
+                const next = {
+                    ...previewsRef.current,
+                    [message.session]: {
+                        id: message.id,
+                        sender: message.sender,
+                        content: message.recalledAt
+                            ? "[消息已撤回]"
+                            : message.content,
+                        at,
+                    },
+                };
+                previewsRef.current = next;
+                setPreviews(next);
+            }, []);
+
             useEffect(() => {
                 if (!me) return;
                 void cache
@@ -132,6 +172,13 @@ export const uiSidebarPlugin: Plugin = {
                     .then((saved) => {
                         if (Object.keys(saved).length === 0) return;
                         applyUnread(saved);
+                    })
+                    .catch(() => undefined);
+                void cache
+                    .getPreviews(me)
+                    .then((saved) => {
+                        previewsRef.current = saved;
+                        setPreviews(saved);
                     })
                     .catch(() => undefined);
             }, [me, applyUnread]);
@@ -150,6 +197,7 @@ export const uiSidebarPlugin: Plugin = {
                 const disposeMsg = ctx.on("server:message:new", (payload) => {
                     const message = (payload as { message: ChatMessage })
                         .message;
+                    applyPreview(message);
                     if (message.sender === auth.user()?.username) return;
                     if (message.session === activeRef.current) return;
                     applyUnread({
@@ -159,11 +207,29 @@ export const uiSidebarPlugin: Plugin = {
                     });
                     notifyInBackground(message);
                 });
+                const disposeRecall = ctx.on(
+                    "server:message:recalled",
+                    (payload) => {
+                        const { id, session } = payload as {
+                            id: string;
+                            session: string;
+                        };
+                        const current = previewsRef.current[session];
+                        if (!current || current.id !== id) return;
+                        const next = {
+                            ...previewsRef.current,
+                            [session]: { ...current, content: "[消息已撤回]" },
+                        };
+                        previewsRef.current = next;
+                        setPreviews(next);
+                    },
+                );
                 return () => {
                     void disposeOpen();
                     void disposeMsg();
+                    void disposeRecall();
                 };
-            }, [applyUnread]);
+            }, [applyUnread, applyPreview]);
 
             useEffect(() => {
                 setList(friends.cached());
@@ -171,59 +237,76 @@ export const uiSidebarPlugin: Plugin = {
                 return friends.onUpdate(() => setList(friends.cached()));
             }, []);
 
-            const roomButton = (
+            const sessionItem = (
                 session: string,
                 label: string,
-                avatarName?: string,
-                count = 0,
-            ) => (
-                <Button
-                    key={session}
-                    variant="ghost"
-                    className={cn(
-                        "h-10 w-full justify-start gap-2 rounded-lg pr-2",
-                        active === session
-                            ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                            : "text-foreground hover:bg-accent",
-                    )}
-                    onClick={() => {
-                        ctx.emit("ui:chat:open", { session, title: label });
-                        navigate("/chat");
-                    }}
-                >
-                    {avatarName ? (
-                        <UserAvatar name={avatarName} size="sm" />
-                    ) : (
-                        <span className="font-semibold">#</span>
-                    )}
-                    <span className="truncate">{label}</span>
-                    {count > 0 ? (
-                        <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-medium text-white">
-                            {count > 99 ? "99+" : count}
+                avatar?: ReactNode,
+            ) => {
+                const preview = previews[session];
+                const count = unread[session] ?? 0;
+                return (
+                    <button
+                        key={session}
+                        type="button"
+                        onClick={() => {
+                            ctx.emit("ui:chat:open", { session, title: label });
+                            navigate("/chat");
+                        }}
+                        className={cn(
+                            "flex w-full shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors",
+                            active === session
+                                ? "bg-chat-item-active"
+                                : "hover:bg-muted/70",
+                        )}
+                    >
+                        {avatar ?? (
+                            <UserAvatar name={label} className="size-10" />
+                        )}
+                        <span className="min-w-0 flex-1">
+                            <span className="flex items-baseline justify-between gap-2">
+                                <span className="min-w-0 truncate text-sm font-medium">
+                                    {label}
+                                </span>
+                                <span className="shrink-0 text-[11px] text-muted-foreground">
+                                    {preview ? previewTime(preview.at) : ""}
+                                </span>
+                            </span>
+                            <span className="flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate text-xs text-muted-foreground">
+                                    {preview
+                                        ? previewText(preview.content)
+                                        : "暂无消息"}
+                                </span>
+                                {count > 0 ? (
+                                    <span className="flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] leading-none font-medium text-white">
+                                        {count > 99 ? "99+" : count}
+                                    </span>
+                                ) : null}
+                            </span>
                         </span>
-                    ) : null}
-                </Button>
-            );
+                    </button>
+                );
+            };
 
             return (
                 <>
-                    <div className="flex h-12 min-h-12 items-center px-4">
-                        <p className="text-sm font-semibold">会话</p>
+                    <div className="flex h-12 min-h-12 items-center gap-2 px-3">
+                        <input
+                            readOnly
+                            placeholder="搜索"
+                            className="h-7 w-full rounded-md bg-muted px-2.5 text-xs outline-none placeholder:text-muted-foreground"
+                        />
                     </div>
-                    <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
-                        {roomButton(
+                    <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2">
+                        {sessionItem(
                             "general",
                             "群聊",
-                            undefined,
-                            unread.general ?? 0,
+                            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-sky-400 text-white">
+                                <MessagesSquareIcon className="size-5" />
+                            </span>,
                         )}
                         {(list?.friends ?? []).map((name) =>
-                            roomButton(
-                                `p2p:${name}`,
-                                name,
-                                name,
-                                unread[`p2p:${name}`] ?? 0,
-                            ),
+                            sessionItem(`p2p:${name}`, name),
                         )}
                     </div>
                 </>

@@ -57,6 +57,15 @@ export const chatPlugin: Plugin = {
             const params = raw as unknown as SendMessageParams;
             if (!params.content?.trim()) throw new Error("消息内容不能为空");
             const rawSession = params.session || config.defaultSession;
+            const quote =
+                params.quote &&
+                typeof params.quote.sender === "string" &&
+                typeof params.quote.content === "string"
+                    ? {
+                          sender: params.quote.sender.slice(0, 64),
+                          content: params.quote.content.slice(0, 200),
+                      }
+                    : null;
 
             if (rawSession.startsWith("p2p:")) {
                 const peer = await resolveP2p(user, rawSession);
@@ -64,6 +73,7 @@ export const chatPlugin: Plugin = {
                     session: p2pKey(user.username, peer.username),
                     sender: user.username,
                     content: params.content,
+                    quote,
                 });
                 const mine: ChatMessage = {
                     ...saved,
@@ -84,6 +94,7 @@ export const chatPlugin: Plugin = {
                 session: rawSession,
                 sender: user.username,
                 content: params.content,
+                quote,
             });
             gateway.broadcast("message:new", { message: saved });
             return saved;

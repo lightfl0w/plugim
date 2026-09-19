@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Plugin } from "@plugim/core";
+import type { MessageQuote } from "@plugim/protocol";
 import Database from "better-sqlite3";
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
@@ -34,6 +35,7 @@ const messagesSqlite = sqliteTable("messages", {
     content: sqliteText("content").notNull(),
     createdAt: integer("created_at").notNull(),
     recalledAt: integer("recalled_at"),
+    quote: sqliteText("quote"),
 });
 
 const messagesPg = pgTable("messages", {
@@ -45,6 +47,7 @@ const messagesPg = pgTable("messages", {
         .notNull()
         .defaultNow(),
     recalledAt: timestamp("recalled_at", { withTimezone: true }),
+    quote: pgText("quote"),
 });
 
 const usersSqlite = sqliteTable("users", {
@@ -100,7 +103,8 @@ CREATE TABLE IF NOT EXISTS messages (
   sender TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  recalled_at INTEGER
+  recalled_at INTEGER,
+  quote TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -124,7 +128,8 @@ CREATE TABLE IF NOT EXISTS messages (
   sender TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  recalled_at TIMESTAMPTZ
+  recalled_at TIMESTAMPTZ,
+  quote TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -158,6 +163,22 @@ interface EdgeRow {
 const toIso = (value: Date | number): string =>
     value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 
+const serializeQuote = (quote?: MessageQuote | null): string | null =>
+    quote ? JSON.stringify(quote) : null;
+
+const parseQuote = (raw: unknown): MessageQuote | null => {
+    if (typeof raw !== "string" || !raw) return null;
+    try {
+        const parsed = JSON.parse(raw) as Partial<MessageQuote>;
+        if (
+            typeof parsed?.sender === "string" &&
+            typeof parsed?.content === "string"
+        )
+            return { sender: parsed.sender, content: parsed.content };
+    } catch {}
+    return null;
+};
+
 export const storagePlugin: Plugin = {
     name: "storage",
     description: "存储驱动(sqlite / postgres)",
@@ -174,6 +195,9 @@ export const storagePlugin: Plugin = {
             await client.unsafe(CREATE_PG);
             await client.unsafe(
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS recalled_at TIMESTAMPTZ",
+            );
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS quote TEXT",
             );
             const db = drizzlePg(client);
 
@@ -193,9 +217,10 @@ export const storagePlugin: Plugin = {
             store = {
                 async save(input) {
                     const id = crypto.randomUUID();
+                    const { quote, ...rest } = input;
                     const rows = await db
                         .insert(messagesPg)
-                        .values({ id, ...input })
+                        .values({ id, ...rest, quote: serializeQuote(quote) })
                         .returning();
                     const row = rows[0];
                     return {
@@ -207,6 +232,7 @@ export const storagePlugin: Plugin = {
                         recalledAt: row.recalledAt
                             ? row.recalledAt.toISOString()
                             : null,
+                        quote: parseQuote(row.quote),
                     };
                 },
                 async list(session, limit, before) {
@@ -229,6 +255,7 @@ export const storagePlugin: Plugin = {
                             recalledAt: row.recalledAt
                                 ? row.recalledAt.toISOString()
                                 : null,
+                            quote: parseQuote(row.quote),
                         }))
                         .reverse();
                 },
@@ -249,6 +276,7 @@ export const storagePlugin: Plugin = {
                         recalledAt: row.recalledAt
                             ? row.recalledAt.toISOString()
                             : null,
+                        quote: parseQuote(row.quote),
                     };
                 },
                 async markRecalled(id) {
@@ -406,6 +434,9 @@ export const storagePlugin: Plugin = {
                     "ALTER TABLE messages ADD COLUMN recalled_at INTEGER",
                 );
             }
+            if (!columns.some((col) => col.name === "quote")) {
+                client.exec("ALTER TABLE messages ADD COLUMN quote TEXT");
+            }
             const db = drizzleSqlite(client);
 
             const userToRow = (row: UserRow): UserWithHash => ({
@@ -425,12 +456,17 @@ export const storagePlugin: Plugin = {
                 async save(input) {
                     const id = crypto.randomUUID();
                     const now = Date.now();
-                    await db
-                        .insert(messagesSqlite)
-                        .values({ id, ...input, createdAt: now });
+                    const { quote, ...rest } = input;
+                    await db.insert(messagesSqlite).values({
+                        id,
+                        ...rest,
+                        quote: serializeQuote(quote),
+                        createdAt: now,
+                    });
                     return {
                         id,
-                        ...input,
+                        ...rest,
+                        quote: quote ?? null,
                         createdAt: new Date(now).toISOString(),
                         recalledAt: null,
                     };
@@ -452,11 +488,15 @@ export const storagePlugin: Plugin = {
                         .limit(limit);
                     return rows
                         .map((row) => ({
-                            ...row,
+                            id: row.id,
+                            session: row.session,
+                            sender: row.sender,
+                            content: row.content,
                             createdAt: new Date(row.createdAt).toISOString(),
                             recalledAt: row.recalledAt
                                 ? new Date(row.recalledAt).toISOString()
                                 : null,
+                            quote: parseQuote(row.quote),
                         }))
                         .reverse();
                 },
@@ -477,6 +517,7 @@ export const storagePlugin: Plugin = {
                         recalledAt: row.recalledAt
                             ? new Date(row.recalledAt).toISOString()
                             : null,
+                        quote: parseQuote(row.quote),
                     };
                 },
                 async markRecalled(id) {

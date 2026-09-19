@@ -1,3 +1,8 @@
+export interface MessageQuote {
+    sender: string;
+    content: string;
+}
+
 export interface ChatMessage {
     id: string;
     session: string;
@@ -5,6 +10,7 @@ export interface ChatMessage {
     content: string;
     createdAt: string;
     recalledAt?: string | null;
+    quote?: MessageQuote | null;
 }
 
 export interface User {
@@ -71,6 +77,7 @@ export type Envelope = ServerEvent | RpcRequest | RpcOk | RpcErr;
 export interface SendMessageParams {
     session: string;
     content: string;
+    quote?: MessageQuote | null;
 }
 
 export interface HistoryParams {
