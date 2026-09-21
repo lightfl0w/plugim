@@ -1,9 +1,11 @@
 import { Context } from "@plugim/core";
+import { adminPlugin } from "./plugins/admin";
 import { authPlugin } from "./plugins/auth";
 import { chatPlugin } from "./plugins/chat";
 import { configPlugin } from "./plugins/config";
 import { friendsPlugin } from "./plugins/friends";
 import { gatewayPlugin } from "./plugins/gateway";
+import { groupPlugin } from "./plugins/group";
 import { storagePlugin } from "./plugins/storage";
 
 const ctx = new Context();
@@ -12,7 +14,9 @@ ctx.plugin(gatewayPlugin);
 ctx.plugin(storagePlugin);
 ctx.plugin(authPlugin);
 ctx.plugin(friendsPlugin);
+ctx.plugin(groupPlugin);
 ctx.plugin(chatPlugin);
+ctx.plugin(adminPlugin);
 
 ctx.start().catch((err) => {
     ctx.log.error("failed to start:", err);

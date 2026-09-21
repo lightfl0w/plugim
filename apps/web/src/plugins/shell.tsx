@@ -19,9 +19,17 @@ export const shellPlugin: Plugin = {
                 () => auth.user(),
             );
 
+        const useAuthRestoring = () =>
+            useSyncExternalStore(
+                (cb) => auth.onChange(cb),
+                () => auth.restoring(),
+            );
+
         const RequireAuth = ({ children }: { children: ReactNode }) => {
             const user = useAuthUser();
+            const restoring = useAuthRestoring();
             const location = useLocation();
+            if (restoring && !user) return null;
             if (!user) {
                 return (
                     <Navigate
@@ -86,7 +94,9 @@ export const shellPlugin: Plugin = {
 
         const LoginPage = () => {
             const user = useAuthUser();
+            const restoring = useAuthRestoring();
             const from = useLocation().state as { from?: string } | null;
+            if (restoring && !user) return null;
             if (user) return <Navigate to={from?.from ?? "/chat"} replace />;
             return (
                 <div className="flex h-full items-center justify-center p-4">

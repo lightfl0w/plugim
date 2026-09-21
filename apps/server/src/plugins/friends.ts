@@ -6,6 +6,7 @@ import type {
     ConnInfo,
     FriendsStore,
     GatewayService,
+    GroupsStore,
 } from "../types";
 
 const requireUser = (conn: ConnInfo): AuthUser => {
@@ -20,11 +21,12 @@ export const friendsPlugin: Plugin = {
     name: "friends",
     description: "好友关系链 RPC",
     provides: ["friend-rpc"],
-    inject: ["gateway", "store", "accounts"],
+    inject: ["gateway", "store", "accounts", "groups"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const accounts = ctx.get<AccountsStore>("accounts");
         const friendships = ctx.get<FriendsStore>("friendships");
+        const groups = ctx.get<GroupsStore>("groups");
 
         const usernameToUser = async (username: string) => {
             const user = await accounts.byUsername(username.toLowerCase());
@@ -76,6 +78,8 @@ export const friendsPlugin: Plugin = {
             const me = requireUser(conn);
             const target = await usernameToUser(requireParams(raw).username);
             if (target.id === me.id) throw new Error("不能添加自己为好友");
+            if (await groups.shareGroup(me.id, target.id))
+                throw new Error("群成员之间不能互加好友");
             const edges = await friendships.edgesOf(me.id);
             const existing = edges.find(
                 (edge) =>

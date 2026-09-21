@@ -3,6 +3,13 @@ export interface MessageQuote {
     content: string;
 }
 
+export type MessageKind = "text" | "image" | "audio" | "video" | "file";
+
+export interface FileMeta {
+    name: string;
+    size: number;
+}
+
 export interface ChatMessage {
     id: string;
     session: string;
@@ -11,6 +18,9 @@ export interface ChatMessage {
     createdAt: string;
     recalledAt?: string | null;
     quote?: MessageQuote | null;
+    mentions?: string[] | null;
+    kind?: MessageKind;
+    file?: FileMeta | null;
 }
 
 export interface User {
@@ -42,10 +52,44 @@ export interface MessageRecalledEvent {
     recalledAt: string;
 }
 
+export type GroupRole = "owner" | "admin" | "member";
+
+export interface GroupInfo {
+    id: string;
+    name: string;
+    ownerId: string;
+    notice: string;
+    muteAll: boolean;
+    createdAt: string;
+    memberCount: number;
+    myRole: GroupRole | null;
+}
+
+export interface GroupMember {
+    username: string;
+    role: GroupRole;
+    muted: boolean;
+    joinedAt: string;
+}
+
+export interface PresenceUpdate {
+    username: string;
+    online: boolean;
+}
+
+export interface ReceiptUpdate {
+    session: string;
+    username: string;
+    at: string;
+}
+
 export type ServerEventName =
     | "message:new"
     | "message:recalled"
-    | "friend:update";
+    | "friend:update"
+    | "group:update"
+    | "presence:update"
+    | "receipt:update";
 
 export interface ServerEvent<P = unknown> {
     kind: "event";
@@ -78,6 +122,9 @@ export interface SendMessageParams {
     session: string;
     content: string;
     quote?: MessageQuote | null;
+    mentions?: string[] | null;
+    kind?: MessageKind;
+    file?: FileMeta | null;
 }
 
 export interface HistoryParams {
@@ -92,4 +139,9 @@ export interface RecallParams {
 
 export interface FriendTargetParams {
     username: string;
+}
+
+export interface UserInfoResult {
+    username: string;
+    createdAt: string;
 }

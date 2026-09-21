@@ -1,6 +1,13 @@
 import type { Plugin } from "@plugim/core";
-import type { MessageQuote } from "@plugim/protocol";
-import { ImageIcon, SmileIcon, XIcon } from "lucide-react";
+import type { FileMeta, MessageKind, MessageQuote } from "@plugim/protocol";
+import {
+    ImageIcon,
+    MicIcon,
+    PaperclipIcon,
+    SmileIcon,
+    SquareIcon,
+    XIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
@@ -36,20 +43,48 @@ const EMOJIS = [
     "🌹",
 ];
 
-const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024;
+const LIMITS: Record<MessageKind, number> = {
+    text: 0,
+    image: 1.5 * 1024 * 1024,
+    audio: 8 * 1024 * 1024,
+    video: 8 * 1024 * 1024,
+    file: 20 * 1024 * 1024,
+};
+
+const MENTION_TOKEN_RE = /(^|\s)@([a-z0-9_]*)$/;
+
+const kindFor = (mime: string): MessageKind => {
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime.startsWith("video/")) return "video";
+    return "file";
+};
+
+const readAsDataUrl = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error ?? new Error("读取失败"));
+        reader.readAsDataURL(blob);
+    });
 
 export const uiComposerPlugin: Plugin = {
     name: "ui-composer",
-    description: "消息输入区(QQ 风格工具栏 / 表情 / 图片 / 引用回复)",
+    description: "消息输入区(表情 / 图片 / 文件 / 语音 / @提及 / 引用)",
     inject: ["ui", "rpc", "sender"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
         const rpc = ctx.get<RpcService>("rpc");
         const sender = ctx.get<SenderService>("sender");
-        let currentSession = "general";
+        let currentSession = "";
+        const sessionListeners = new Set<() => void>();
+        const bumpSession = () => {
+            for (const cb of sessionListeners) cb();
+        };
 
         const disposeOpen = ctx.on("ui:chat:open", (payload) => {
             currentSession = (payload as { session: string }).session;
+            bumpSession();
         });
 
         const Composer = () => {
@@ -58,8 +93,13 @@ export const uiComposerPlugin: Plugin = {
             const [status, setStatus] = useState<ConnStatus>(rpc.status());
             const [sending, setSending] = useState(false);
             const [emojiOpen, setEmojiOpen] = useState(false);
+            const [mentionIndex, setMentionIndex] = useState(0);
+            const [recording, setRecording] = useState(false);
+            const [groupMembers, setGroupMembers] = useState<string[]>([]);
             const textareaRef = useRef<HTMLTextAreaElement>(null);
             const fileRef = useRef<HTMLInputElement>(null);
+            const recorderRef = useRef<MediaRecorder | null>(null);
+            const chunksRef = useRef<Blob[]>([]);
 
             useEffect(() => rpc.onStatus(setStatus), []);
 
@@ -75,6 +115,34 @@ export const uiComposerPlugin: Plugin = {
                 };
             }, []);
 
+            useEffect(() => {
+                void status;
+                const load = () => {
+                    if (!currentSession.startsWith("g:")) {
+                        setGroupMembers([]);
+                        return;
+                    }
+                    void rpc
+                        .call("group.members", {
+                            groupId: currentSession.slice(2),
+                        })
+                        .then((result) => {
+                            const { members } = result as {
+                                members: { username: string }[];
+                            };
+                            setGroupMembers(members.map((m) => m.username));
+                        })
+                        .catch(() => setGroupMembers([]));
+                };
+                load();
+                sessionListeners.add(load);
+                const dispose = ctx.on("server:group:update", load);
+                return () => {
+                    sessionListeners.delete(load);
+                    void dispose();
+                };
+            }, [status]);
+
             const autoGrow = () => {
                 const el = textareaRef.current;
                 if (!el) return;
@@ -82,12 +150,55 @@ export const uiComposerPlugin: Plugin = {
                 el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
             };
 
+            const isGroup = currentSession.startsWith("g:");
+            const mentionMatch = isGroup ? MENTION_TOKEN_RE.exec(draft) : null;
+            const mentionQuery = mentionMatch?.[2]?.toLowerCase() ?? null;
+            const mentionPool = isGroup ? groupMembers : [];
+            const candidates =
+                mentionQuery === null
+                    ? []
+                    : mentionPool
+                          .filter((name) => name.startsWith(mentionQuery))
+                          .slice(0, 8);
+
+            useEffect(() => {
+                void mentionQuery;
+                setMentionIndex(0);
+            }, [mentionQuery]);
+
+            const collectMentions = (text: string): string[] =>
+                mentionPool.filter((name) =>
+                    new RegExp(`@${name}($|\\s|[^a-z0-9_])`).test(text),
+                );
+
+            const insertMention = (name: string) => {
+                setDraft((prev) =>
+                    prev.replace(
+                        MENTION_TOKEN_RE,
+                        (_m, head: string) => `${head}@${name} `,
+                    ),
+                );
+                requestAnimationFrame(() => {
+                    textareaRef.current?.focus();
+                    autoGrow();
+                });
+            };
+
             const submit = async () => {
                 const content = draft.trim();
-                if (!content || sending) return;
+                if (!content || sending || !currentSession) return;
                 setSending(true);
                 try {
-                    await sender.send(currentSession, content, quote);
+                    await sender.send(
+                        currentSession,
+                        content,
+                        quote,
+                        isGroup ? collectMentions(content) : null,
+                    );
+                    setDraft("");
+                    setQuote(null);
+                    autoGrow();
+                } catch {
                     setDraft("");
                     setQuote(null);
                     autoGrow();
@@ -96,28 +207,89 @@ export const uiComposerPlugin: Plugin = {
                 }
             };
 
-            const sendImage = async (file: File) => {
-                if (file.size > MAX_IMAGE_BYTES || !status || sending) {
-                    if (file.size > MAX_IMAGE_BYTES)
-                        alert("图片过大，请选择 1.5MB 以内的图片");
+            const sendFile = async (file: File) => {
+                if (status !== "open" || sending || !currentSession) return;
+                const kind = kindFor(file.type);
+                if (file.size > LIMITS[kind]) {
+                    alert(
+                        `文件过大，${kind === "image" ? "图片" : kind === "file" ? "文件" : "音视频"}上限 ${Math.floor(LIMITS[kind] / 1024 / 1024) || Math.floor(LIMITS[kind] / 1024)}MB`,
+                    );
                     return;
                 }
                 setSending(true);
                 try {
-                    const dataUrl = await new Promise<string>(
-                        (resolve, reject) => {
-                            const reader = new FileReader();
-                            reader.onload = () =>
-                                resolve(reader.result as string);
-                            reader.onerror = () =>
-                                reject(reader.error ?? new Error("读取失败"));
-                            reader.readAsDataURL(file);
-                        },
+                    const dataUrl = await readAsDataUrl(file);
+                    const meta: FileMeta = { name: file.name, size: file.size };
+                    await sender.send(
+                        currentSession,
+                        dataUrl,
+                        null,
+                        null,
+                        kind,
+                        meta,
                     );
-                    await sender.send(currentSession, dataUrl);
                 } catch {
                 } finally {
                     setSending(false);
+                }
+            };
+
+            const toggleRecording = async () => {
+                if (recording) {
+                    recorderRef.current?.stop();
+                    return;
+                }
+                if (status !== "open" || sending) return;
+                if (
+                    typeof MediaRecorder === "undefined" ||
+                    !navigator.mediaDevices?.getUserMedia
+                ) {
+                    alert("当前浏览器不支持录音");
+                    return;
+                }
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: true,
+                    });
+                    const recorder = new MediaRecorder(stream);
+                    chunksRef.current = [];
+                    recorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) chunksRef.current.push(e.data);
+                    };
+                    recorder.onstop = async () => {
+                        stream.getTracks().forEach((t) => {
+                            t.stop();
+                        });
+                        setRecording(false);
+                        const blob = new Blob(chunksRef.current, {
+                            type: recorder.mimeType || "audio/webm",
+                        });
+                        if (blob.size === 0) return;
+                        if (blob.size > LIMITS.audio) {
+                            alert("录音过长，请分段发送");
+                            return;
+                        }
+                        setSending(true);
+                        try {
+                            const dataUrl = await readAsDataUrl(blob);
+                            await sender.send(
+                                currentSession,
+                                dataUrl,
+                                null,
+                                null,
+                                "audio",
+                                { name: "语音消息.webm", size: blob.size },
+                            );
+                        } catch {
+                        } finally {
+                            setSending(false);
+                        }
+                    };
+                    recorderRef.current = recorder;
+                    recorder.start();
+                    setRecording(true);
+                } catch {
+                    alert("无法访问麦克风");
                 }
             };
 
@@ -133,7 +305,7 @@ export const uiComposerPlugin: Plugin = {
                     onClick={onClick}
                     className={cn(
                         "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-                        active && "bg-accent text-foreground",
+                        active && "bg-red-50 text-red-500 hover:bg-red-100",
                     )}
                 >
                     {icon}
@@ -156,6 +328,30 @@ export const uiComposerPlugin: Plugin = {
                                     }}
                                 >
                                     {emoji}
+                                </button>
+                            ))}
+                        </div>
+                    ) : null}
+
+                    {candidates.length > 0 ? (
+                        <div className="absolute bottom-full left-10 z-20 mb-1 w-48 overflow-hidden rounded-xl border border-border bg-popover py-1 shadow-lg">
+                            <p className="px-3 py-1 text-xs text-muted-foreground">
+                                群成员
+                            </p>
+                            {candidates.map((name, index) => (
+                                <button
+                                    key={name}
+                                    type="button"
+                                    className={cn(
+                                        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm",
+                                        index === mentionIndex
+                                            ? "bg-accent"
+                                            : "hover:bg-accent/60",
+                                    )}
+                                    onMouseEnter={() => setMentionIndex(index)}
+                                    onClick={() => insertMention(name)}
+                                >
+                                    <span className="truncate">{name}</span>
                                 </button>
                             ))}
                         </div>
@@ -187,17 +383,45 @@ export const uiComposerPlugin: Plugin = {
                         {toolButton(
                             "图片",
                             <ImageIcon className="size-5" />,
-                            () => fileRef.current?.click(),
+                            () => {
+                                if (fileRef.current)
+                                    fileRef.current.accept = "image/*";
+                                fileRef.current?.click();
+                            },
                         )}
+                        {toolButton(
+                            "文件",
+                            <PaperclipIcon className="size-5" />,
+                            () => {
+                                if (fileRef.current)
+                                    fileRef.current.accept =
+                                        "audio/*,video/*,.pdf,.zip,.rar,.7z,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
+                                fileRef.current?.click();
+                            },
+                        )}
+                        {toolButton(
+                            recording ? "停止录音并发送" : "语音消息",
+                            recording ? (
+                                <SquareIcon className="size-5" />
+                            ) : (
+                                <MicIcon className="size-5" />
+                            ),
+                            () => void toggleRecording(),
+                            recording,
+                        )}
+                        {recording ? (
+                            <span className="ml-1 animate-pulse text-xs text-red-500">
+                                录音中，点击停止发送
+                            </span>
+                        ) : null}
                         <input
                             ref={fileRef}
                             type="file"
-                            accept="image/*"
                             className="hidden"
                             onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 e.target.value = "";
-                                if (file) void sendImage(file);
+                                if (file) void sendFile(file);
                             }}
                         />
                     </div>
@@ -218,6 +442,34 @@ export const uiComposerPlugin: Plugin = {
                             autoGrow();
                         }}
                         onKeyDown={(e) => {
+                            if (candidates.length > 0) {
+                                if (e.key === "ArrowDown") {
+                                    e.preventDefault();
+                                    setMentionIndex(
+                                        (i) => (i + 1) % candidates.length,
+                                    );
+                                    return;
+                                }
+                                if (e.key === "ArrowUp") {
+                                    e.preventDefault();
+                                    setMentionIndex(
+                                        (i) =>
+                                            (i - 1 + candidates.length) %
+                                            candidates.length,
+                                    );
+                                    return;
+                                }
+                                if (e.key === "Enter" || e.key === "Tab") {
+                                    e.preventDefault();
+                                    insertMention(candidates[mentionIndex]);
+                                    return;
+                                }
+                                if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    setDraft((prev) => `${prev} `);
+                                    return;
+                                }
+                            }
                             if (e.key === "Enter" && !e.shiftKey) {
                                 e.preventDefault();
                                 void submit();

@@ -1,7 +1,9 @@
 import type { Plugin } from "@plugim/core";
 import type {
     ChatMessage,
+    FileMeta,
     HistoryParams,
+    MessageKind,
     RecallParams,
     SendMessageParams,
 } from "@plugim/protocol";
@@ -11,7 +13,9 @@ import type {
     ConnInfo,
     FriendsStore,
     GatewayService,
+    GroupsStore,
     MessageStore,
+    ReadsStore,
 } from "../types";
 import type { AppConfig } from "./config";
 
@@ -22,17 +26,29 @@ const requireUser = (conn: ConnInfo): AuthUser => {
 
 const p2pKey = (a: string, b: string) => `p2p:${[a, b].sort().join("|")}`;
 
+const KINDS: MessageKind[] = ["text", "image", "audio", "video", "file"];
+
 export const chatPlugin: Plugin = {
     name: "chat",
-    description: "消息收发与历史查询",
+    description: "消息收发、历史查询与回执",
     provides: ["chat-rpc"],
-    inject: ["gateway", "store", "config", "accounts", "friendships"],
+    inject: [
+        "gateway",
+        "store",
+        "config",
+        "accounts",
+        "friendships",
+        "groups",
+        "reads",
+    ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const store = ctx.get<MessageStore>("store");
         const config = ctx.get<AppConfig>("config");
         const accounts = ctx.get<AccountsStore>("accounts");
         const friendships = ctx.get<FriendsStore>("friendships");
+        const groups = ctx.get<GroupsStore>("groups");
+        const reads = ctx.get<ReadsStore>("reads");
 
         const resolveP2p = async (me: AuthUser, rawSession: string) => {
             const peerName = rawSession.slice(4).trim();
@@ -52,6 +68,17 @@ export const chatPlugin: Plugin = {
             return peer;
         };
 
+        const resolveGroup = async (me: AuthUser, rawSession: string) => {
+            const groupId = rawSession.slice(2).trim();
+            if (!groupId) throw new Error("群组不存在");
+            const row = await groups.byId(groupId);
+            if (!row) throw new Error("群组不存在");
+            const members = await groups.membersOf(groupId);
+            const mine = members.find((m) => m.userId === me.id);
+            if (!mine) throw new Error("你不在该群中");
+            return { row, mine: mine.role };
+        };
+
         gateway.rpc("message.send", async (raw, conn) => {
             const user = requireUser(conn);
             const params = raw as unknown as SendMessageParams;
@@ -66,6 +93,28 @@ export const chatPlugin: Plugin = {
                           content: params.quote.content.slice(0, 200),
                       }
                     : null;
+            const mentions = Array.isArray(params.mentions)
+                ? [
+                      ...new Set(
+                          params.mentions
+                              .filter((m): m is string => typeof m === "string")
+                              .map((m) => m.slice(0, 64)),
+                      ),
+                  ].slice(0, 50)
+                : null;
+            const kind: MessageKind =
+                params.kind && KINDS.includes(params.kind)
+                    ? params.kind
+                    : "text";
+            const file: FileMeta | null =
+                params.file &&
+                typeof params.file.name === "string" &&
+                typeof params.file.size === "number"
+                    ? {
+                          name: params.file.name.slice(0, 200),
+                          size: params.file.size,
+                      }
+                    : null;
 
             if (rawSession.startsWith("p2p:")) {
                 const peer = await resolveP2p(user, rawSession);
@@ -74,6 +123,9 @@ export const chatPlugin: Plugin = {
                     sender: user.username,
                     content: params.content,
                     quote,
+                    mentions,
+                    kind,
+                    file,
                 });
                 const mine: ChatMessage = {
                     ...saved,
@@ -90,11 +142,41 @@ export const chatPlugin: Plugin = {
                 return mine;
             }
 
+            if (rawSession.startsWith("g:")) {
+                const { row, mine } = await resolveGroup(user, rawSession);
+                const privileged = mine === "owner" || mine === "admin";
+                if (!privileged) {
+                    if (mine === "member" && row.muteAll)
+                        throw new Error("群主已开启全员禁言");
+                    const members = await groups.membersOf(row.id);
+                    const self = members.find((m) => m.userId === user.id);
+                    if (self?.muted) throw new Error("你已被禁言");
+                }
+                const saved = await store.save({
+                    session: rawSession,
+                    sender: user.username,
+                    content: params.content,
+                    quote,
+                    mentions,
+                    kind,
+                    file,
+                });
+                const ids = await groups.memberIdsOf(row.id);
+                for (const id of ids)
+                    gateway.emitToUser(id, "message:new", {
+                        message: saved,
+                    });
+                return saved;
+            }
+
             const saved = await store.save({
                 session: rawSession,
                 sender: user.username,
                 content: params.content,
                 quote,
+                mentions,
+                kind,
+                file,
             });
             gateway.broadcast("message:new", { message: saved });
             return saved;
@@ -108,6 +190,8 @@ export const chatPlugin: Plugin = {
             if (rawSession.startsWith("p2p:")) {
                 const peer = await resolveP2p(user, rawSession);
                 session = p2pKey(user.username, peer.username);
+            } else if (rawSession.startsWith("g:")) {
+                await resolveGroup(user, rawSession);
             }
             return store.list(
                 session,
@@ -121,11 +205,20 @@ export const chatPlugin: Plugin = {
             const { id } = raw as unknown as RecallParams;
             const message = await store.byId(id);
             if (!message) throw new Error("消息不存在");
-            if (message.sender !== user.username)
-                throw new Error("只能撤回自己的消息");
+            const isSelf = message.sender === user.username;
+            if (!isSelf) {
+                if (!message.session.startsWith("g:"))
+                    throw new Error("只能撤回自己的消息");
+                const { mine } = await resolveGroup(user, message.session);
+                if (mine !== "owner" && mine !== "admin")
+                    throw new Error("只有管理员可以撤回他人消息");
+            }
             if (message.recalledAt)
                 return { id, recalledAt: message.recalledAt };
-            if (Date.now() - Date.parse(message.createdAt) > 2 * 60 * 1000)
+            if (
+                isSelf &&
+                Date.now() - Date.parse(message.createdAt) > 2 * 60 * 1000
+            )
                 throw new Error("已超过可撤回时限");
 
             const recalledAt = await store.markRecalled(id);
@@ -147,6 +240,14 @@ export const chatPlugin: Plugin = {
                         session: `p2p:${a}`,
                         recalledAt,
                     });
+            } else if (message.session.startsWith("g:")) {
+                const ids = await groups.memberIdsOf(message.session.slice(2));
+                for (const uid of ids)
+                    gateway.emitToUser(uid, "message:recalled", {
+                        id,
+                        session: message.session,
+                        recalledAt,
+                    });
             } else {
                 gateway.broadcast("message:recalled", {
                     id,
@@ -155,6 +256,63 @@ export const chatPlugin: Plugin = {
                 });
             }
             return { id, recalledAt };
+        });
+
+        gateway.rpc("receipt.read", async (raw, conn) => {
+            const user = requireUser(conn);
+            const { session } = raw as unknown as { session: string };
+            if (!session) throw new Error("缺少会话");
+            const at = new Date().toISOString();
+            if (session.startsWith("p2p:")) {
+                const peerName = session.slice(4).trim();
+                const peer = await accounts.byUsername(peerName);
+                if (!peer) throw new Error("用户不存在");
+                await reads.set(user.id, p2pKey(user.username, peerName), at);
+                gateway.emitToUser(peer.id, "receipt:update", {
+                    session: `p2p:${user.username}`,
+                    username: user.username,
+                    at,
+                });
+            } else if (session.startsWith("g:")) {
+                const groupId = session.slice(2);
+                await resolveGroup(user, session);
+                await reads.set(user.id, session, at);
+                const ids = await groups.memberIdsOf(groupId);
+                for (const uid of ids) {
+                    if (uid === user.id) continue;
+                    gateway.emitToUser(uid, "receipt:update", {
+                        session,
+                        username: user.username,
+                        at,
+                    });
+                }
+            } else {
+                await reads.set(user.id, session, at);
+            }
+            return { at };
+        });
+
+        gateway.rpc("receipt.list", async (raw, conn) => {
+            const user = requireUser(conn);
+            const { session } = raw as unknown as { session: string };
+            let storageSession = session;
+            if (session.startsWith("p2p:")) {
+                const peerName = session.slice(4).trim();
+                const peer = await accounts.byUsername(peerName);
+                if (!peer) throw new Error("用户不存在");
+                storageSession = p2pKey(user.username, peerName);
+            } else if (session.startsWith("g:")) {
+                await resolveGroup(user, session);
+            }
+            const rows = await reads.ofSession(storageSession);
+            const names = await accounts.byIds(rows.map((row) => row.userId));
+            const nameById = new Map(
+                names.map((row) => [row.id, row.username]),
+            );
+            return rows.map((row) => ({
+                username: nameById.get(row.userId) ?? row.userId,
+                at: row.at,
+            }));
         });
         return undefined;
     },

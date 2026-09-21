@@ -30,12 +30,32 @@ export const gatewayPlugin: Plugin = {
         const handlers = new Map<string, RpcHandler>();
         const sockets = new Set<NodeWebSocket>();
         const identities = new Map<NodeWebSocket, AuthUser | null>();
+        const lastSeen = new Map<string, string>();
         let verifyToken: TokenVerifier = nullVerifier;
 
         const app = new Hono();
         const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({
             app,
         });
+
+        const announcePresence = (user: AuthUser, online: boolean) => {
+            gatewayApi.broadcast("presence:update", {
+                username: user.username,
+                online,
+            });
+        };
+
+        const refreshPresence = (userId: string) => {
+            for (const user of identities.values()) {
+                if (user?.id === userId) return;
+            }
+            const known = lastSeen.get(userId);
+            if (known)
+                gatewayApi.broadcast("presence:update", {
+                    username: known,
+                    online: false,
+                });
+        };
 
         const rpc = (method: string, handler: RpcHandler) => {
             handlers.set(method, handler);
@@ -130,15 +150,30 @@ export const gatewayPlugin: Plugin = {
                 verifyToken(token)
                     .then((user) => {
                         connUser = user;
-                        if (connRaw) identities.set(connRaw, user);
+                        if (!connRaw) return;
+                        const wasOnline = user
+                            ? onlineUserIds().includes(user.id)
+                            : false;
+                        identities.set(connRaw, user);
+                        if (user) {
+                            lastSeen.set(user.id, user.username);
+                            if (!wasOnline) announcePresence(user, true);
+                        }
                     })
                     .catch(() => undefined);
                 return {
                     onOpen(_evt, ws) {
                         const raw = ws.raw as NodeWebSocket;
                         connRaw = raw;
+                        const wasOnline = connUser
+                            ? onlineUserIds().includes(connUser.id)
+                            : false;
                         sockets.add(raw);
                         identities.set(raw, connUser);
+                        if (connUser) {
+                            lastSeen.set(connUser.id, connUser.username);
+                            if (!wasOnline) announcePresence(connUser, true);
+                        }
                     },
                     onMessage(evt, ws) {
                         if (typeof evt.data !== "string") return;
@@ -159,8 +194,10 @@ export const gatewayPlugin: Plugin = {
                     },
                     onClose(_evt, ws) {
                         const raw = ws.raw as NodeWebSocket;
+                        const user = identities.get(raw) ?? null;
                         sockets.delete(raw);
                         identities.delete(raw);
+                        if (user) refreshPresence(user.id);
                     },
                 };
             }),
@@ -180,7 +217,21 @@ export const gatewayPlugin: Plugin = {
         );
         injectWebSocket(server);
 
-        ctx.provide<GatewayService>("gateway", {
+        const onlineUserIds = (): string[] => [
+            ...new Set(
+                [...identities.values()]
+                    .filter((user): user is AuthUser => user !== null)
+                    .map((user) => user.id),
+            ),
+        ];
+
+        const kickUser = (userId: string) => {
+            for (const [ws, user] of identities) {
+                if (user?.id === userId) ws.close();
+            }
+        };
+
+        const gatewayApi: GatewayService = {
             rpc,
             broadcast,
             emitToUser,
@@ -188,7 +239,11 @@ export const gatewayPlugin: Plugin = {
                 verifyToken = verifier;
             },
             connections: () => sockets.size,
-        });
+            onlineUserIds,
+            kickUser,
+        };
+
+        ctx.provide<GatewayService>("gateway", gatewayApi);
 
         return async () => {
             for (const ws of sockets) ws.close();

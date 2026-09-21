@@ -6,6 +6,7 @@ const TOKEN_KEY = "plugim_token";
 export interface AuthService {
     token(): string | null;
     user(): User | null;
+    restoring(): boolean;
     login(username: string, password: string): Promise<User>;
     register(username: string, password: string): Promise<User>;
     logout(): void;
@@ -40,6 +41,7 @@ export const authPlugin: Plugin = {
     async apply(ctx) {
         let currentToken = localStorage.getItem(TOKEN_KEY);
         let currentUser: User | null = null;
+        let isRestoring = currentToken !== null;
         const listeners = new Set<() => void>();
 
         const notify = () => {
@@ -68,19 +70,22 @@ export const authPlugin: Plugin = {
                 };
                 if (body.ok && body.result) {
                     currentUser = body.result;
-                    notify();
                 } else {
                     localStorage.removeItem(TOKEN_KEY);
                     currentToken = null;
                 }
             } catch {
                 void 0;
+            } finally {
+                isRestoring = false;
+                notify();
             }
         };
 
         ctx.provide<AuthService>("auth", {
             token: () => currentToken,
             user: () => currentUser,
+            restoring: () => isRestoring,
             async login(username, password) {
                 const success = await callAuthRpc("auth.login", {
                     username,
@@ -88,6 +93,7 @@ export const authPlugin: Plugin = {
                 });
                 currentToken = success.token;
                 currentUser = success.user;
+                isRestoring = false;
                 localStorage.setItem(TOKEN_KEY, currentToken);
                 notify();
                 return success.user;
@@ -99,6 +105,7 @@ export const authPlugin: Plugin = {
                 });
                 currentToken = success.token;
                 currentUser = success.user;
+                isRestoring = false;
                 localStorage.setItem(TOKEN_KEY, currentToken);
                 notify();
                 return success.user;
@@ -106,6 +113,7 @@ export const authPlugin: Plugin = {
             logout() {
                 currentToken = null;
                 currentUser = null;
+                isRestoring = false;
                 localStorage.removeItem(TOKEN_KEY);
                 notify();
             },

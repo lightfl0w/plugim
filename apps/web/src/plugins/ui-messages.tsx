@@ -1,7 +1,17 @@
 import type { Plugin } from "@plugim/core";
-import type { ChatMessage } from "@plugim/protocol";
-import { CopyIcon, CornerUpLeftIcon, RotateCcwIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ChatMessage, GroupInfo } from "@plugim/protocol";
+import {
+    AlertCircleIcon,
+    ArrowDownIcon,
+    ClockIcon,
+    CopyIcon,
+    CornerUpLeftIcon,
+    FileIcon,
+    MegaphoneIcon,
+    RotateCcwIcon,
+    XIcon,
+} from "lucide-react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Bubble, BubbleContent } from "../components/ui/bubble";
 import {
@@ -12,14 +22,18 @@ import {
     MessageHeader,
 } from "../components/ui/message";
 import { UserAvatar } from "../components/ui/user-avatar";
+import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { CacheService } from "./cache";
 import type { ConnStatus, RpcService } from "./connection";
+import type { PendingEvent, PendingMessage, SenderService } from "./sender";
 import type { UiService } from "./ui";
+import { formatBytes } from "./ui-mediaviewer";
 
 const PAGE_SIZE = 30;
 const RECALL_WINDOW_MS = 2 * 60 * 1000;
 const STAMP_GAP_MS = 5 * 60 * 1000;
+const AT_BOTTOM_PX = 80;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -40,11 +54,36 @@ function formatStamp(iso: string): string {
 
 const isImage = (content: string) => content.startsWith("data:image/");
 
+const mediaKind = (message: ChatMessage) =>
+    message.kind ??
+    (message.content.startsWith("data:")
+        ? message.content.startsWith("data:audio/")
+            ? "audio"
+            : message.content.startsWith("data:video/")
+              ? "video"
+              : isImage(message.content)
+                ? "image"
+                : "file"
+        : "text");
+
 function contentPreview(message: ChatMessage): string {
     if (message.recalledAt) return "[消息已撤回]";
-    if (isImage(message.content)) return "[图片]";
-    return message.content.replace(/\s+/g, " ");
+    switch (mediaKind(message)) {
+        case "image":
+            return "[图片]";
+        case "audio":
+            return "[语音]";
+        case "video":
+            return "[视频]";
+        case "file":
+            return `[文件] ${message.file?.name ?? ""}`;
+        default:
+            return message.content.replace(/\s+/g, " ");
+    }
 }
+
+const escapeRegExp = (text: string) =>
+    text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function mergeById(...lists: ChatMessage[][]): ChatMessage[] {
     const byId = new Map<string, ChatMessage>();
@@ -103,26 +142,36 @@ function toRows(messages: ChatMessage[], me: string): Row[] {
 
 export const uiMessagesPlugin: Plugin = {
     name: "ui-messages",
-    description: "消息流展示(QQ 风格气泡 / 时间规则 / 引用 / 撤回)",
-    inject: ["ui", "auth", "rpc", "cache"],
+    description: "消息流展示(乐观发送 / 回到底部 / 搜索 / 引用 / @提及)",
+    inject: ["ui", "auth", "rpc", "cache", "sender"],
     async apply(ctx) {
         const ui = ctx.get<UiService>("ui");
         const auth = ctx.get<AuthService>("auth");
         const rpc = ctx.get<RpcService>("rpc");
         const cache = ctx.get<CacheService>("cache");
+        const sender = ctx.get<SenderService>("sender");
 
         const Messages = () => {
-            const [session, setSession] = useState("general");
+            const [session, setSession] = useState("");
             const [messages, setMessages] = useState<ChatMessage[]>([]);
             const [status, setStatus] = useState<ConnStatus>(rpc.status());
             const [loadingOlder, setLoadingOlder] = useState(false);
             const [hasMore, setHasMore] = useState(true);
-            const [copiedId, setCopiedId] = useState<string | null>(null);
             const [menu, setMenu] = useState<{
                 x: number;
                 y: number;
                 message: ChatMessage;
             } | null>(null);
+            const [pending, setPending] = useState<PendingMessage[]>([]);
+            const [atBottom, setAtBottom] = useState(true);
+            const [newCount, setNewCount] = useState(0);
+            const [searchQuery, setSearchQuery] = useState<string | null>(null);
+            const [searchResults, setSearchResults] = useState<ChatMessage[]>(
+                [],
+            );
+            const [highlightId, setHighlightId] = useState<string | null>(null);
+            const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
+            const [peerReadAt, setPeerReadAt] = useState<string | null>(null);
             const bottomRef = useRef<HTMLDivElement>(null);
             const scrollRef = useRef<HTMLDivElement>(null);
             const sessionRef = useRef(session);
@@ -130,27 +179,12 @@ export const uiMessagesPlugin: Plugin = {
             const skipScrollRef = useRef(false);
             const prevCountRef = useRef(0);
             const lastScrollTopRef = useRef(0);
+            const atBottomRef = useRef(true);
             const user = auth.user();
             const me = user?.username ?? "";
             const isP2p = session.startsWith("p2p:");
 
             useEffect(() => rpc.onStatus(setStatus), []);
-
-            useEffect(() => {
-                if (!menu) return undefined;
-                const close = () => setMenu(null);
-                const onKey = (e: KeyboardEvent) => {
-                    if (e.key === "Escape") setMenu(null);
-                };
-                window.addEventListener("click", close);
-                window.addEventListener("keydown", onKey);
-                window.addEventListener("wheel", close, { passive: true });
-                return () => {
-                    window.removeEventListener("click", close);
-                    window.removeEventListener("keydown", onKey);
-                    window.removeEventListener("wheel", close);
-                };
-            }, [menu]);
 
             useEffect(() => {
                 const dispose = ctx.on("ui:chat:open", (payload) => {
@@ -162,13 +196,112 @@ export const uiMessagesPlugin: Plugin = {
             }, []);
 
             useEffect(() => {
+                const dispose = ctx.on("chat:pending", (payload) => {
+                    const { type, pending: item } = payload as PendingEvent;
+                    setPending((prev) => {
+                        const rest = prev.filter(
+                            (x) => x.tempId !== item.tempId,
+                        );
+                        if (type === "remove") return rest;
+                        return [...rest, item];
+                    });
+                });
+                return () => {
+                    void dispose();
+                };
+            }, []);
+
+            useEffect(() => {
+                const dispose = ctx.on("ui:chat:search", (payload) => {
+                    const query = (payload as { query: string }).query;
+                    if (!query.trim()) {
+                        setSearchQuery(null);
+                        setSearchResults([]);
+                        return;
+                    }
+                    setSearchQuery(query);
+                    void cache
+                        .searchMessages(me, sessionRef.current, query)
+                        .then(setSearchResults)
+                        .catch(() => setSearchResults([]));
+                });
+                return () => {
+                    void dispose();
+                };
+            }, [me]);
+
+            useEffect(() => {
+                void session;
+                setSearchQuery(null);
+                setSearchResults([]);
+            }, [session]);
+
+            useEffect(() => {
+                void status;
+                if (!session.startsWith("g:")) {
+                    setGroupInfo(null);
+                    return;
+                }
+                const load = () => {
+                    void rpc
+                        .call("group.info", { groupId: session.slice(2) })
+                        .then((result) => setGroupInfo(result as GroupInfo))
+                        .catch(() => setGroupInfo(null));
+                };
+                load();
+                const dispose = ctx.on("server:group:update", load);
+                return () => {
+                    void dispose();
+                };
+            }, [session, status]);
+
+            useEffect(() => {
+                if (!me || !session || status !== "open") return undefined;
+                if (session.startsWith("p2p:")) {
+                    void rpc
+                        .call("receipt.list", { session })
+                        .then((rows) => {
+                            const peer = session.slice(4);
+                            const row = (
+                                rows as {
+                                    username: string;
+                                    at: string;
+                                }[]
+                            ).find((item) => item.username === peer);
+                            setPeerReadAt(row?.at ?? null);
+                        })
+                        .catch(() => undefined);
+                }
+                void rpc
+                    .call("receipt.read", { session })
+                    .catch(() => undefined);
+                const dispose = ctx.on("server:receipt:update", (payload) => {
+                    const data = payload as {
+                        session: string;
+                        username: string;
+                        at: string;
+                    };
+                    if (
+                        session.startsWith("p2p:") &&
+                        data.session === session &&
+                        data.username === session.slice(4)
+                    )
+                        setPeerReadAt(data.at);
+                });
+                return () => {
+                    void dispose();
+                };
+            }, [session, status, me]);
+
+            useEffect(() => {
                 sessionRef.current = session;
                 let alive = true;
                 setHasMore(true);
                 prevCountRef.current = 0;
                 setMessages([]);
+                setNewCount(0);
 
-                if (!me) return undefined;
+                if (!me || !session) return undefined;
 
                 void cache
                     .getMessages(me, session)
@@ -217,6 +350,9 @@ export const uiMessagesPlugin: Plugin = {
                     void cache
                         .putMessages(me, message.session, [message])
                         .catch(() => undefined);
+                    void rpc
+                        .call("receipt.read", { session: message.session })
+                        .catch(() => undefined);
                 });
                 return () => {
                     void dispose();
@@ -251,20 +387,49 @@ export const uiMessagesPlugin: Plugin = {
             }, [me]);
 
             useEffect(() => {
+                if (!menu) return undefined;
+                const close = () => setMenu(null);
+                const onKey = (e: KeyboardEvent) => {
+                    if (e.key === "Escape") setMenu(null);
+                };
+                window.addEventListener("click", close);
+                window.addEventListener("keydown", onKey);
+                window.addEventListener("wheel", close, { passive: true });
+                return () => {
+                    window.removeEventListener("click", close);
+                    window.removeEventListener("keydown", onKey);
+                    window.removeEventListener("wheel", close);
+                };
+            }, [menu]);
+
+            const sessionPending = pending.filter(
+                (item) => item.session === session,
+            );
+            const totalCount = messages.length + sessionPending.length;
+
+            useEffect(() => {
                 if (skipScrollRef.current) {
                     skipScrollRef.current = false;
-                    prevCountRef.current = messages.length;
+                    prevCountRef.current = totalCount;
                     return;
                 }
-                if (messages.length > prevCountRef.current) {
-                    requestAnimationFrame(() => {
+                const delta = totalCount - prevCountRef.current;
+                prevCountRef.current = totalCount;
+                if (delta <= 0) return;
+                const last =
+                    messages[messages.length - 1] ??
+                    sessionPending[sessionPending.length - 1];
+                const mineLast = last?.sender === me;
+                if (atBottomRef.current || mineLast) {
+                    setTimeout(() => {
                         bottomRef.current?.scrollIntoView({
                             behavior: "smooth",
                         });
-                    });
+                    }, 0);
+                } else {
+                    setNewCount((prev) => prev + delta);
                 }
-                prevCountRef.current = messages.length;
-            }, [messages.length]);
+            }, [totalCount, messages, sessionPending, me]);
 
             const loadOlder = async () => {
                 if (loadingRef.current || !hasMore || !me) return;
@@ -302,6 +467,14 @@ export const uiMessagesPlugin: Plugin = {
             const handleScroll = () => {
                 const el = scrollRef.current;
                 if (!el) return;
+                const distance =
+                    el.scrollHeight - el.scrollTop - el.clientHeight;
+                const nearBottom = distance < AT_BOTTOM_PX;
+                if (nearBottom !== atBottomRef.current) {
+                    atBottomRef.current = nearBottom;
+                    setAtBottom(nearBottom);
+                    if (nearBottom) setNewCount(0);
+                }
                 const goingUp = lastScrollTopRef.current - el.scrollTop > 0;
                 lastScrollTopRef.current = el.scrollTop;
                 if (
@@ -314,6 +487,33 @@ export const uiMessagesPlugin: Plugin = {
                 }
             };
 
+            const scrollToBottom = () => {
+                atBottomRef.current = true;
+                setAtBottom(true);
+                setNewCount(0);
+                bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
+
+            const jumpToMessage = (id: string) => {
+                setSearchQuery(null);
+                setSearchResults([]);
+                let attempts = 0;
+                const tryJump = () => {
+                    attempts += 1;
+                    const el = document.getElementById(`msg-${id}`);
+                    if (!el) {
+                        if (attempts < 20) setTimeout(tryJump, 50);
+                        return;
+                    }
+                    atBottomRef.current = false;
+                    setAtBottom(false);
+                    el.scrollIntoView({ block: "center", behavior: "smooth" });
+                    setHighlightId(id);
+                    setTimeout(() => setHighlightId(null), 2000);
+                };
+                setTimeout(tryJump, 50);
+            };
+
             const recall = async (message: ChatMessage) => {
                 try {
                     await rpc.call("message.recall", { id: message.id });
@@ -323,8 +523,6 @@ export const uiMessagesPlugin: Plugin = {
             const copy = async (message: ChatMessage) => {
                 try {
                     await navigator.clipboard.writeText(message.content);
-                    setCopiedId(message.id);
-                    setTimeout(() => setCopiedId(null), 1500);
                 } catch {}
             };
 
@@ -335,29 +533,62 @@ export const uiMessagesPlugin: Plugin = {
                 });
             };
 
+            const openMedia = (message: ChatMessage) => {
+                ctx.emit("ui:media:preview", { message });
+            };
+
+            const openProfile = (username: string, e: ReactMouseEvent) => {
+                ctx.emit("ui:profile:open", {
+                    username,
+                    x: e.clientX,
+                    y: e.clientY,
+                });
+            };
+
             const canRecall = (message: ChatMessage) =>
                 message.sender === me &&
                 !message.recalledAt &&
                 Date.now() - Date.parse(message.createdAt) <= RECALL_WINDOW_MS;
 
-            const rows = toRows(messages, me);
+            const renderText = (message: ChatMessage, mine: boolean) => {
+                const mentions = message.mentions;
+                if (!mentions || mentions.length === 0) return message.content;
+                const re = new RegExp(
+                    `@(?:${mentions.map(escapeRegExp).join("|")})`,
+                    "g",
+                );
+                const nodes: ReactNode[] = [];
+                let lastIndex = 0;
+                let seq = 0;
+                for (const match of message.content.matchAll(re)) {
+                    if (match.index > lastIndex)
+                        nodes.push(
+                            message.content.slice(lastIndex, match.index),
+                        );
+                    nodes.push(
+                        <span
+                            key={`mention-${seq++}`}
+                            className={
+                                mine
+                                    ? "font-medium text-white"
+                                    : "font-medium text-primary"
+                            }
+                        >
+                            {match[0]}
+                        </span>,
+                    );
+                    lastIndex = match.index + match[0].length;
+                }
+                nodes.push(message.content.slice(lastIndex));
+                return nodes;
+            };
 
-            const actionButton = (
-                key: string,
-                icon: ReactNode,
-                title: string,
-                onClick: () => void,
-            ) => (
-                <button
-                    key={key}
-                    type="button"
-                    title={title}
-                    onClick={onClick}
-                    className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-black/10 hover:text-foreground dark:hover:bg-white/10"
-                >
-                    {icon}
-                </button>
-            );
+            const rows = toRows(messages, me);
+            const lastOwnId = [...messages]
+                .reverse()
+                .find(
+                    (message) => message.sender === me && !message.recalledAt,
+                )?.id;
 
             const menuItem = (
                 key: string,
@@ -379,194 +610,430 @@ export const uiMessagesPlugin: Plugin = {
                 </button>
             );
 
-            return (
-                <>
-                    <div
-                        ref={scrollRef}
-                        onScroll={handleScroll}
-                        className="flex min-h-0 flex-1 flex-col gap-1 overflow-x-clip overflow-y-auto px-4 py-3"
-                    >
-                        {loadingOlder ? (
-                            <p className="py-1 text-center text-xs text-muted-foreground">
-                                正在加载更早的消息...
-                            </p>
-                        ) : null}
-                        {rows.map((row) =>
-                            row.kind === "stamp" ? (
-                                <p
-                                    key={row.key}
-                                    className="py-2 text-center text-xs text-muted-foreground/80"
-                                >
-                                    {row.label}
+            if (searchQuery !== null) {
+                return (
+                    <div className="flex min-h-0 flex-1 flex-col">
+                        <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-2 text-xs text-muted-foreground">
+                            <span>
+                                “{searchQuery}” 的搜索结果{" "}
+                                {searchResults.length} 条
+                            </span>
+                            <button
+                                type="button"
+                                className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 hover:bg-accent"
+                                onClick={() => {
+                                    setSearchQuery(null);
+                                    ctx.emit("ui:chat:search:clear", {});
+                                }}
+                            >
+                                <XIcon className="size-3.5" />
+                                退出搜索
+                            </button>
+                        </div>
+                        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                            {searchResults.length === 0 ? (
+                                <p className="py-8 text-center text-xs text-muted-foreground">
+                                    本地缓存中没有匹配的消息
                                 </p>
                             ) : (
-                                <MessageGroup key={row.key}>
-                                    {row.group.items.map((message) => {
-                                        const mine = row.group.mine;
-                                        if (message.recalledAt) {
-                                            return (
-                                                <p
-                                                    key={message.id}
-                                                    className="py-0.5 text-center text-xs text-muted-foreground/80"
-                                                >
-                                                    「{message.sender}
-                                                    」撤回了一条消息
-                                                </p>
-                                            );
+                                searchResults.map((message) => (
+                                    <button
+                                        key={message.id}
+                                        type="button"
+                                        className="flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-accent/60"
+                                        onClick={() =>
+                                            jumpToMessage(message.id)
                                         }
-                                        const image = isImage(message.content);
-                                        return (
-                                            <Message
-                                                key={message.id}
-                                                align={mine ? "end" : "start"}
-                                                className="py-0.5"
-                                            >
-                                                <MessageAvatar>
-                                                    <UserAvatar
-                                                        name={message.sender}
-                                                    />
-                                                </MessageAvatar>
-                                                <MessageContent>
-                                                    {!mine && !isP2p ? (
-                                                        <MessageHeader>
-                                                            {message.sender}
-                                                        </MessageHeader>
-                                                    ) : null}
-                                                    <Bubble
-                                                        variant={
-                                                            image
-                                                                ? "ghost"
-                                                                : mine
-                                                                  ? "default"
-                                                                  : "outline"
-                                                        }
-                                                        align={
-                                                            mine
-                                                                ? "end"
-                                                                : "start"
-                                                        }
-                                                        className="group/msg"
-                                                        onContextMenu={(e) => {
-                                                            e.preventDefault();
-                                                            setMenu({
-                                                                x: e.clientX,
-                                                                y: e.clientY,
-                                                                message,
-                                                            });
-                                                        }}
-                                                    >
-                                                        <BubbleContent
-                                                            className={
-                                                                image
-                                                                    ? "p-0.5"
-                                                                    : mine
-                                                                      ? "rounded-xl rounded-br-sm"
-                                                                      : "rounded-xl rounded-bl-sm"
-                                                            }
-                                                        >
-                                                            {image ? (
-                                                                <a
-                                                                    href={
-                                                                        message.content
-                                                                    }
-                                                                    target="_blank"
-                                                                    rel="noreferrer"
-                                                                    title="点击查看大图"
-                                                                >
-                                                                    <img
-                                                                        src={
-                                                                            message.content
-                                                                        }
-                                                                        alt="图片"
-                                                                        loading="lazy"
-                                                                        className="max-h-80 w-auto max-w-full cursor-zoom-in rounded-lg"
-                                                                    />
-                                                                </a>
-                                                            ) : (
-                                                                <p className="whitespace-pre-wrap">
-                                                                    {
-                                                                        message.content
-                                                                    }
-                                                                </p>
-                                                            )}
-                                                            {message.quote ? (
-                                                                <div
-                                                                    className={
-                                                                        mine
-                                                                            ? "mt-1 max-w-full truncate rounded-md bg-white/20 px-2 py-1 text-xs text-white/90"
-                                                                            : "mt-1 max-w-full truncate rounded-md bg-black/5 px-2 py-1 text-xs text-muted-foreground dark:bg-white/10"
-                                                                    }
-                                                                >
-                                                                    {
-                                                                        message
-                                                                            .quote
-                                                                            .sender
-                                                                    }
-                                                                    :{" "}
-                                                                    {
-                                                                        message
-                                                                            .quote
-                                                                            .content
-                                                                    }
-                                                                </div>
-                                                            ) : null}
-                                                        </BubbleContent>
-                                                        <div
-                                                            className={
-                                                                mine
-                                                                    ? "absolute top-1/2 right-full z-10 mr-2 hidden -translate-y-1/2 gap-0.5 rounded-lg bg-white p-0.5 shadow-md ring-1 ring-black/5 group-hover/msg:flex dark:bg-popover dark:ring-white/10"
-                                                                    : "absolute top-1/2 left-full z-10 ml-2 hidden -translate-y-1/2 gap-0.5 rounded-lg bg-white p-0.5 shadow-md ring-1 ring-black/5 group-hover/msg:flex dark:bg-popover dark:ring-white/10"
-                                                            }
-                                                        >
-                                                            {actionButton(
-                                                                "quote",
-                                                                <CornerUpLeftIcon className="size-4" />,
-                                                                "回复",
-                                                                () =>
-                                                                    reply(
-                                                                        message,
-                                                                    ),
-                                                            )}
-                                                            {!image
-                                                                ? actionButton(
-                                                                      "copy",
-                                                                      copiedId ===
-                                                                          message.id ? (
-                                                                          <span className="text-xs">
-                                                                              已复制
-                                                                          </span>
-                                                                      ) : (
-                                                                          <CopyIcon className="size-4" />
-                                                                      ),
-                                                                      "复制",
-                                                                      () =>
-                                                                          void copy(
-                                                                              message,
-                                                                          ),
-                                                                  )
-                                                                : null}
-                                                            {canRecall(message)
-                                                                ? actionButton(
-                                                                      "recall",
-                                                                      <RotateCcwIcon className="size-4" />,
-                                                                      "撤回",
-                                                                      () =>
-                                                                          void recall(
-                                                                              message,
-                                                                          ),
-                                                                  )
-                                                                : null}
-                                                        </div>
-                                                    </Bubble>
-                                                </MessageContent>
-                                            </Message>
-                                        );
-                                    })}
-                                </MessageGroup>
-                            ),
-                        )}
-                        <div ref={bottomRef} />
+                                    >
+                                        <span className="text-xs text-muted-foreground">
+                                            {message.sender} ·{" "}
+                                            {formatStamp(message.createdAt)}
+                                        </span>
+                                        <span className="truncate text-sm">
+                                            {message.content}
+                                        </span>
+                                    </button>
+                                ))
+                            )}
+                        </div>
                     </div>
+                );
+            }
+
+            if (!session) {
+                return (
+                    <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground/70">
+                        从左侧选择一个会话开始聊天
+                    </div>
+                );
+            }
+
+            return (
+                <>
+                    <div className="relative flex min-h-0 flex-1 flex-col">
+                        <div
+                            ref={scrollRef}
+                            onScroll={handleScroll}
+                            className="flex min-h-0 flex-1 flex-col gap-1 overflow-x-clip overflow-y-auto px-4 py-3"
+                        >
+                            {groupInfo?.notice ? (
+                                <button
+                                    type="button"
+                                    className="mb-1 flex max-w-full items-center gap-1.5 self-center rounded-full bg-amber-100 px-3 py-1 text-xs text-amber-800 hover:bg-amber-200 dark:bg-amber-500/15 dark:text-amber-300"
+                                    onClick={() =>
+                                        ctx.emit("ui:group:manage", {
+                                            groupId: groupInfo.id,
+                                        })
+                                    }
+                                >
+                                    <MegaphoneIcon className="size-3.5 shrink-0" />
+                                    <span className="truncate">
+                                        {groupInfo.notice}
+                                    </span>
+                                </button>
+                            ) : null}
+                            {loadingOlder ? (
+                                <p className="py-1 text-center text-xs text-muted-foreground">
+                                    正在加载更早的消息...
+                                </p>
+                            ) : null}
+                            {rows.map((row) =>
+                                row.kind === "stamp" ? (
+                                    <p
+                                        key={row.key}
+                                        className="py-2 text-center text-xs text-muted-foreground/80"
+                                    >
+                                        {row.label}
+                                    </p>
+                                ) : (
+                                    <MessageGroup key={row.key}>
+                                        {row.group.items.map((message) => {
+                                            const mine = row.group.mine;
+                                            if (message.recalledAt) {
+                                                return (
+                                                    <p
+                                                        key={message.id}
+                                                        className="py-0.5 text-center text-xs text-muted-foreground/80"
+                                                    >
+                                                        「{message.sender}
+                                                        」撤回了一条消息
+                                                    </p>
+                                                );
+                                            }
+                                            const media = mediaKind(message);
+                                            const bare =
+                                                media === "image" ||
+                                                media === "video";
+                                            return (
+                                                <Message
+                                                    key={message.id}
+                                                    id={`msg-${message.id}`}
+                                                    align={
+                                                        mine ? "end" : "start"
+                                                    }
+                                                    className={cn(
+                                                        "py-0.5 transition-colors",
+                                                        highlightId ===
+                                                            message.id &&
+                                                            "rounded-xl bg-primary/10",
+                                                    )}
+                                                >
+                                                    <MessageAvatar>
+                                                        <button
+                                                            type="button"
+                                                            title="查看资料"
+                                                            className="rounded-full"
+                                                            onClick={(e) =>
+                                                                openProfile(
+                                                                    message.sender,
+                                                                    e,
+                                                                )
+                                                            }
+                                                        >
+                                                            <UserAvatar
+                                                                name={
+                                                                    message.sender
+                                                                }
+                                                            />
+                                                        </button>
+                                                    </MessageAvatar>
+                                                    <MessageContent>
+                                                        {!mine && !isP2p ? (
+                                                            <MessageHeader>
+                                                                {message.sender}
+                                                            </MessageHeader>
+                                                        ) : null}
+                                                        <Bubble
+                                                            variant={
+                                                                bare
+                                                                    ? "ghost"
+                                                                    : mine
+                                                                      ? "default"
+                                                                      : "outline"
+                                                            }
+                                                            align={
+                                                                mine
+                                                                    ? "end"
+                                                                    : "start"
+                                                            }
+                                                            onContextMenu={(
+                                                                e,
+                                                            ) => {
+                                                                e.preventDefault();
+                                                                setMenu({
+                                                                    x: e.clientX,
+                                                                    y: e.clientY,
+                                                                    message,
+                                                                });
+                                                            }}
+                                                        >
+                                                            <BubbleContent
+                                                                className={
+                                                                    bare
+                                                                        ? "p-0.5"
+                                                                        : mine
+                                                                          ? "rounded-xl rounded-br-sm"
+                                                                          : "rounded-xl rounded-bl-sm"
+                                                                }
+                                                            >
+                                                                {media ===
+                                                                "image" ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        title="点击查看大图"
+                                                                        className="cursor-zoom-in"
+                                                                        onClick={() =>
+                                                                            openMedia(
+                                                                                message,
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <img
+                                                                            src={
+                                                                                message.content
+                                                                            }
+                                                                            alt="图片"
+                                                                            loading="lazy"
+                                                                            className="max-h-80 w-auto max-w-full rounded-lg"
+                                                                        />
+                                                                    </button>
+                                                                ) : media ===
+                                                                  "video" ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        title="点击播放视频"
+                                                                        className="relative cursor-pointer"
+                                                                        onClick={() =>
+                                                                            openMedia(
+                                                                                message,
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <video
+                                                                            src={
+                                                                                message.content
+                                                                            }
+                                                                            preload="metadata"
+                                                                            className="max-h-64 w-auto max-w-80 rounded-lg bg-black"
+                                                                        >
+                                                                            <track
+                                                                                kind="captions"
+                                                                                src=""
+                                                                                label="字幕"
+                                                                            />
+                                                                        </video>
+                                                                    </button>
+                                                                ) : media ===
+                                                                  "audio" ? (
+                                                                    <div className="flex min-w-52 items-center gap-2">
+                                                                        <audio
+                                                                            src={
+                                                                                message.content
+                                                                            }
+                                                                            controls
+                                                                            className="h-8 w-full min-w-44"
+                                                                        >
+                                                                            <track
+                                                                                kind="captions"
+                                                                                src=""
+                                                                                label="字幕"
+                                                                            />
+                                                                        </audio>
+                                                                    </div>
+                                                                ) : media ===
+                                                                  "file" ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() =>
+                                                                            openMedia(
+                                                                                message,
+                                                                            )
+                                                                        }
+                                                                        className={cn(
+                                                                            "flex w-60 items-center gap-2.5 rounded-lg p-2 text-left",
+                                                                            mine
+                                                                                ? "bg-white/15"
+                                                                                : "bg-black/5 dark:bg-white/10",
+                                                                        )}
+                                                                    >
+                                                                        <FileIcon
+                                                                            className={cn(
+                                                                                "size-8 shrink-0",
+                                                                                mine
+                                                                                    ? "text-white"
+                                                                                    : "text-primary",
+                                                                            )}
+                                                                        />
+                                                                        <span className="min-w-0 flex-1">
+                                                                            <span className="block truncate text-sm">
+                                                                                {message
+                                                                                    .file
+                                                                                    ?.name ??
+                                                                                    "文件"}
+                                                                            </span>
+                                                                            <span
+                                                                                className={cn(
+                                                                                    "text-xs",
+                                                                                    mine
+                                                                                        ? "text-white/70"
+                                                                                        : "text-muted-foreground",
+                                                                                )}
+                                                                            >
+                                                                                {formatBytes(
+                                                                                    message
+                                                                                        .file
+                                                                                        ?.size ??
+                                                                                        0,
+                                                                                )}
+                                                                            </span>
+                                                                        </span>
+                                                                    </button>
+                                                                ) : (
+                                                                    <p className="whitespace-pre-wrap">
+                                                                        {renderText(
+                                                                            message,
+                                                                            mine,
+                                                                        )}
+                                                                    </p>
+                                                                )}
+                                                                {message.quote ? (
+                                                                    <div
+                                                                        className={
+                                                                            mine
+                                                                                ? "mt-1 max-w-full truncate rounded-md bg-white/20 px-2 py-1 text-xs text-white/90"
+                                                                                : "mt-1 max-w-full truncate rounded-md bg-black/5 px-2 py-1 text-xs text-muted-foreground dark:bg-white/10"
+                                                                        }
+                                                                    >
+                                                                        {
+                                                                            message
+                                                                                .quote
+                                                                                .sender
+                                                                        }
+                                                                        :{" "}
+                                                                        {
+                                                                            message
+                                                                                .quote
+                                                                                .content
+                                                                        }
+                                                                    </div>
+                                                                ) : null}
+                                                            </BubbleContent>
+                                                        </Bubble>
+                                                        {isP2p &&
+                                                        mine &&
+                                                        message.id ===
+                                                            lastOwnId ? (
+                                                            <p className="px-1 text-[10px] text-muted-foreground">
+                                                                {peerReadAt &&
+                                                                message.createdAt <=
+                                                                    peerReadAt
+                                                                    ? "已读"
+                                                                    : "未读"}
+                                                            </p>
+                                                        ) : null}
+                                                    </MessageContent>
+                                                </Message>
+                                            );
+                                        })}
+                                    </MessageGroup>
+                                ),
+                            )}
+                            {sessionPending.map((item) => (
+                                <Message
+                                    key={item.tempId}
+                                    align="end"
+                                    className="py-0.5"
+                                >
+                                    <MessageAvatar>
+                                        <UserAvatar name={item.sender || "?"} />
+                                    </MessageAvatar>
+                                    <MessageContent>
+                                        <div className="flex items-center gap-1.5 self-end">
+                                            {item.state === "failed" ? (
+                                                <button
+                                                    type="button"
+                                                    title={
+                                                        item.error ??
+                                                        "发送失败，点击重发"
+                                                    }
+                                                    className="text-destructive"
+                                                    onClick={() =>
+                                                        void sender.retry(
+                                                            item.tempId,
+                                                        )
+                                                    }
+                                                >
+                                                    <AlertCircleIcon className="size-4.5" />
+                                                </button>
+                                            ) : (
+                                                <ClockIcon className="size-3.5 text-muted-foreground" />
+                                            )}
+                                            <Bubble
+                                                variant="default"
+                                                align="end"
+                                                className={
+                                                    item.state === "failed"
+                                                        ? "opacity-60"
+                                                        : "opacity-70"
+                                                }
+                                            >
+                                                <BubbleContent className="rounded-xl rounded-br-sm">
+                                                    <p className="whitespace-pre-wrap">
+                                                        {item.content.startsWith(
+                                                            "data:",
+                                                        )
+                                                            ? item.kind ===
+                                                              "file"
+                                                                ? `[文件] ${item.file?.name ?? ""}`
+                                                                : `[${item.kind === "audio" ? "语音" : item.kind === "video" ? "视频" : "图片"}]`
+                                                            : item.content}
+                                                    </p>
+                                                </BubbleContent>
+                                            </Bubble>
+                                        </div>
+                                    </MessageContent>
+                                </Message>
+                            ))}
+                            <div ref={bottomRef} />
+                        </div>
+
+                        {!atBottom ? (
+                            <button
+                                type="button"
+                                onClick={scrollToBottom}
+                                className="absolute bottom-4 right-4 z-10 flex h-8 items-center gap-1.5 rounded-full border border-border bg-background px-3 text-xs shadow-md hover:bg-accent"
+                            >
+                                {newCount > 0 ? (
+                                    <span className="font-medium text-primary">
+                                        {newCount > 99 ? "99+" : newCount}{" "}
+                                        条新消息
+                                    </span>
+                                ) : null}
+                                <ArrowDownIcon className="size-4" />
+                            </button>
+                        ) : null}
+                    </div>
+
                     {menu ? (
                         <div
                             role="menu"

@@ -7,6 +7,7 @@ export interface AppConfig {
     dbFile: string;
     defaultSession: string;
     jwtSecret: string;
+    bootstrapAdmins: string[];
 }
 
 export const configPlugin: Plugin = {
@@ -29,6 +30,10 @@ export const configPlugin: Plugin = {
             dbFile: process.env.PLUGIM_DB_FILE ?? "data/plugim.db",
             defaultSession: process.env.PLUGIM_DEFAULT_SESSION ?? "general",
             jwtSecret: jwtSecret ?? "plugim-dev-secret-do-not-use-in-prod",
+            bootstrapAdmins: (process.env.PLUGIM_ADMINS ?? "")
+                .split(",")
+                .map((name) => name.trim().toLowerCase())
+                .filter(Boolean),
         });
         return undefined;
     },

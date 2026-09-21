@@ -21,9 +21,16 @@ export interface CacheService {
         id: string,
         recalledAt: string,
     ): Promise<void>;
+    searchMessages(
+        owner: string,
+        session: string,
+        query: string,
+    ): Promise<ChatMessage[]>;
     getUnread(owner: string): Promise<Record<string, number>>;
     setUnread(owner: string, unread: Record<string, number>): Promise<void>;
     getPreviews(owner: string): Promise<Record<string, SessionPreview>>;
+    getPinned(owner: string): Promise<string[]>;
+    setPinned(owner: string, pinned: string[]): Promise<void>;
 }
 
 interface CachedMessage {
@@ -184,6 +191,26 @@ export const cachePlugin: Plugin = {
                 await txDone(prevTx);
             },
 
+            async searchMessages(owner, session, query) {
+                const db = await openDb();
+                const tx = db.transaction("messages", "readonly");
+                const index = tx.objectStore("messages").index("owner_session");
+                const rows = (await toPromise(
+                    index.getAll(IDBKeyRange.only([owner, session])),
+                )) as CachedMessage[];
+                const needle = query.trim().toLowerCase();
+                if (!needle) return [];
+                return rows
+                    .filter(
+                        (row) =>
+                            !row.message.recalledAt &&
+                            row.message.content.toLowerCase().includes(needle),
+                    )
+                    .map((row) => row.message)
+                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                    .slice(0, 100);
+            },
+
             async getUnread(owner) {
                 const db = await openDb();
                 const tx = db.transaction("kv", "readonly");
@@ -208,6 +235,25 @@ export const cachePlugin: Plugin = {
                 const db = await openDb();
                 const tx = db.transaction("kv", "readwrite");
                 tx.objectStore("kv").put(unread, `unread:${owner}`);
+                await txDone(tx);
+            },
+
+            async getPinned(owner) {
+                const db = await openDb();
+                const tx = db.transaction("kv", "readonly");
+                const value = await toPromise(
+                    tx.objectStore("kv").get(`pinned:${owner}`),
+                );
+                const list = value as string[] | undefined;
+                return Array.isArray(list)
+                    ? list.filter((item) => typeof item === "string")
+                    : [];
+            },
+
+            async setPinned(owner, pinned) {
+                const db = await openDb();
+                const tx = db.transaction("kv", "readwrite");
+                tx.objectStore("kv").put(pinned, `pinned:${owner}`);
                 await txDone(tx);
             },
         });
