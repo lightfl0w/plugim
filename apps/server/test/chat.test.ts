@@ -41,8 +41,9 @@ describe("p2p messaging", () => {
         );
         const mine = app.eventsFor(ua.user.id, "message:new");
         const theirs = app.eventsFor(ub.user.id, "message:new");
-        const mineMsg = (mine[0] as { payload: { message: { session: string } } })
-            .payload.message;
+        const mineMsg = (
+            mine[0] as { payload: { message: { session: string } } }
+        ).payload.message;
         const theirsMsg = (
             theirs[0] as { payload: { message: { session: string } } }
         ).payload.message;
@@ -90,9 +91,7 @@ describe("group messaging", () => {
             { session: `g:${group.id}`, content: "yo" },
             owner.user,
         );
-        expect(
-            app.eventsFor(member.user.id, "message:new").length,
-        ).toBe(1);
+        expect(app.eventsFor(member.user.id, "message:new").length).toBe(1);
         const history = (await app.call(
             "history.list",
             { session: `g:${group.id}` },
@@ -181,7 +180,7 @@ describe("group messaging", () => {
     });
 
     it("passes quote and mentions through to storage", async () => {
-        const { app, owner, member, group } = await makeGroup("ta", "tb");
+        const { app, owner, group } = await makeGroup("ta", "tb");
         const sent = (await app.call(
             "message.send",
             {

@@ -18,7 +18,9 @@ import { uiMediaViewerPlugin } from "./ui-mediaviewer";
 import { uiMessagesPlugin } from "./ui-messages";
 import { uiProfilePlugin } from "./ui-profile";
 import { uiProfileCardPlugin } from "./ui-profilecard";
+import { uiScreenPlugin } from "./ui-screen";
 import { uiSidebarPlugin } from "./ui-sidebar";
+import { uiVoicePlugin } from "./ui-voice";
 
 export const globalPlugins: Plugin[] = [
     authPlugin,
@@ -40,6 +42,8 @@ export const globalPlugins: Plugin[] = [
     uiProfileCardPlugin,
     uiMediaViewerPlugin,
     uiGroupPanelPlugin,
+    uiScreenPlugin,
+    uiVoicePlugin,
     uiAdminPlugin,
 ];
 

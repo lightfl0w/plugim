@@ -1,8 +1,8 @@
 import { Context } from "@plugim/core";
 import type { GroupInfo } from "@plugim/protocol";
 import { describe, expect, it, vi } from "vitest";
-import { groupsPlugin, type GroupsService } from "../src/plugins/groups";
 import type { ConnStatus, RpcService } from "../src/plugins/connection";
+import { type GroupsService, groupsPlugin } from "../src/plugins/groups";
 
 const group = (id: string, name: string): GroupInfo => ({
     id,

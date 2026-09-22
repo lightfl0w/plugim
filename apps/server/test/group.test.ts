@@ -34,9 +34,11 @@ describe("group lifecycle", () => {
         expect(ownList.map((g) => g.id)).toEqual([group.id]);
         expect(memberList.map((g) => g.id)).toEqual([group.id]);
         await expect(
-            app.call("group.info", { groupId: group.id }, (
-                await app.register("nobody")
-            ).user),
+            app.call(
+                "group.info",
+                { groupId: group.id },
+                (await app.register("nobody")).user,
+            ),
         ).rejects.toThrow("不在该群");
     });
 
@@ -66,9 +68,9 @@ describe("group lifecycle", () => {
             { groupId: group.id },
             owner.user,
         )) as { members: GroupMember[] };
-        expect(
-            promoted.members.find((m) => m.username === "mem")?.role,
-        ).toBe("admin");
+        expect(promoted.members.find((m) => m.username === "mem")?.role).toBe(
+            "admin",
+        );
         await app.call(
             "group.member.role",
             { groupId: group.id, username: "mem", role: "member" },
@@ -91,11 +93,7 @@ describe("group lifecycle", () => {
         )) as { members: GroupMember[] };
         expect(afterLeave.members.map((m) => m.username)).not.toContain("mem");
         await expect(
-            app.call(
-                "group.info",
-                { groupId: group.id },
-                member.user,
-            ),
+            app.call("group.info", { groupId: group.id }, member.user),
         ).rejects.toThrow("不在该群");
     });
 
@@ -131,7 +129,7 @@ describe("friends vs groups", () => {
     it("blocks friend requests between group members", async () => {
         const app = await createTestApp();
         const a = await app.register("fa");
-        const b = await app.register("fb");
+        await app.register("fb");
         await app.call(
             "group.create",
             { name: "共同群", members: ["fb"] },

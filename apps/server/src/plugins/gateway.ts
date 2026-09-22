@@ -225,6 +225,13 @@ export const gatewayPlugin: Plugin = {
             ),
         ];
 
+        const isUserOnline = (userId: string): boolean => {
+            for (const user of identities.values()) {
+                if (user?.id === userId) return true;
+            }
+            return false;
+        };
+
         const kickUser = (userId: string) => {
             for (const [ws, user] of identities) {
                 if (user?.id === userId) ws.close();
@@ -240,6 +247,7 @@ export const gatewayPlugin: Plugin = {
             },
             connections: () => sockets.size,
             onlineUserIds,
+            isUserOnline,
             kickUser,
         };
 

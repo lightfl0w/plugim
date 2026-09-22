@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { Context } from "@plugim/core";
 import type { ChatMessage } from "@plugim/protocol";
 import { beforeAll, describe, expect, it } from "vitest";
-import { cachePlugin, type CacheService } from "../src/plugins/cache";
+import { type CacheService, cachePlugin } from "../src/plugins/cache";
 
 const stamp = (id: string) =>
     new Date(
@@ -54,12 +54,12 @@ describe("message cache", () => {
         await cache.putMessages("t3", "s1", [msg("a", "s1")]);
         await cache.putMessages("t3", "s2", [msg("b", "s2")]);
         await cache.putMessages("t4", "s1", [msg("c", "s1")]);
-        expect(
-            (await cache.getMessages("t3", "s1")).map((m) => m.id),
-        ).toEqual(["a"]);
-        expect(
-            (await cache.getMessages("t4", "s1")).map((m) => m.id),
-        ).toEqual(["c"]);
+        expect((await cache.getMessages("t3", "s1")).map((m) => m.id)).toEqual([
+            "a",
+        ]);
+        expect((await cache.getMessages("t4", "s1")).map((m) => m.id)).toEqual([
+            "c",
+        ]);
     });
 
     it("marks recalled messages in cache and preview", async () => {

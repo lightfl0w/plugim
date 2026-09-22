@@ -11,11 +11,7 @@ const adminSetup = async () => {
 describe("admin rpc", () => {
     it("rejects non-admins on every admin method", async () => {
         const { app, victim } = await adminSetup();
-        for (const method of [
-            "admin.users",
-            "admin.groups",
-            "admin.stats",
-        ]) {
+        for (const method of ["admin.users", "admin.groups", "admin.stats"]) {
             await expect(app.call(method, {}, victim.user)).rejects.toThrow(
                 "管理员",
             );
@@ -38,9 +34,10 @@ describe("admin rpc", () => {
             isAdmin: boolean;
         }[];
         expect(users).toHaveLength(2);
-        expect(
-            users.find((u) => u.username === "root"),
-        ).toMatchObject({ online: true, isAdmin: true });
+        expect(users.find((u) => u.username === "root")).toMatchObject({
+            online: true,
+            isAdmin: true,
+        });
         expect(users.find((u) => u.username === "vic")?.online).toBe(false);
     });
 
@@ -57,9 +54,10 @@ describe("admin rpc", () => {
             online: boolean;
             banned: boolean;
         }[];
-        expect(
-            users.find((u) => u.username === "vic"),
-        ).toMatchObject({ online: false, banned: true });
+        expect(users.find((u) => u.username === "vic")).toMatchObject({
+            online: false,
+            banned: true,
+        });
         await expect(app.login("vic")).rejects.toThrow("封禁");
     });
 
@@ -89,9 +87,9 @@ describe("admin rpc", () => {
             { userId: victim.user.id, on: false },
             root.user,
         );
-        await expect(
-            app.call("admin.stats", {}, victim.user),
-        ).rejects.toThrow("管理员");
+        await expect(app.call("admin.stats", {}, victim.user)).rejects.toThrow(
+            "管理员",
+        );
     });
 
     it("lists groups with owner names and disbands them", async () => {
@@ -101,24 +99,18 @@ describe("admin rpc", () => {
             { name: "待解散群", members: ["root"] },
             victim.user,
         )) as { id: string };
-        const groups = (await app.call(
-            "admin.groups",
-            {},
-            root.user,
-        )) as { id: string; ownerName: string; memberCount: number }[];
+        const groups = (await app.call("admin.groups", {}, root.user)) as {
+            id: string;
+            ownerName: string;
+            memberCount: number;
+        }[];
         expect(groups[0]).toMatchObject({
             id: group.id,
             ownerName: "vic",
             memberCount: 2,
         });
-        await app.call(
-            "admin.group.delete",
-            { groupId: group.id },
-            root.user,
-        );
-        expect(
-            await app.call("admin.groups", {}, root.user),
-        ).toHaveLength(0);
+        await app.call("admin.group.delete", { groupId: group.id }, root.user);
+        expect(await app.call("admin.groups", {}, root.user)).toHaveLength(0);
     });
 
     it("reports system stats", async () => {

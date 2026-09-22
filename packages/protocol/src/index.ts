@@ -83,13 +83,40 @@ export interface ReceiptUpdate {
     at: string;
 }
 
+export type ScreenSignalType =
+    | "invite"
+    | "accept"
+    | "decline"
+    | "hangup"
+    | "offer"
+    | "answer"
+    | "ice";
+
+export type CallKind = "screen" | "voice";
+
+export interface ScreenSignal {
+    type: ScreenSignalType;
+    callId: string;
+    from: string;
+    kind?: CallKind;
+    sdp?: string;
+    candidate?: unknown;
+}
+
+export interface IceServerConfig {
+    urls: string | string[];
+    username?: string;
+    credential?: string;
+}
+
 export type ServerEventName =
     | "message:new"
     | "message:recalled"
     | "friend:update"
     | "group:update"
     | "presence:update"
-    | "receipt:update";
+    | "receipt:update"
+    | "screen:signal";
 
 export interface ServerEvent<P = unknown> {
     kind: "event";

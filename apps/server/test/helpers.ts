@@ -1,13 +1,14 @@
-import { Context } from "@plugim/core";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Context } from "@plugim/core";
 import { adminPlugin } from "../src/plugins/admin";
 import { authPlugin } from "../src/plugins/auth";
 import { chatPlugin } from "../src/plugins/chat";
 import type { AppConfig } from "../src/plugins/config";
 import { friendsPlugin } from "../src/plugins/friends";
 import { groupPlugin } from "../src/plugins/group";
+import { screenPlugin } from "../src/plugins/screen";
 import { storagePlugin } from "../src/plugins/storage";
 import type { AuthUser, RpcHandler } from "../src/types";
 
@@ -35,7 +36,7 @@ export interface TestApp {
         password?: string,
     ): Promise<{ user: AuthUser; token: string }>;
     verify(token: string | null): Promise<AuthUser | null>;
-    setOnline(user: AuthUser | null): void;
+    setOnline(user: AuthUser | { id: string } | null): void;
 }
 
 const PASSWORD = "Passw0rd!";
@@ -49,7 +50,7 @@ export const createTestApp = async (
     let authenticator:
         | ((token: string | null) => Promise<AuthUser | null>)
         | undefined;
-    let onlineId: string | null = null;
+    const onlineIds = new Set<string>();
 
     ctx.provide("gateway", {
         rpc: (method: string, handler: RpcHandler) => {
@@ -67,16 +68,14 @@ export const createTestApp = async (
             authenticator = verifier;
         },
         connections: () => 1,
-        onlineUserIds: () => (onlineId ? [onlineId] : []),
+        onlineUserIds: () => [...onlineIds],
+        isUserOnline: (userId: string) => onlineIds.has(userId),
         kickUser: (userId: string) => {
-            if (onlineId === userId) onlineId = null;
+            onlineIds.delete(userId);
         },
     });
 
-    const dbFile = join(
-        mkdtempSync(join(tmpdir(), "plugim-test-")),
-        "test.db",
-    );
+    const dbFile = join(mkdtempSync(join(tmpdir(), "plugim-test-")), "test.db");
     ctx.provide<AppConfig>("config", {
         port: 0,
         dbDriver: "sqlite",
@@ -85,6 +84,7 @@ export const createTestApp = async (
         defaultSession: "general",
         jwtSecret: "test-secret",
         bootstrapAdmins: options.admins ?? [],
+        iceServers: [{ urls: ["stun:stun.test:3478"] }],
     });
 
     ctx.plugin(storagePlugin);
@@ -92,6 +92,7 @@ export const createTestApp = async (
     ctx.plugin(friendsPlugin);
     ctx.plugin(groupPlugin);
     ctx.plugin(chatPlugin);
+    ctx.plugin(screenPlugin);
     ctx.plugin(adminPlugin);
     await ctx.start();
 
@@ -120,9 +121,7 @@ export const createTestApp = async (
                     (name === undefined || event.name === name),
             ),
         register: async (username, password = PASSWORD) =>
-            toAuthUser(
-                await call("auth.register", { username, password }),
-            ),
+            toAuthUser(await call("auth.register", { username, password })),
         login: async (username, password = PASSWORD) =>
             toAuthUser(await call("auth.login", { username, password })),
         verify: (token) =>
@@ -130,7 +129,8 @@ export const createTestApp = async (
                 ? authenticator(token)
                 : Promise.reject(new Error("authenticator not set")),
         setOnline: (user) => {
-            onlineId = user?.id ?? null;
+            if (user === null) onlineIds.clear();
+            else onlineIds.add(user.id);
         },
     };
 };

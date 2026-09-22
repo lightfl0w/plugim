@@ -1,4 +1,5 @@
 import type { Plugin } from "@plugim/core";
+import type { IceServerConfig } from "@plugim/protocol";
 
 export interface AppConfig {
     port: number;
@@ -8,6 +9,7 @@ export interface AppConfig {
     defaultSession: string;
     jwtSecret: string;
     bootstrapAdmins: string[];
+    iceServers: IceServerConfig[];
 }
 
 export const configPlugin: Plugin = {
@@ -34,6 +36,27 @@ export const configPlugin: Plugin = {
                 .split(",")
                 .map((name) => name.trim().toLowerCase())
                 .filter(Boolean),
+            iceServers: [
+                {
+                    urls: (
+                        process.env.PLUGIM_STUN_URLS ??
+                        "stun:stun.l.google.com:19302"
+                    )
+                        .split(",")
+                        .map((url) => url.trim())
+                        .filter(Boolean),
+                },
+                ...(process.env.PLUGIM_TURN_URL
+                    ? [
+                          {
+                              urls: process.env.PLUGIM_TURN_URL,
+                              username:
+                                  process.env.PLUGIM_TURN_USER ?? "plugim",
+                              credential: process.env.PLUGIM_TURN_PASS ?? "",
+                          },
+                      ]
+                    : []),
+            ],
         });
         return undefined;
     },

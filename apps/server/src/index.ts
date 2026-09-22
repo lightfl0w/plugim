@@ -6,6 +6,7 @@ import { configPlugin } from "./plugins/config";
 import { friendsPlugin } from "./plugins/friends";
 import { gatewayPlugin } from "./plugins/gateway";
 import { groupPlugin } from "./plugins/group";
+import { screenPlugin } from "./plugins/screen";
 import { storagePlugin } from "./plugins/storage";
 
 const ctx = new Context();
@@ -16,6 +17,7 @@ ctx.plugin(authPlugin);
 ctx.plugin(friendsPlugin);
 ctx.plugin(groupPlugin);
 ctx.plugin(chatPlugin);
+ctx.plugin(screenPlugin);
 ctx.plugin(adminPlugin);
 
 ctx.start().catch((err) => {

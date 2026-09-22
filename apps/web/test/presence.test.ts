@@ -1,10 +1,7 @@
 import { Context } from "@plugim/core";
 import { describe, expect, it, vi } from "vitest";
-import {
-    presencePlugin,
-    type PresenceService,
-} from "../src/plugins/presence";
 import type { RpcService } from "../src/plugins/connection";
+import { type PresenceService, presencePlugin } from "../src/plugins/presence";
 
 const makePresence = (online: string[]) => {
     const ctx = new Context();

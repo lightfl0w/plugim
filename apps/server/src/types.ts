@@ -30,6 +30,7 @@ export interface GatewayService {
     setAuthenticator(verifier: TokenVerifier): void;
     connections(): number;
     onlineUserIds(): string[];
+    isUserOnline(userId: string): boolean;
     kickUser(userId: string): void;
 }
 

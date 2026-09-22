@@ -57,9 +57,7 @@ describe("auth rpc", () => {
         const { user } = await app.register("frank");
         const info = await app.call("user.info", { username: "frank" }, user);
         expect(info).toMatchObject({ username: "frank" });
-        expect(
-            (info as { createdAt: string }).createdAt,
-        ).toMatch(/^\d{4}-/);
+        expect((info as { createdAt: string }).createdAt).toMatch(/^\d{4}-/);
         await expect(
             app.call("user.info", { username: "ghost" }, user),
         ).rejects.toThrow("不存在");

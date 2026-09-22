@@ -756,7 +756,7 @@ export const uiSidebarPlugin: Plugin = {
                                         }
                                     />
                                     <p className="text-xs text-muted-foreground">
-                                        邀请好友（可选）
+                                        邀请好友
                                     </p>
                                     <div className="max-h-56 overflow-y-auto rounded-lg border border-border">
                                         {(list?.friends ?? []).length === 0 ? (

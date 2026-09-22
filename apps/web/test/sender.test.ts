@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import type { AuthService } from "../src/plugins/auth";
 import type { RpcService } from "../src/plugins/connection";
 import {
-    senderPlugin,
     type PendingEvent,
     type SenderService,
+    senderPlugin,
 } from "../src/plugins/sender";
 
 const serverMessage = (over: Partial<ChatMessage> = {}): ChatMessage => ({
