@@ -29,9 +29,11 @@ pnpm start
 默认监听 3000。只要 `apps/web/dist` 存在，同一个端口就同时提供页面、`/rpc/*` 接口和 `/ws` WebSocket，不需要另外起静态服务器；没有这个目录时只提供接口。
 
 ```bash
-curl http://localhost:3000/health   # {"ok":true,"connections":0}
-curl http://localhost:3000/version  # {"name":"plugim","version":"0.1.0",...}
+curl http://localhost:3000/health
+curl http://localhost:3000/version
 ```
+
+`/health` 返回 `{"ok":true,"connections":0}`，connections 是当前 WebSocket 连接数；`/version` 返回名称、版本、Node 版本和监听端口。
 
 ## 安装向导
 
@@ -48,8 +50,8 @@ curl http://localhost:3000/version  # {"name":"plugim","version":"0.1.0",...}
 ## 开发模式
 
 ```bash
-pnpm dev:server   # tsx watch，端口 3000
-pnpm dev:web      # vite，端口 5173，自动代理 /rpc 与 /ws
+pnpm dev:server
+pnpm dev:web
 ```
 
-开发时前端没有构建产物，3000 端口只有接口，日常访问 5173。
+开发时前端没有构建产物，3000 端口只有接口，日常访问 5173；Vite 已经把 `/rpc`、`/upload`、`/files`、`/ws` 代理到 3000。

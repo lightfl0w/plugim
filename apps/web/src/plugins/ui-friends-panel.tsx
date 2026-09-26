@@ -1,5 +1,6 @@
 import type { Context } from "@plugim/core";
 import type { FriendListResult } from "@plugim/protocol";
+import { ArrowLeftIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -8,7 +9,7 @@ import { Input } from "../components/ui/input";
 import { Separator } from "../components/ui/separator";
 import { UserAvatar } from "../components/ui/user-avatar";
 import type { FriendsService } from "./friends";
-import { displayName } from "./ui-shared";
+import { displayName, openChat, setShellPane } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 type DetailView =
@@ -98,11 +99,12 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                                     key={name}
                                     variant="ghost"
                                     className="h-10 w-full justify-start gap-2 rounded-lg px-2 text-foreground hover:bg-accent/60"
-                                    onClick={() =>
+                                    onClick={() => {
                                         ctx.emit("ui:friend:select", {
                                             name,
-                                        })
-                                    }
+                                        });
+                                        setShellPane("chat");
+                                    }}
                                 >
                                     <UserAvatar name={name} size="sm" />
                                     <span className="flex min-w-0 flex-col text-left">
@@ -200,7 +202,10 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                     <button
                         type="button"
                         className="mt-auto flex h-10 shrink-0 items-center justify-between rounded-lg px-3 text-sm text-muted-foreground hover:bg-accent/60"
-                        onClick={() => ctx.emit("ui:friends:view", {})}
+                        onClick={() => {
+                            ctx.emit("ui:friends:view", {});
+                            setShellPane("chat");
+                        }}
                     >
                         <span>已发出的申请</span>
                         <span>{list?.outgoing.length ?? 0}</span>
@@ -210,11 +215,32 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
         );
     };
 
+    const BackBar = () => (
+        <div className="flex h-11 min-h-11 shrink-0 items-center px-2 md:hidden">
+            <button
+                type="button"
+                title="返回"
+                className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setShellPane("list")}
+            >
+                <ArrowLeftIcon className="size-4" />
+            </button>
+        </div>
+    );
+
     const OutgoingView = () => {
         const list = useFriendList();
         return (
             <div className="flex h-full flex-col">
-                <div className="flex h-12 min-h-12 shrink-0 items-center border-b border-border px-4">
+                <div className="flex h-12 min-h-12 shrink-0 items-center gap-1 border-b border-border px-2 md:px-4">
+                    <button
+                        type="button"
+                        title="返回"
+                        className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"
+                        onClick={() => setShellPane("list")}
+                    >
+                        <ArrowLeftIcon className="size-4" />
+                    </button>
                     <p className="text-sm font-semibold">
                         已发出的申请（{list?.outgoing.length ?? 0}）
                     </p>
@@ -258,8 +284,9 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
         const remark = list?.remarks?.[name] ?? "";
         return (
             <div className="flex h-full flex-col overflow-y-auto">
+                <BackBar />
                 <div className="h-28 shrink-0 bg-muted" />
-                <div className="-mt-10 flex items-end gap-4 px-6 pb-4">
+                <div className="-mt-10 flex items-end gap-4 px-4 pb-4 md:px-6">
                     <UserAvatar
                         name={name}
                         size="lg"
@@ -273,13 +300,14 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                             {remark ? `${name} 的好友` : "好友"}
                         </p>
                     </div>
-                    <div className="flex gap-2 pb-1">
+                    <div className="flex flex-wrap gap-2 pb-1">
                         <Button
                             onClick={() => {
-                                ctx.emit("ui:chat:open", {
+                                openChat(ctx, {
                                     session: `p2p:${name}`,
                                     title: displayName(name, list?.remarks),
                                 });
+                                setShellPane("chat");
                                 navigate("/chat");
                             }}
                         >

@@ -590,7 +590,7 @@ export const uiCallSetup = async (ctx: Context) => {
                     </div>
                 ) : null}
                 {showVideoPanel ? (
-                    <div className="pointer-events-auto absolute right-4 bottom-4 flex w-[22rem] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                    <div className="pointer-events-auto absolute right-3 bottom-3 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl md:right-4 md:bottom-4">
                         <div className="relative">
                             <video
                                 ref={videoRef}

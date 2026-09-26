@@ -3,13 +3,14 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
     lang: "zh-CN",
     title: "plugim",
-    description: "插件化即时通讯的部署与运维文档",
+    description: "插件化即时通讯的部署、运维与开发文档",
     lastUpdated: true,
     cleanUrls: true,
     themeConfig: {
         nav: [
             { text: "指南", link: "/guide/install", activeMatch: "/guide/" },
             { text: "配置", link: "/config/env", activeMatch: "/config/" },
+            { text: "开发", link: "/dev/plugin", activeMatch: "/dev/" },
         ],
         sidebar: {
             "/guide/": [
@@ -33,10 +34,20 @@ export default defineConfig({
                     items: [{ text: "环境变量", link: "/config/env" }],
                 },
             ],
+            "/dev/": [
+                {
+                    text: "开发",
+                    items: [
+                        { text: "插件模型", link: "/dev/plugin" },
+                        { text: "界面插件", link: "/dev/ui" },
+                        { text: "测试与校验", link: "/dev/test" },
+                    ],
+                },
+            ],
         },
         search: { provider: "local" },
         outline: { level: [2, 3] },
         socialLinks: [],
-        footer: { message: "plugim 部署文档" },
+        footer: { message: "plugim 文档" },
     },
 });

@@ -453,7 +453,7 @@ export const uiScreenSetup = async (ctx: Context) => {
                     </div>
                 ) : null}
                 {s.phase === "viewing" || s.phase === "connecting" ? (
-                    <div className="pointer-events-auto absolute right-4 bottom-4 flex w-[26rem] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+                    <div className="pointer-events-auto absolute right-3 bottom-3 flex w-[min(26rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl md:right-4 md:bottom-4">
                         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
                             <PhoneForwardedIcon className="size-4 text-emerald-500" />
                             <p className="min-w-0 flex-1 truncate text-sm font-medium">

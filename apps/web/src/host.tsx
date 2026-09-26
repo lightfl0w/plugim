@@ -22,6 +22,7 @@ import { Button } from "./components/ui/button";
 import { Switch } from "./components/ui/switch";
 import { saveDisabledPlugins } from "./plugins/registry";
 import type { SettingsService } from "./plugins/settings";
+import { isPopupWindow } from "./plugins/ui-shared";
 import type { UiService, UiSlot } from "./plugins/ui-types";
 
 interface SlotEntry {
@@ -235,19 +236,20 @@ export const mountHost = (ctx: Context): void => {
     const HostLayout = () => {
         const [, bump] = useReducer(bumpReducer, 0);
         const location = useLocation();
-        const chromeless = CHROMELESS_ROUTES.has(location.pathname);
+        const chromeless =
+            CHROMELESS_ROUTES.has(location.pathname) || isPopupWindow();
         useEffect(() => subscribe(bump), []);
         return (
-            <div className="flex h-dvh w-full">
+            <div className="flex h-dvh w-full flex-col md:flex-row">
                 {!chromeless ? (
-                    <aside className="flex w-16 shrink-0 flex-col items-center border-r border-border bg-muted/40 py-3">
+                    <aside className="order-last flex h-14 w-full shrink-0 items-center border-t border-border bg-muted/40 pb-[env(safe-area-inset-bottom)] md:order-none md:h-auto md:w-16 md:flex-col md:border-t-0 md:border-r md:py-3 md:pb-3">
                         <Slot
                             slot="nav"
-                            className="flex min-h-0 flex-1 flex-col items-center gap-2"
+                            className="flex min-h-0 flex-1 items-center justify-around gap-2 px-2 md:flex-col md:justify-start md:px-0"
                         />
                     </aside>
                 ) : null}
-                <main className="flex min-w-0 flex-1 flex-col">
+                <main className="flex min-h-0 min-w-0 flex-1 flex-col">
                     <Routes>
                         <Route
                             path="/settings/plugins"

@@ -324,12 +324,12 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
             ) : null;
 
         return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 max-md:p-0">
                 <div
                     ref={panelRef}
                     role="dialog"
                     aria-label="群管理"
-                    className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-card shadow-xl"
+                    className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-card shadow-xl max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none"
                 >
                     <div className="flex items-center gap-2 border-b border-border px-4 py-3">
                         <p className="min-w-0 flex-1 truncate text-sm font-semibold">

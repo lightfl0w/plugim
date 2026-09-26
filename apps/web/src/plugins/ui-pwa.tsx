@@ -1,6 +1,7 @@
 import type { Context } from "@plugim/core";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { openChat, setShellPane } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const PENDING_KEY = "plugim:push-open";
@@ -42,7 +43,8 @@ export const uiPwaSetup = async (ctx: Context) => {
         const session = data.session ?? "";
         if (!session) return;
         if (window.location.pathname === "/chat") {
-            ctx.emit("ui:chat:open", { session, title: session });
+            openChat(ctx, { session, title: session });
+            setShellPane("chat");
             return;
         }
         sessionStorage.setItem(PENDING_KEY, session);
@@ -57,7 +59,8 @@ export const uiPwaSetup = async (ctx: Context) => {
         const navigate = useNavigate();
         useEffect(() => {
             const open = (session: string) => {
-                ctx.emit("ui:chat:open", { session, title: session });
+                openChat(ctx, { session, title: session });
+                setShellPane("chat");
                 void navigate("/chat");
             };
             const flush = () => {

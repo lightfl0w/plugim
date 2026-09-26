@@ -12,6 +12,7 @@ import {
     LogOutIcon,
     MessageSquarePlusIcon,
     MessagesSquareIcon,
+    PictureInPicture2Icon,
     PlusIcon,
     ShieldIcon,
     UsersIcon,
@@ -36,7 +37,17 @@ import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { PresenceService } from "./presence";
 import type { AdminService } from "./ui-admin";
-import { clientSessionOf, displayName, messageLabel } from "./ui-shared";
+import {
+    clientSessionOf,
+    currentChatTarget,
+    displayName,
+    isPopupWindow,
+    longPressMenu,
+    messageLabel,
+    openChat,
+    openDetachedChat,
+    setShellPane,
+} from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const BASE_TITLE = "plugim";
@@ -131,15 +142,18 @@ function NavIcon({
     to,
     icon,
     label,
+    onOpen,
 }: {
     to: string;
     icon: ReactNode;
     label: string;
+    onOpen?: () => void;
 }) {
     return (
         <NavLink
             to={to}
             title={label}
+            onClick={onOpen}
             className={({ isActive }) =>
                 cn(
                     "flex size-10 items-center justify-center rounded-lg",
@@ -179,13 +193,15 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     to="/chat"
                     icon={<MessagesSquareIcon className="size-5" />}
                     label="聊天"
+                    onOpen={() => setShellPane("list")}
                 />
                 <NavIcon
                     to="/friends"
                     icon={<UsersIcon className="size-5" />}
                     label="好友"
+                    onOpen={() => setShellPane("list")}
                 />
-                <div className="mt-auto flex flex-col items-center gap-1">
+                <div className="flex items-center gap-1 md:mt-auto md:flex-col">
                     {user ? (
                         <NavLink
                             to="/me"
@@ -234,7 +250,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const [groupList, setGroupList] = useState<GroupInfo[] | null>(
             groups.cached(),
         );
-        const [active, setActive] = useState("general");
+        const [active, setActive] = useState(currentChatTarget().session);
         const [unread, setUnread] = useState<Record<string, number>>({});
         const [previews, setPreviews] = useState<
             Record<string, SessionPreview>
@@ -516,7 +532,8 @@ export const uiSidebarSetup = async (ctx: Context) => {
         }, [query]);
 
         const openSession = (session: string, label: string) => {
-            ctx.emit("ui:chat:open", { session, title: label });
+            openChat(ctx, { session, title: label });
+            setShellPane("chat");
             navigate("/chat");
         };
 
@@ -531,10 +548,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
         };
 
         useEffect(() => {
-            ctx.emit("ui:chat:open", {
-                session: "general",
-                title: "综合频道",
-            });
+            openChat(ctx, { session: "general", title: "综合频道" });
         }, []);
 
         const entries = [
@@ -613,6 +627,9 @@ export const uiSidebarSetup = async (ctx: Context) => {
                             label,
                         });
                     }}
+                    {...longPressMenu((x, y) =>
+                        setSessionMenu({ x, y, session, label }),
+                    )}
                     className={cn(
                         "flex w-full shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors",
                         active === session
@@ -868,6 +885,14 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                   },
                               )
                             : null}
+                        {isPopupWindow()
+                            ? null
+                            : menuButton(
+                                  "window",
+                                  <PictureInPicture2Icon className="size-4" />,
+                                  "独立窗口打开",
+                                  () => openDetachedChat(sessionMenu.session),
+                              )}
                     </div>
                 ) : null}
                 {createOpen ? (

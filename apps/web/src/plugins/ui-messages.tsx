@@ -33,7 +33,12 @@ import type { ConnStatus, RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { PendingEvent, PendingMessage, SenderService } from "./sender";
-import { formatBytes, messageLabel } from "./ui-shared";
+import {
+    formatBytes,
+    longPressMenu,
+    messageLabel,
+    useChatTarget,
+} from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const PAGE_SIZE = 30;
@@ -161,7 +166,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
     const groups = ctx.get<GroupsService>("groups");
 
     const Messages = () => {
-        const [session, setSession] = useState("");
+        const { session } = useChatTarget();
         const [messages, setMessages] = useState<ChatMessage[]>([]);
         const [status, setStatus] = useState<ConnStatus>(rpc.status());
         const [loadingOlder, setLoadingOlder] = useState(false);
@@ -289,8 +294,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
         }, []);
 
         useEffect(() => {
-            const disposeOpen = ctx.on("ui:chat:open", (payload) => {
-                setSession((payload as { session: string }).session);
+            const disposeOpen = ctx.on("ui:chat:open", () => {
                 setSelectMode(false);
                 setSelectedIds(new Set());
             });
@@ -954,7 +958,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     <div
                         ref={scrollRef}
                         onScroll={handleScroll}
-                        className="flex min-h-0 flex-1 flex-col gap-1 overflow-x-clip overflow-y-auto px-4 py-3"
+                        className="flex min-h-0 flex-1 flex-col gap-1 overflow-x-clip overflow-y-auto px-2 py-3 md:px-4"
                     >
                         {groupInfo?.notice ? (
                             <button
@@ -1098,6 +1102,14 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                                 message,
                                                             });
                                                         }}
+                                                        {...longPressMenu(
+                                                            (x, y) =>
+                                                                setMenu({
+                                                                    x,
+                                                                    y,
+                                                                    message,
+                                                                }),
+                                                        )}
                                                     >
                                                         <BubbleContent
                                                             className={

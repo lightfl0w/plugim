@@ -648,13 +648,13 @@ export const uiAdminSetup = async (ctx: Context) => {
                     <div className="flex h-12 min-h-12 shrink-0 items-center gap-2 border-b border-border px-4">
                         <ShieldIcon className="size-4 text-primary" />
                         <p className="text-sm font-semibold">后台管理</p>
-                        <div className="ml-4 flex gap-1">
+                        <div className="ml-2 flex min-w-0 flex-1 gap-1 overflow-x-auto md:ml-4">
                             {tabs.map((item) => (
                                 <button
                                     key={item.key}
                                     type="button"
                                     className={cn(
-                                        "rounded-md px-3 py-1 text-xs",
+                                        "shrink-0 rounded-md px-2.5 py-1 text-xs md:px-3",
                                         tab === item.key
                                             ? "bg-primary text-primary-foreground"
                                             : "text-muted-foreground hover:bg-accent",
@@ -675,7 +675,7 @@ export const uiAdminSetup = async (ctx: Context) => {
                             <UsersIcon />
                         </Button>
                     </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                    <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto p-3 md:p-4">
                         {error ? (
                             <p className="mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
                                 {error}

@@ -1,11 +1,24 @@
 import type { Context } from "@plugim/core";
 import type { GroupInfo } from "@plugim/protocol";
-import { SearchIcon, SettingsIcon, XIcon } from "lucide-react";
+import {
+    ArrowLeftIcon,
+    PictureInPicture2Icon,
+    SearchIcon,
+    SettingsIcon,
+    XIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ConnStatus, RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { PresenceService } from "./presence";
-import { displayName } from "./ui-shared";
+import {
+    displayName,
+    isPopupWindow,
+    openDetachedChat,
+    setShellPane,
+    useChatTarget,
+    useShellPane,
+} from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const statusColor: Record<ConnStatus, string> = {
@@ -28,11 +41,11 @@ export const uiHeaderSetup = async (ctx: Context) => {
 
     const Header = () => {
         const [status, setStatus] = useState(rpc.status());
-        const [title, setTitle] = useState("");
-        const [session, setSession] = useState("");
+        const { session, title } = useChatTarget();
         const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
         const [searchOpen, setSearchOpen] = useState(false);
         const [query, setQuery] = useState("");
+        const pane = useShellPane();
         const inputRef = useRef<HTMLInputElement>(null);
         const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(
             undefined,
@@ -50,18 +63,7 @@ export const uiHeaderSetup = async (ctx: Context) => {
         useEffect(() => rpc.onStatus(setStatus), []);
 
         useEffect(() => {
-            const disposeOpen = ctx.on("ui:chat:open", (payload) => {
-                const data = payload as {
-                    title?: string;
-                    session?: string;
-                };
-                const next = data.session ?? "";
-                setTitle(
-                    next.startsWith("p2p:")
-                        ? displayName(next.slice(4), friends.cached()?.remarks)
-                        : (data.title ?? "会话"),
-                );
-                setSession(next);
+            const disposeOpen = ctx.on("ui:chat:open", () => {
                 setSearchOpen(false);
                 setQuery("");
                 ctx.emit("ui:chat:search", { query: "" });
@@ -97,12 +99,31 @@ export const uiHeaderSetup = async (ctx: Context) => {
         };
 
         const peerName = session.startsWith("p2p:") ? session.slice(4) : null;
+        const popup = isPopupWindow();
+        const groupName = session.startsWith("g:")
+            ? groupInfo?.name
+            : undefined;
+        const shownTitle = peerName
+            ? displayName(peerName, friends.cached()?.remarks)
+            : groupName || title || "选择会话";
 
         return (
-            <div className="flex w-full items-center gap-2">
-                <p className="text-sm font-semibold">{title || "选择会话"}</p>
+            <div className="flex w-full min-w-0 items-center gap-2">
+                {!popup && pane === "chat" ? (
+                    <button
+                        type="button"
+                        title="返回会话列表"
+                        className="-ml-1 flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"
+                        onClick={() => setShellPane("list")}
+                    >
+                        <ArrowLeftIcon className="size-4" />
+                    </button>
+                ) : null}
+                <p className="min-w-0 truncate text-sm font-semibold">
+                    {shownTitle}
+                </p>
                 {groupInfo ? (
-                    <span className="text-xs text-muted-foreground">
+                    <span className="shrink-0 text-xs text-muted-foreground">
                         ({groupInfo.memberCount})
                     </span>
                 ) : null}
@@ -110,8 +131,8 @@ export const uiHeaderSetup = async (ctx: Context) => {
                     <span
                         className={
                             presence.isOnline(peerName)
-                                ? "text-xs text-emerald-600"
-                                : "text-xs text-muted-foreground"
+                                ? "shrink-0 text-xs text-emerald-600"
+                                : "shrink-0 text-xs text-muted-foreground"
                         }
                     >
                         {presence.isOnline(peerName) ? "在线" : "离线"}
@@ -121,7 +142,7 @@ export const uiHeaderSetup = async (ctx: Context) => {
                     title={statusText[status]}
                     className={`size-2 shrink-0 rounded-full ${statusColor[status]}`}
                 />
-                <div className="ml-auto flex items-center gap-1">
+                <div className="ml-auto flex shrink-0 items-center gap-1">
                     {groupInfo ? (
                         <button
                             type="button"
@@ -136,13 +157,23 @@ export const uiHeaderSetup = async (ctx: Context) => {
                             <SettingsIcon className="size-4" />
                         </button>
                     ) : null}
+                    {session && !popup ? (
+                        <button
+                            type="button"
+                            title="独立窗口"
+                            className="hidden rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground md:block"
+                            onClick={() => openDetachedChat(session)}
+                        >
+                            <PictureInPicture2Icon className="size-4" />
+                        </button>
+                    ) : null}
                     {searchOpen ? (
                         <div className="flex items-center gap-1 rounded-md bg-muted pl-2">
                             <input
                                 ref={inputRef}
                                 value={query}
                                 placeholder="搜索聊天记录"
-                                className="h-7 w-44 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                                className="h-7 w-28 bg-transparent text-xs outline-none placeholder:text-muted-foreground sm:w-44"
                                 onChange={(e) => pushQuery(e.target.value)}
                                 onKeyDown={(e) => {
                                     if (e.key === "Escape") {

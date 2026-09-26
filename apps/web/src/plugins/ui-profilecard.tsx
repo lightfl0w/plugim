@@ -13,7 +13,7 @@ import { UserAvatar } from "../components/ui/user-avatar";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
-import { displayName } from "./ui-shared";
+import { displayName, openChat, setShellPane } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 interface CardState {
@@ -101,10 +101,11 @@ export const uiProfileCardSetup = async (ctx: Context) => {
             !isSelf && (relation?.incoming.includes(card.username) ?? false);
 
         const startChat = () => {
-            ctx.emit("ui:chat:open", {
+            openChat(ctx, {
                 session: `p2p:${card.username}`,
                 title: displayName(card.username, relation?.remarks),
             });
+            setShellPane("chat");
             navigate("/chat");
             setCard(null);
         };
