@@ -79,6 +79,7 @@ export interface GroupInfo {
     ownerId: string;
     notice: string;
     muteAll: boolean;
+    noFriendAdd: boolean;
     createdAt: string;
     memberCount: number;
     myRole: GroupRole | null;

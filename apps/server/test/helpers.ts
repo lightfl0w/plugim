@@ -9,6 +9,7 @@ import type { AppConfig } from "../src/plugins/config";
 import { friendsPlugin } from "../src/plugins/friends";
 import { groupPlugin } from "../src/plugins/group";
 import { installPlugin } from "../src/plugins/install";
+import { pushPlugin } from "../src/plugins/push";
 import { screenPlugin } from "../src/plugins/screen";
 import { storagePlugin } from "../src/plugins/storage";
 import type { AuthUser, RpcHandler } from "../src/types";
@@ -99,6 +100,9 @@ export const createTestApp = async (
         bootstrapAdmins: options.admins ?? [],
         allowRegister: options.allowRegister ?? true,
         inviteCode: options.inviteCode ?? "",
+        vapidPublicKey: "",
+        vapidPrivateKey: "",
+        vapidSubject: "",
         iceServers: [{ urls: ["stun:stun.test:3478"] }],
     });
 
@@ -107,6 +111,7 @@ export const createTestApp = async (
     ctx.plugin(installPlugin);
     ctx.plugin(friendsPlugin);
     ctx.plugin(groupPlugin);
+    ctx.plugin(pushPlugin);
     ctx.plugin(chatPlugin);
     ctx.plugin(screenPlugin);
     ctx.plugin(adminPlugin);

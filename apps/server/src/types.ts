@@ -99,6 +99,7 @@ export interface GroupRow {
     ownerId: string;
     notice: string;
     muteAll: boolean;
+    noFriendAdd: boolean;
     createdAt: string;
 }
 
@@ -116,6 +117,7 @@ export interface GroupsStore {
     rename(id: string, name: string): Promise<void>;
     setNotice(id: string, notice: string): Promise<void>;
     setMuteAll(id: string, on: boolean): Promise<void>;
+    setNoFriendAdd(id: string, on: boolean): Promise<void>;
     addMember(groupId: string, userId: string): Promise<void>;
     removeMember(groupId: string, userId: string): Promise<void>;
     setRole(groupId: string, userId: string, role: GroupRole): Promise<void>;
@@ -124,7 +126,7 @@ export interface GroupsStore {
     memberIdsOf(groupId: string): Promise<string[]>;
     groupsOf(userId: string): Promise<GroupRow[]>;
     listAll(): Promise<(GroupRow & { memberCount: number })[]>;
-    shareGroup(aId: string, bId: string): Promise<boolean>;
+    friendAddBlocked(aId: string, bId: string): Promise<boolean>;
 }
 
 export interface ReadsStore {
@@ -135,6 +137,27 @@ export interface ReadsStore {
 export interface SettingsStore {
     get(key: string): Promise<string | null>;
     set(key: string, value: string): Promise<void>;
+}
+
+export interface PushSubscriptionRow {
+    userId: string;
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+    createdAt: string;
+}
+
+export interface PushStore {
+    save(input: {
+        userId: string;
+        endpoint: string;
+        p256dh: string;
+        auth: string;
+    }): Promise<void>;
+    remove(endpoint: string): Promise<void>;
+    ofUser(userId: string): Promise<PushSubscriptionRow[]>;
+    ofUsers(userIds: string[]): Promise<PushSubscriptionRow[]>;
+    ofAll(): Promise<PushSubscriptionRow[]>;
 }
 
 export type FriendStatus = "pending" | "accepted" | "blocked";

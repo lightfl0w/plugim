@@ -138,7 +138,7 @@ describe("groups store", () => {
         expect((await groups.groupsOf(member.id)).map((g) => g.id)).toEqual([
             group.id,
         ]);
-        expect(await groups.shareGroup(owner.id, member.id)).toBe(true);
+        expect(await groups.friendAddBlocked(owner.id, member.id)).toBe(false);
         expect(await groups.memberIdsOf(group.id)).toHaveLength(2);
 
         await groups.remove(group.id);

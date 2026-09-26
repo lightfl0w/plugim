@@ -21,11 +21,13 @@
         "hono": "^4.13.7",
         "jose": "^6.2.11",
         "postgres": "^3.4.9",
+        "web-push": "^3.6.7",
         "ws": "^8.21.3"
     },
     "devDependencies": {
         "@types/better-sqlite3": "^9.6.0",
         "@types/node": "^26.4.1",
+        "@types/web-push": "^3.6.4",
         "@types/ws": "^8.18.1",
         "tsup": "^8.5.1",
         "tsx": "^4.23.13",

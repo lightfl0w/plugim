@@ -6,12 +6,14 @@ import {
     ShieldIcon,
     UserMinusIcon,
     UserPlusIcon,
+    UserXIcon,
     Volume2Icon,
     VolumeXIcon,
     XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
+import { Switch } from "../components/ui/switch";
 import { UserAvatar } from "../components/ui/user-avatar";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
@@ -247,27 +249,43 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                         </section>
 
                         {privileged ? (
-                            <section className="flex items-center gap-3 border-b border-border px-4 py-3">
-                                <p className="flex-1 text-sm">全员禁言</p>
-                                <Button
-                                    size="sm"
-                                    variant={
-                                        info.muteAll ? "default" : "outline"
-                                    }
-                                    disabled={busy}
-                                    onClick={() =>
-                                        void act("group.muteAll", {
-                                            on: !info.muteAll,
-                                        })
-                                    }
-                                >
-                                    {info.muteAll ? (
-                                        <VolumeXIcon />
-                                    ) : (
-                                        <Volume2Icon />
-                                    )}
-                                    {info.muteAll ? "禁言中" : "已开启"}
-                                </Button>
+                            <section className="border-b border-border">
+                                <div className="flex items-center gap-3 px-4 py-3">
+                                    <Volume2Icon className="size-4 text-muted-foreground" />
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-sm">全员禁言</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            开启后普通成员无法发送消息
+                                        </p>
+                                    </div>
+                                    <Switch
+                                        checked={info.muteAll}
+                                        disabled={busy}
+                                        onToggle={() =>
+                                            void act("group.muteAll", {
+                                                on: !info.muteAll,
+                                            })
+                                        }
+                                    />
+                                </div>
+                                <div className="flex items-center gap-3 border-t border-border px-4 py-3">
+                                    <UserXIcon className="size-4 text-muted-foreground" />
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-sm">禁止互加好友</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            成员之间不能发送好友申请
+                                        </p>
+                                    </div>
+                                    <Switch
+                                        checked={info.noFriendAdd}
+                                        disabled={busy}
+                                        onToggle={() =>
+                                            void act("group.noFriendAdd", {
+                                                on: !info.noFriendAdd,
+                                            })
+                                        }
+                                    />
+                                </div>
                             </section>
                         ) : null}
 

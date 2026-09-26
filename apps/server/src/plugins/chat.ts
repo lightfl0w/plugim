@@ -19,6 +19,7 @@ import type {
     ReadsStore,
 } from "../types";
 import type { AppConfig } from "./config";
+import type { PushService } from "./push";
 
 const requireUser = (conn: ConnInfo): AuthUser => {
     if (!conn.user) throw new Error("未登录或登录已过期");
@@ -48,6 +49,7 @@ export const chatPlugin: Plugin = {
         "friendships",
         "groups",
         "reads",
+        "push",
     ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
@@ -57,6 +59,7 @@ export const chatPlugin: Plugin = {
         const friendships = ctx.get<FriendsStore>("friendships");
         const groups = ctx.get<GroupsStore>("groups");
         const reads = ctx.get<ReadsStore>("reads");
+        const push = ctx.get<PushService>("push");
 
         const resolveP2p = async (me: AuthUser, rawSession: string) => {
             const peerName = rawSession.slice(4).trim();
@@ -95,6 +98,18 @@ export const chatPlugin: Plugin = {
             file: FileMeta | null;
         }
 
+        const previewOf = (payload: SendPayload): string => {
+            if (payload.kind === "image") return "[图片]";
+            if (payload.kind === "audio") return "[语音]";
+            if (payload.kind === "video") return "[视频]";
+            if (payload.kind === "merge") return "[合并转发]";
+            if (payload.kind === "file")
+                return payload.file?.name
+                    ? `[文件] ${payload.file.name}`
+                    : "[文件]";
+            return payload.content.slice(0, 80);
+        };
+
         const sendTo = async (
             user: AuthUser,
             rawSession: string,
@@ -119,6 +134,11 @@ export const chatPlugin: Plugin = {
                 gateway.emitToUser(peer.id, "message:new", {
                     message: theirs,
                 });
+                push.deliver([peer.id], {
+                    title: user.username,
+                    body: previewOf(payload),
+                    session: `p2p:${user.username}`,
+                });
                 return mine;
             }
 
@@ -142,6 +162,14 @@ export const chatPlugin: Plugin = {
                     gateway.emitToUser(id, "message:new", {
                         message: saved,
                     });
+                push.deliver(
+                    ids.filter((id) => id !== user.id),
+                    {
+                        title: row.name,
+                        body: `${user.username}: ${previewOf(payload)}`,
+                        session: rawSession,
+                    },
+                );
                 return saved;
             }
 
@@ -151,6 +179,14 @@ export const chatPlugin: Plugin = {
                 ...payload,
             });
             gateway.broadcast("message:new", { message: saved });
+            push.deliverAll(
+                {
+                    title: user.username,
+                    body: previewOf(payload),
+                    session: rawSession,
+                },
+                user.id,
+            );
             return saved;
         };
 

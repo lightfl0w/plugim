@@ -126,18 +126,26 @@ describe("group lifecycle", () => {
 });
 
 describe("friends vs groups", () => {
-    it("blocks friend requests between group members", async () => {
+    it("blocks friend requests when the shared group forbids them", async () => {
         const app = await createTestApp();
         const a = await app.register("fa");
         await app.register("fb");
-        await app.call(
+        const group = (await app.call(
             "group.create",
             { name: "共同群", members: ["fb"] },
+            a.user,
+        )) as GroupInfo;
+        await expect(
+            app.call("friend.request", { username: "fb" }, a.user),
+        ).resolves.toBeTruthy();
+        await app.call(
+            "group.noFriendAdd",
+            { groupId: group.id, on: true },
             a.user,
         );
         await expect(
             app.call("friend.request", { username: "fb" }, a.user),
-        ).rejects.toThrow("群成员");
+        ).rejects.toThrow("禁止互加好友");
     });
 
     it("allows friend requests between non-members", async () => {

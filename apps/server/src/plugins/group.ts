@@ -44,6 +44,7 @@ export const groupPlugin: Plugin = {
                 ownerId: row.ownerId,
                 notice: row.notice,
                 muteAll: row.muteAll,
+                noFriendAdd: row.noFriendAdd,
                 createdAt: row.createdAt,
                 memberCount: members.length,
                 myRole: members.find((m) => m.userId === meId)?.role ?? null,
@@ -176,6 +177,18 @@ export const groupPlugin: Plugin = {
             await groups.setMuteAll(groupId, !!on);
             await notifyMembers(groupId);
             return infoOf({ ...row, muteAll: !!on }, me.id);
+        });
+
+        gateway.rpc("group.noFriendAdd", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { groupId, on } = raw as unknown as {
+                groupId: string;
+                on: boolean;
+            };
+            const { row } = await requireManage(groupId, me);
+            await groups.setNoFriendAdd(groupId, !!on);
+            await notifyMembers(groupId);
+            return infoOf({ ...row, noFriendAdd: !!on }, me.id);
         });
 
         gateway.rpc("group.member.add", async (raw, conn) => {

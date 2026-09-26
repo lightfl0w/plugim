@@ -25,7 +25,7 @@
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PLUGIM_JWT_SECRET` | 内置开发密钥 | 生产环境必须改，用 `openssl rand -hex 32` 生成；未设置时启动日志会告警 |
-| `PLUGIM_ADMINS` | `admin` | 引导管理员用户名，逗号分隔；这些用户名注册时自动获得管理员 |
+| `PLUGIM_ADMINS` | 空 | 引导管理员用户名，逗号分隔；这些用户名注册时自动获得管理员，留空则谁都不自动提升。仓库的 `.env.example` 里填的是 `admin` |
 | `PLUGIM_ALLOW_REGISTER` | `true` | 设 `false` 关闭注册；后台「系统设置」或向导策略步骤写入数据库后，以数据库的值为准 |
 | `PLUGIM_INVITE_CODE` | 空 | 非空则注册必须携带邀请码；同样会被后台策略覆盖 |
 
@@ -38,6 +38,18 @@
 | `PLUGIM_TURN_URL` | 空 | 形如 `turn:turn.example.com:3478?transport=udp`；空则不下发中继 |
 | `PLUGIM_TURN_USER` | 空 | TURN 用户名 |
 | `PLUGIM_TURN_PASS` | 空 | TURN 密钥，需与 coturn 的 `static-auth-secret` 一致 |
+
+## 离线推送
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PLUGIM_VAPID_PUBLIC_KEY` | 空 | VAPID 公钥，和私钥同时设置才生效 |
+| `PLUGIM_VAPID_PRIVATE_KEY` | 空 | VAPID 私钥 |
+| `PLUGIM_VAPID_SUBJECT` | `mailto:admin@example.com` | 推送凭证的联系方式，`mailto:` 或站点 URL |
+
+两个密钥都留空时，服务端首次启动会自动生成一对并写进 `settings` 表（键名 `vapid_public` / `vapid_private`），重启后继续用同一对。浏览器端 `PushManager.subscribe` 需要安全上下文，HTTPS 或 `localhost` 才可用；订阅存在 `push_subscriptions` 表，推送返回 404/410 时自动删除该订阅。用户离线（没有 WebSocket 连接）才发推送，只发文字预览，图片、文件等显示为类型占位。
+
+判定在线与否只看 WebSocket 连接。网关每 30 秒给每条连接发一次 ping，连续两轮没有回应就断开并清掉身份，所以拔网线、直接关机这类不发 FIN 的掉线会在半分钟到一分钟内被当成离线，推送随即照常发。
 
 ## 安装锁定文件
 

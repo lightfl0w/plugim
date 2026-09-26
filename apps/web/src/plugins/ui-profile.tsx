@@ -7,6 +7,8 @@ import {
     MonitorIcon,
     MoonIcon,
     PaletteIcon,
+    SendIcon,
+    SmartphoneIcon,
     SunIcon,
     VolumeIcon,
 } from "lucide-react";
@@ -18,6 +20,7 @@ import { Switch } from "../components/ui/switch";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
+import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { ThemeMode, ThemeService } from "./theme";
 import type { AdminService } from "./ui-admin";
@@ -41,12 +44,38 @@ const formatDate = (iso: string) => {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+const readyRegistration =
+    async (): Promise<ServiceWorkerRegistration | null> => {
+        if (!("serviceWorker" in navigator)) return null;
+        const timeout = new Promise<null>((resolve) => {
+            window.setTimeout(() => resolve(null), 2000);
+        });
+        return Promise.race([navigator.serviceWorker.ready, timeout]);
+    };
+
+const decodeKey = (base64: string) => {
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const raw = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+};
+
+const withTimeout = <T,>(promise: Promise<T>, ms: number, message: string) =>
+    Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+            window.setTimeout(() => reject(new Error(message)), ms);
+        }),
+    ]);
+
 export const uiProfileSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
     const auth = ctx.get<AuthService>("auth");
     const theme = ctx.get<ThemeService>("theme");
     const friends = ctx.get<FriendsService>("friends");
     const admin = ctx.get<AdminService>("admin");
+    const rpc = ctx.get<RpcService>("rpc");
 
     const useUser = () =>
         useSyncExternalStore(
@@ -116,6 +145,33 @@ export const uiProfileSetup = async (ctx: Context) => {
         const [soundOn, setSoundOn] = useState(() =>
             isSoundEnabled(user?.username ?? ""),
         );
+        const [pushState, setPushState] = useState<
+            "checking" | "unsupported" | "off" | "on"
+        >("checking");
+        const [pushBusy, setPushBusy] = useState(false);
+        useEffect(() => {
+            let cancelled = false;
+            const check = async () => {
+                const registration = await readyRegistration();
+                if (cancelled) return;
+                if (!registration?.pushManager) {
+                    setPushState("unsupported");
+                    return;
+                }
+                const subscription = await withTimeout(
+                    registration.pushManager.getSubscription(),
+                    5000,
+                    "读取订阅状态超时",
+                );
+                if (!cancelled) setPushState(subscription ? "on" : "off");
+            };
+            void check().catch(() => {
+                if (!cancelled) setPushState("unsupported");
+            });
+            return () => {
+                cancelled = true;
+            };
+        }, []);
         useEffect(() => {
             setSoundOn(isSoundEnabled(user?.username ?? ""));
         }, [user?.username]);
@@ -129,6 +185,65 @@ export const uiProfileSetup = async (ctx: Context) => {
                 if (next !== "default") setPermission(next);
             });
         };
+
+        const togglePush = async () => {
+            setPushBusy(true);
+            try {
+                const registration = await readyRegistration();
+                if (!registration?.pushManager) {
+                    setPushState("unsupported");
+                    return;
+                }
+                const current = await withTimeout(
+                    registration.pushManager.getSubscription(),
+                    5000,
+                    "读取订阅状态超时",
+                );
+                if (current) {
+                    await rpc.call("push.unsubscribe", {
+                        endpoint: current.endpoint,
+                    });
+                    await withTimeout(current.unsubscribe(), 5000, "退订超时");
+                    setPushState("off");
+                    return;
+                }
+                const info = (await rpc.call("push.info", {})) as {
+                    publicKey: string;
+                };
+                const created = await withTimeout(
+                    registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: decodeKey(info.publicKey),
+                    }),
+                    15000,
+                    "订阅超时，浏览器推送服务不可用",
+                );
+                await rpc.call("push.subscribe", {
+                    subscription: created.toJSON(),
+                });
+                setPushState("on");
+            } catch (err) {
+                alert(String(err instanceof Error ? err.message : err));
+            } finally {
+                setPushBusy(false);
+            }
+        };
+
+        const testPush = async () => {
+            try {
+                await rpc.call("push.test", {});
+                alert("测试通知已发送");
+            } catch (err) {
+                alert(String(err instanceof Error ? err.message : err));
+            }
+        };
+
+        const pushHint =
+            pushState === "unsupported"
+                ? "当前环境不支持（需在 HTTPS 或本地正式构建中开启）"
+                : pushState === "on"
+                  ? "关闭页面后仍可收到新消息通知"
+                  : "开启后可在离线时收到系统通知";
 
         const notifyHint =
             permission === "granted"
@@ -255,6 +370,39 @@ export const uiProfileSetup = async (ctx: Context) => {
                                             return !prev;
                                         });
                                     }}
+                                />
+                            </div>
+                            <div
+                                className={cn(
+                                    rowClass,
+                                    "border-b border-border",
+                                )}
+                            >
+                                <SmartphoneIcon className="size-4 text-muted-foreground" />
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm">离线消息推送</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {pushHint}
+                                    </p>
+                                </div>
+                                {pushState === "on" ? (
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => void testPush()}
+                                    >
+                                        <SendIcon />
+                                        测试
+                                    </Button>
+                                ) : null}
+                                <Switch
+                                    checked={pushState === "on"}
+                                    disabled={
+                                        pushBusy ||
+                                        pushState === "checking" ||
+                                        pushState === "unsupported"
+                                    }
+                                    onToggle={() => void togglePush()}
                                 />
                             </div>
                             <button

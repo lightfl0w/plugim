@@ -26,6 +26,7 @@ export const uiProfileCardSetup = async (ctx: Context) => {
         const [card, setCard] = useState<CardState | null>(null);
         const [createdAt, setCreatedAt] = useState<string | null>(null);
         const [busy, setBusy] = useState(false);
+        const [hint, setHint] = useState("");
         const cardRef = useRef<HTMLDivElement>(null);
         const navigate = useNavigate();
 
@@ -34,6 +35,7 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                 const data = payload as CardState;
                 setCard(data);
                 setCreatedAt(null);
+                setHint("");
                 void rpc
                     .call("user.info", { username: data.username })
                     .then((result) => {
@@ -88,9 +90,11 @@ export const uiProfileCardSetup = async (ctx: Context) => {
 
         const act = async (fn: () => Promise<void>) => {
             setBusy(true);
+            setHint("");
             try {
                 await fn();
-            } catch {
+            } catch (err) {
+                setHint(err instanceof Error ? err.message : "操作失败");
             } finally {
                 setBusy(false);
             }
@@ -120,6 +124,11 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                         </p>
                     ) : null}
                 </div>
+                {hint ? (
+                    <p className="border-t border-border px-3 py-2 text-xs text-red-500">
+                        {hint}
+                    </p>
+                ) : null}
                 <div className="flex gap-2 border-t border-border p-3">
                     {isSelf ? (
                         <Button

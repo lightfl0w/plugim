@@ -18,7 +18,10 @@ export default defineConfig({
                     items: [
                         { text: "安装与初始化", link: "/guide/install" },
                         { text: "生产部署", link: "/guide/deploy" },
-                        { text: "反向代理与 HTTPS", link: "/guide/reverse-proxy" },
+                        {
+                            text: "反向代理与 HTTPS",
+                            link: "/guide/reverse-proxy",
+                        },
                         { text: "TURN 音视频中继", link: "/guide/turn" },
                         { text: "备份与升级", link: "/guide/backup" },
                     ],

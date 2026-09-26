@@ -78,8 +78,8 @@ export const friendsPlugin: Plugin = {
             const me = requireUser(conn);
             const target = await usernameToUser(requireParams(raw).username);
             if (target.id === me.id) throw new Error("不能添加自己为好友");
-            if (await groups.shareGroup(me.id, target.id))
-                throw new Error("群成员之间不能互加好友");
+            if (await groups.friendAddBlocked(me.id, target.id))
+                throw new Error("对方所在的群设置了禁止互加好友");
             const edges = await friendships.edgesOf(me.id);
             const existing = edges.find(
                 (edge) =>

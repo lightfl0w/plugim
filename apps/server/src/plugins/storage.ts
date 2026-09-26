@@ -29,6 +29,8 @@ import type {
     GroupRow,
     GroupsStore,
     MessageStore,
+    PushStore,
+    PushSubscriptionRow,
     ReadsStore,
     SettingsStore,
     UserWithHash,
@@ -89,6 +91,9 @@ const groupsSqlite = sqliteTable("groups", {
     ownerId: sqliteText("owner_id").notNull(),
     notice: sqliteText("notice").notNull().default(""),
     muteAll: integer("mute_all", { mode: "boolean" }).notNull().default(false),
+    noFriendAdd: integer("no_friend_add", { mode: "boolean" })
+        .notNull()
+        .default(false),
     createdAt: integer("created_at").notNull(),
 });
 
@@ -98,6 +103,7 @@ const groupsPg = pgTable("groups", {
     ownerId: pgText("owner_id").notNull(),
     notice: pgText("notice").notNull().default(""),
     muteAll: pgBoolean("mute_all").notNull().default(false),
+    noFriendAdd: pgBoolean("no_friend_add").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
         .notNull()
         .defaultNow(),
@@ -189,6 +195,24 @@ const settingsPg = pgTable("settings", {
     value: pgText("value").notNull(),
 });
 
+const pushSqlite = sqliteTable("push_subscriptions", {
+    endpoint: sqliteText("endpoint").primaryKey(),
+    userId: sqliteText("user_id").notNull(),
+    p256dh: sqliteText("p256dh").notNull(),
+    auth: sqliteText("auth").notNull(),
+    createdAt: integer("created_at").notNull(),
+});
+
+const pushPg = pgTable("push_subscriptions", {
+    endpoint: pgText("endpoint").primaryKey(),
+    userId: pgText("user_id").notNull(),
+    p256dh: pgText("p256dh").notNull(),
+    auth: pgText("auth").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+});
+
 const CREATE_SQLITE = `
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -224,6 +248,7 @@ CREATE TABLE IF NOT EXISTS groups (
   owner_id TEXT NOT NULL,
   notice TEXT NOT NULL DEFAULT '',
   mute_all INTEGER NOT NULL DEFAULT 0,
+  no_friend_add INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS group_members (
@@ -243,6 +268,13 @@ CREATE TABLE IF NOT EXISTS reads (
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at INTEGER NOT NULL
 )`;
 
 const CREATE_PG = `
@@ -280,6 +312,7 @@ CREATE TABLE IF NOT EXISTS groups (
   owner_id TEXT NOT NULL,
   notice TEXT NOT NULL DEFAULT '',
   mute_all BOOLEAN NOT NULL DEFAULT FALSE,
+  no_friend_add BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS group_members (
@@ -299,6 +332,13 @@ CREATE TABLE IF NOT EXISTS reads (
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )`;
 
 const toIso = (value: Date | number): string =>
@@ -390,6 +430,7 @@ export const storagePlugin: Plugin = {
         "groups",
         "reads",
         "settings",
+        "pushes",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -400,6 +441,7 @@ export const storagePlugin: Plugin = {
         let groups: GroupsStore;
         let reads: ReadsStore;
         let settings: SettingsStore;
+        let pushes: PushStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -424,6 +466,9 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT FALSE",
+            );
+            await client.unsafe(
+                "ALTER TABLE groups ADD COLUMN IF NOT EXISTS no_friend_add BOOLEAN NOT NULL DEFAULT FALSE",
             );
             const db = drizzlePg(client);
 
@@ -456,6 +501,16 @@ export const storagePlugin: Plugin = {
                 ownerId: row.ownerId,
                 notice: row.notice,
                 muteAll: row.muteAll,
+                noFriendAdd: row.noFriendAdd,
+                createdAt: toIso(row.createdAt),
+            });
+            const pushToRow = (
+                row: typeof pushPg.$inferSelect,
+            ): PushSubscriptionRow => ({
+                userId: row.userId,
+                endpoint: row.endpoint,
+                p256dh: row.p256dh,
+                auth: row.auth,
                 createdAt: toIso(row.createdAt),
             });
 
@@ -779,6 +834,12 @@ export const storagePlugin: Plugin = {
                         .set({ muteAll: on })
                         .where(eq(groupsPg.id, id));
                 },
+                async setNoFriendAdd(id, on) {
+                    await db
+                        .update(groupsPg)
+                        .set({ noFriendAdd: on })
+                        .where(eq(groupsPg.id, id));
+                },
                 async addMember(groupId, userId) {
                     await db
                         .insert(groupMembersPg)
@@ -867,7 +928,7 @@ export const storagePlugin: Plugin = {
                         ).length,
                     }));
                 },
-                async shareGroup(aId, bId) {
+                async friendAddBlocked(aId, bId) {
                     const rows = await db
                         .select({ groupId: groupMembersPg.groupId })
                         .from(groupMembersPg)
@@ -883,7 +944,18 @@ export const storagePlugin: Plugin = {
                                 eq(groupMembersPg.userId, bId),
                             ),
                         );
-                    return common.length > 0;
+                    const commonIds = common.map((row) => row.groupId);
+                    if (commonIds.length === 0) return false;
+                    const blocked = await db
+                        .select({ id: groupsPg.id })
+                        .from(groupsPg)
+                        .where(
+                            and(
+                                inArray(groupsPg.id, commonIds),
+                                eq(groupsPg.noFriendAdd, true),
+                            ),
+                        );
+                    return blocked.length > 0;
                 },
             };
 
@@ -929,6 +1001,46 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            pushes = {
+                async save(input) {
+                    await db
+                        .insert(pushPg)
+                        .values(input)
+                        .onConflictDoUpdate({
+                            target: pushPg.endpoint,
+                            set: {
+                                userId: input.userId,
+                                p256dh: input.p256dh,
+                                auth: input.auth,
+                            },
+                        });
+                },
+                async remove(endpoint) {
+                    await db
+                        .delete(pushPg)
+                        .where(eq(pushPg.endpoint, endpoint));
+                },
+                async ofUser(userId) {
+                    const rows = await db
+                        .select()
+                        .from(pushPg)
+                        .where(eq(pushPg.userId, userId));
+                    return rows.map(pushToRow);
+                },
+                async ofUsers(userIds) {
+                    if (userIds.length === 0) return [];
+                    const rows = await db
+                        .select()
+                        .from(pushPg)
+                        .where(inArray(pushPg.userId, userIds));
+                    return rows.map(pushToRow);
+                },
+                async ofAll() {
+                    const rows = await db.select().from(pushPg);
+                    return rows.map(pushToRow);
+                },
+            };
+
             ctx.log.info(`storage driver: postgres (${config.dbUrl})`);
         } else {
             const file = resolve(process.cwd(), config.dbFile);
@@ -964,6 +1076,14 @@ export const storagePlugin: Plugin = {
                     );
                 }
             }
+            const groupColumns = client.pragma("table_info(groups)") as Array<{
+                name: string;
+            }>;
+            if (!groupColumns.some((item) => item.name === "no_friend_add")) {
+                client.exec(
+                    "ALTER TABLE groups ADD COLUMN no_friend_add INTEGER NOT NULL DEFAULT 0",
+                );
+            }
             const db = drizzleSqlite(client);
 
             const userToRow = (
@@ -995,6 +1115,16 @@ export const storagePlugin: Plugin = {
                 ownerId: row.ownerId,
                 notice: row.notice,
                 muteAll: row.muteAll,
+                noFriendAdd: row.noFriendAdd,
+                createdAt: toIso(row.createdAt),
+            });
+            const pushToRow = (
+                row: typeof pushSqlite.$inferSelect,
+            ): PushSubscriptionRow => ({
+                userId: row.userId,
+                endpoint: row.endpoint,
+                p256dh: row.p256dh,
+                auth: row.auth,
                 createdAt: toIso(row.createdAt),
             });
 
@@ -1310,6 +1440,7 @@ export const storagePlugin: Plugin = {
                         ownerId,
                         notice: "",
                         muteAll: false,
+                        noFriendAdd: false,
                         createdAt: new Date(now).toISOString(),
                     };
                 },
@@ -1349,6 +1480,12 @@ export const storagePlugin: Plugin = {
                     await db
                         .update(groupsSqlite)
                         .set({ muteAll: on })
+                        .where(eq(groupsSqlite.id, id));
+                },
+                async setNoFriendAdd(id, on) {
+                    await db
+                        .update(groupsSqlite)
+                        .set({ noFriendAdd: on })
                         .where(eq(groupsSqlite.id, id));
                 },
                 async addMember(groupId, userId) {
@@ -1445,7 +1582,7 @@ export const storagePlugin: Plugin = {
                         ).length,
                     }));
                 },
-                async shareGroup(aId, bId) {
+                async friendAddBlocked(aId, bId) {
                     const rows = await db
                         .select({ groupId: groupMembersSqlite.groupId })
                         .from(groupMembersSqlite)
@@ -1461,7 +1598,18 @@ export const storagePlugin: Plugin = {
                                 eq(groupMembersSqlite.userId, bId),
                             ),
                         );
-                    return common.length > 0;
+                    const commonIds = common.map((row) => row.groupId);
+                    if (commonIds.length === 0) return false;
+                    const blocked = await db
+                        .select({ id: groupsSqlite.id })
+                        .from(groupsSqlite)
+                        .where(
+                            and(
+                                inArray(groupsSqlite.id, commonIds),
+                                eq(groupsSqlite.noFriendAdd, true),
+                            ),
+                        );
+                    return blocked.length > 0;
                 },
             };
 
@@ -1511,6 +1659,46 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            pushes = {
+                async save(input) {
+                    await db
+                        .insert(pushSqlite)
+                        .values({ ...input, createdAt: Date.now() })
+                        .onConflictDoUpdate({
+                            target: pushSqlite.endpoint,
+                            set: {
+                                userId: input.userId,
+                                p256dh: input.p256dh,
+                                auth: input.auth,
+                            },
+                        });
+                },
+                async remove(endpoint) {
+                    await db
+                        .delete(pushSqlite)
+                        .where(eq(pushSqlite.endpoint, endpoint));
+                },
+                async ofUser(userId) {
+                    const rows = await db
+                        .select()
+                        .from(pushSqlite)
+                        .where(eq(pushSqlite.userId, userId));
+                    return rows.map(pushToRow);
+                },
+                async ofUsers(userIds) {
+                    if (userIds.length === 0) return [];
+                    const rows = await db
+                        .select()
+                        .from(pushSqlite)
+                        .where(inArray(pushSqlite.userId, userIds));
+                    return rows.map(pushToRow);
+                },
+                async ofAll() {
+                    const rows = await db.select().from(pushSqlite);
+                    return rows.map(pushToRow);
+                },
+            };
+
             ctx.log.info(`storage driver: sqlite (${file})`);
         }
 
@@ -1520,6 +1708,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<GroupsStore>("groups", groups);
         ctx.provide<ReadsStore>("reads", reads);
         ctx.provide<SettingsStore>("settings", settings);
+        ctx.provide<PushStore>("pushes", pushes);
         return undefined;
     },
 };

@@ -13,6 +13,9 @@ export interface AppConfig {
     bootstrapAdmins: string[];
     allowRegister: boolean;
     inviteCode: string;
+    vapidPublicKey: string;
+    vapidPrivateKey: string;
+    vapidSubject: string;
     iceServers: IceServerConfig[];
 }
 
@@ -51,6 +54,9 @@ export const configPlugin: Plugin = {
                 .filter(Boolean),
             allowRegister: process.env.PLUGIM_ALLOW_REGISTER !== "false",
             inviteCode: process.env.PLUGIM_INVITE_CODE ?? "",
+            vapidPublicKey: process.env.PLUGIM_VAPID_PUBLIC_KEY ?? "",
+            vapidPrivateKey: process.env.PLUGIM_VAPID_PRIVATE_KEY ?? "",
+            vapidSubject: process.env.PLUGIM_VAPID_SUBJECT ?? "",
             iceServers: [
                 {
                     urls: (

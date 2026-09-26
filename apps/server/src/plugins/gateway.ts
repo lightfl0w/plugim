@@ -30,6 +30,7 @@ export const gatewayPlugin: Plugin = {
         const handlers = new Map<string, RpcHandler>();
         const sockets = new Set<NodeWebSocket>();
         const identities = new Map<NodeWebSocket, AuthUser | null>();
+        const liveness = new WeakMap<NodeWebSocket, boolean>();
         const lastSeen = new Map<string, string>();
         const offlineListeners = new Set<(userId: string) => void>();
         let verifyToken: TokenVerifier = nullVerifier;
@@ -171,6 +172,8 @@ export const gatewayPlugin: Plugin = {
                             : false;
                         sockets.add(raw);
                         identities.set(raw, connUser);
+                        liveness.set(raw, true);
+                        raw.on("pong", () => liveness.set(raw, true));
                         if (connUser) {
                             lastSeen.set(connUser.id, connUser.username);
                             if (!wasOnline) announcePresence(connUser, true);
@@ -220,6 +223,17 @@ export const gatewayPlugin: Plugin = {
         );
         injectWebSocket(server);
 
+        const heartbeat = setInterval(() => {
+            for (const ws of sockets) {
+                if (liveness.get(ws) === false) {
+                    ws.terminate();
+                    continue;
+                }
+                liveness.set(ws, false);
+                ws.ping();
+            }
+        }, 30000);
+
         const onlineUserIds = (): string[] => [
             ...new Set(
                 [...identities.values()]
@@ -262,6 +276,7 @@ export const gatewayPlugin: Plugin = {
         ctx.provide<GatewayService>("gateway", gatewayApi);
 
         return async () => {
+            clearInterval(heartbeat);
             for (const ws of sockets) ws.close();
             sockets.clear();
             identities.clear();

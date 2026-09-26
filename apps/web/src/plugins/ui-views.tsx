@@ -12,6 +12,7 @@ import { uiMediaViewerSetup } from "./ui-mediaviewer";
 import { uiMessagesSetup } from "./ui-messages";
 import { uiProfileSetup } from "./ui-profile";
 import { uiProfileCardSetup } from "./ui-profilecard";
+import { uiPwaSetup } from "./ui-pwa";
 import { uiScreenSetup } from "./ui-screen";
 import { uiSettingsSetup } from "./ui-settings";
 import { uiShellSetup } from "./ui-shell";
@@ -37,6 +38,7 @@ const SECTIONS: { name: string; setup: UiSetup }[] = [
     { name: "群面板", setup: uiGroupPanelSetup },
     { name: "屏幕共享", setup: uiScreenSetup },
     { name: "语音视频通话", setup: uiCallSetup },
+    { name: "离线推送", setup: uiPwaSetup },
 ];
 
 export const uiViewsPlugin: Plugin = {
