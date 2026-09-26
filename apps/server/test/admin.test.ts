@@ -119,11 +119,106 @@ describe("admin rpc", () => {
             users: number;
             groups: number;
             connections: number;
+            messages: number;
+            mediaBytes: number;
+            retentionDays: number;
         };
-        expect(stats).toEqual({
+        expect(stats).toMatchObject({
             users: 2,
             groups: 0,
             connections: 1,
+            messages: 0,
+            mediaBytes: 0,
+            retentionDays: 0,
         });
+    });
+
+    it("searches messages by keyword and sender", async () => {
+        const { app, root } = await adminSetup();
+        const bob = await app.register("bob");
+        await app.call(
+            "message.send",
+            { session: "general", content: "部署手册第一版" },
+            root.user,
+        );
+        await app.call(
+            "message.send",
+            { session: "general", content: "午饭吃什么" },
+            bob.user,
+        );
+        const hit = (await app.call(
+            "admin.messages",
+            { keyword: "部署" },
+            root.user,
+        )) as { rows: { sender: string }[]; total: number };
+        expect(hit.total).toBe(1);
+        expect(hit.rows[0].sender).toBe("root");
+        const bySender = (await app.call(
+            "admin.messages",
+            { sender: "bob" },
+            root.user,
+        )) as { total: number };
+        expect(bySender.total).toBe(1);
+        await expect(app.call("admin.messages", {}, bob.user)).rejects.toThrow(
+            "需要管理员权限",
+        );
+    });
+
+    it("lists media files with byte totals", async () => {
+        const { app, root } = await adminSetup();
+        await app.call(
+            "message.send",
+            { session: "general", content: "text only" },
+            root.user,
+        );
+        await app.call(
+            "message.send",
+            {
+                session: "general",
+                content: "data:image/png;base64,AAAA",
+                kind: "image",
+                file: { name: "a.png", size: 24 },
+            },
+            root.user,
+        );
+        const files = (await app.call("admin.files", {}, root.user)) as {
+            rows: { kind: string }[];
+            total: number;
+            totalBytes: number;
+        };
+        expect(files.total).toBe(1);
+        expect(files.rows[0].kind).toBe("image");
+        expect(files.totalBytes).toBeGreaterThan(0);
+    });
+
+    it("stores retention policy and rejects invalid values", async () => {
+        const { app, root } = await adminSetup();
+        await app.call(
+            "message.send",
+            { session: "general", content: "新的" },
+            root.user,
+        );
+        await expect(app.call("admin.cleanup", {}, root.user)).rejects.toThrow(
+            "尚未设置保留天数",
+        );
+        await expect(
+            app.call("admin.retention.set", { days: 1.5 }, root.user),
+        ).rejects.toThrow("保留天数");
+        await expect(
+            app.call("admin.retention.set", { days: 99999 }, root.user),
+        ).rejects.toThrow("保留天数");
+        await app.call("admin.retention.set", { days: 30 }, root.user);
+        expect(await app.call("admin.retention.get", {}, root.user)).toEqual({
+            days: 30,
+        });
+        const result = (await app.call("admin.cleanup", {}, root.user)) as {
+            deleted: number;
+        };
+        expect(result.deleted).toBe(0);
+        const stats = (await app.call("admin.stats", {}, root.user)) as {
+            messages: number;
+            retentionDays: number;
+        };
+        expect(stats).toMatchObject({ messages: 1, retentionDays: 30 });
     });
 });

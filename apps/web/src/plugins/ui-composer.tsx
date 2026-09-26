@@ -49,6 +49,7 @@ const LIMITS: Record<MessageKind, number> = {
     audio: 8 * 1024 * 1024,
     video: 8 * 1024 * 1024,
     file: 20 * 1024 * 1024,
+    merge: 0,
 };
 
 const MENTION_TOKEN_RE = /(^|\s)@([a-z0-9_]*)$/;

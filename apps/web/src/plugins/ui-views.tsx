@@ -43,7 +43,17 @@ export const uiViewsPlugin: Plugin = {
     name: "views",
     description: "全部界面",
     provides: ["theme", "admin"],
-    inject: ["ui", "settings"],
+    inject: [
+        "ui",
+        "settings",
+        "auth",
+        "rpc",
+        "sender",
+        "cache",
+        "friends",
+        "groups",
+        "presence",
+    ],
     async apply(ctx) {
         const disposers: Dispose[] = [];
         for (const section of SECTIONS) {

@@ -40,6 +40,7 @@ import type { UiService } from "./ui-types";
 const BASE_TITLE = "plugim";
 
 const previewText = (content: string) => {
+    if (content.startsWith('{"merge":1')) return "[聊天记录]";
     if (content.startsWith("data:image/")) return "[图片]";
     if (content.startsWith("data:audio/")) return "[语音]";
     if (content.startsWith("data:video/")) return "[视频]";

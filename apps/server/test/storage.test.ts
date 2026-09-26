@@ -181,3 +181,99 @@ describe("reads store", () => {
         expect(rows).toHaveLength(2);
     });
 });
+
+describe("message admin queries", () => {
+    it("searches by keyword, sender and media flag with totals", async () => {
+        const app = await createTestApp();
+        const { messages } = await stores(app);
+        await messages.save({
+            session: "general",
+            sender: "a",
+            content: "季度总结完成",
+        });
+        await messages.save({
+            session: "general",
+            sender: "b",
+            content: "季度预算讨论",
+        });
+        await messages.save({
+            session: "g:x",
+            sender: "a",
+            content: "data:image/png;base64,AA",
+            kind: "image",
+            file: { name: "a.png", size: 4 },
+        });
+        const kw = await messages.search({
+            keyword: "季度",
+            offset: 0,
+            limit: 10,
+        });
+        expect(kw.total).toBe(2);
+        const sender = await messages.search({
+            sender: "a",
+            offset: 0,
+            limit: 10,
+        });
+        expect(sender.total).toBe(2);
+        const media = await messages.search({
+            media: true,
+            offset: 0,
+            limit: 10,
+        });
+        expect(media.rows[0].kind).toBe("image");
+        expect(media.total).toBe(1);
+        const paged = await messages.search({ offset: 1, limit: 1 });
+        expect(paged.rows).toHaveLength(1);
+        expect(paged.total).toBe(3);
+        expect(await messages.count()).toBe(3);
+        expect(await messages.mediaBytes()).toBeGreaterThan(0);
+    });
+
+    it("excludes recalled messages and escapes like wildcards", async () => {
+        const app = await createTestApp();
+        const { messages } = await stores(app);
+        const hit = await messages.save({
+            session: "general",
+            sender: "a",
+            content: "100% 完成",
+        });
+        await messages.save({
+            session: "general",
+            sender: "a",
+            content: "100abc完成",
+        });
+        await messages.markRecalled(hit.id);
+        const recalled = await messages.search({
+            keyword: "完成",
+            offset: 0,
+            limit: 10,
+        });
+        expect(recalled.total).toBe(1);
+        expect(recalled.rows[0].content).toBe("100abc完成");
+        const plain = await messages.save({
+            session: "general",
+            sender: "a",
+            content: "x%y",
+        });
+        const wild = await messages.search({
+            keyword: "%y",
+            offset: 0,
+            limit: 10,
+        });
+        expect(wild.total).toBe(1);
+        expect(wild.rows[0].id).toBe(plain.id);
+    });
+
+    it("deletes messages older than the cutoff", async () => {
+        const app = await createTestApp();
+        const { messages } = await stores(app);
+        await messages.save({
+            session: "general",
+            sender: "a",
+            content: "now",
+        });
+        const future = new Date(Date.now() + 60_000).toISOString();
+        expect(await messages.deleteOlderThan(future)).toBe(1);
+        expect(await messages.count()).toBe(0);
+    });
+});

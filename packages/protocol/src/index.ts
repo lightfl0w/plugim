@@ -3,7 +3,26 @@ export interface MessageQuote {
     content: string;
 }
 
-export type MessageKind = "text" | "image" | "audio" | "video" | "file";
+export type MessageKind =
+    | "text"
+    | "image"
+    | "audio"
+    | "video"
+    | "file"
+    | "merge";
+
+export interface MergedChat {
+    sender: string;
+    content: string;
+    kind?: MessageKind;
+    createdAt: string;
+}
+
+export interface MergePayload {
+    merge: 1;
+    title: string;
+    list: MergedChat[];
+}
 
 export interface FileMeta {
     name: string;

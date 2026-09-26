@@ -52,6 +52,17 @@ export interface MessageStore {
     ): Promise<ChatMessage[]>;
     byId(id: string): Promise<ChatMessage | null>;
     markRecalled(id: string): Promise<string | null>;
+    search(params: {
+        keyword?: string;
+        session?: string;
+        sender?: string;
+        media?: boolean;
+        offset: number;
+        limit: number;
+    }): Promise<{ rows: ChatMessage[]; total: number }>;
+    deleteOlderThan(iso: string): Promise<number>;
+    count(): Promise<number>;
+    mediaBytes(): Promise<number>;
 }
 
 export interface UserWithHash extends User {

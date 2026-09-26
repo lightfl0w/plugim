@@ -3,6 +3,7 @@ import type {
     ChatMessage,
     FileMeta,
     HistoryParams,
+    MergePayload,
     MessageKind,
     RecallParams,
     SendMessageParams,
@@ -26,7 +27,14 @@ const requireUser = (conn: ConnInfo): AuthUser => {
 
 const p2pKey = (a: string, b: string) => `p2p:${[a, b].sort().join("|")}`;
 
-const KINDS: MessageKind[] = ["text", "image", "audio", "video", "file"];
+const KINDS: MessageKind[] = [
+    "text",
+    "image",
+    "audio",
+    "video",
+    "file",
+    "merge",
+];
 
 export const chatPlugin: Plugin = {
     name: "chat",
@@ -79,6 +87,73 @@ export const chatPlugin: Plugin = {
             return { row, mine: mine.role };
         };
 
+        interface SendPayload {
+            content: string;
+            quote: { sender: string; content: string } | null;
+            mentions: string[] | null;
+            kind: MessageKind;
+            file: FileMeta | null;
+        }
+
+        const sendTo = async (
+            user: AuthUser,
+            rawSession: string,
+            payload: SendPayload,
+        ): Promise<ChatMessage> => {
+            if (rawSession.startsWith("p2p:")) {
+                const peer = await resolveP2p(user, rawSession);
+                const saved = await store.save({
+                    session: p2pKey(user.username, peer.username),
+                    sender: user.username,
+                    ...payload,
+                });
+                const mine: ChatMessage = {
+                    ...saved,
+                    session: `p2p:${peer.username}`,
+                };
+                const theirs: ChatMessage = {
+                    ...saved,
+                    session: `p2p:${user.username}`,
+                };
+                gateway.emitToUser(user.id, "message:new", { message: mine });
+                gateway.emitToUser(peer.id, "message:new", {
+                    message: theirs,
+                });
+                return mine;
+            }
+
+            if (rawSession.startsWith("g:")) {
+                const { row, mine } = await resolveGroup(user, rawSession);
+                const privileged = mine === "owner" || mine === "admin";
+                if (!privileged) {
+                    if (mine === "member" && row.muteAll)
+                        throw new Error("群主已开启全员禁言");
+                    const members = await groups.membersOf(row.id);
+                    const self = members.find((m) => m.userId === user.id);
+                    if (self?.muted) throw new Error("你已被禁言");
+                }
+                const saved = await store.save({
+                    session: rawSession,
+                    sender: user.username,
+                    ...payload,
+                });
+                const ids = await groups.memberIdsOf(row.id);
+                for (const id of ids)
+                    gateway.emitToUser(id, "message:new", {
+                        message: saved,
+                    });
+                return saved;
+            }
+
+            const saved = await store.save({
+                session: rawSession,
+                sender: user.username,
+                ...payload,
+            });
+            gateway.broadcast("message:new", { message: saved });
+            return saved;
+        };
+
         gateway.rpc("message.send", async (raw, conn) => {
             const user = requireUser(conn);
             const params = raw as unknown as SendMessageParams;
@@ -115,71 +190,111 @@ export const chatPlugin: Plugin = {
                           size: params.file.size,
                       }
                     : null;
-
-            if (rawSession.startsWith("p2p:")) {
-                const peer = await resolveP2p(user, rawSession);
-                const saved = await store.save({
-                    session: p2pKey(user.username, peer.username),
-                    sender: user.username,
-                    content: params.content,
-                    quote,
-                    mentions,
-                    kind,
-                    file,
-                });
-                const mine: ChatMessage = {
-                    ...saved,
-                    session: `p2p:${peer.username}`,
-                };
-                const theirs: ChatMessage = {
-                    ...saved,
-                    session: `p2p:${user.username}`,
-                };
-                gateway.emitToUser(user.id, "message:new", { message: mine });
-                gateway.emitToUser(peer.id, "message:new", {
-                    message: theirs,
-                });
-                return mine;
-            }
-
-            if (rawSession.startsWith("g:")) {
-                const { row, mine } = await resolveGroup(user, rawSession);
-                const privileged = mine === "owner" || mine === "admin";
-                if (!privileged) {
-                    if (mine === "member" && row.muteAll)
-                        throw new Error("群主已开启全员禁言");
-                    const members = await groups.membersOf(row.id);
-                    const self = members.find((m) => m.userId === user.id);
-                    if (self?.muted) throw new Error("你已被禁言");
-                }
-                const saved = await store.save({
-                    session: rawSession,
-                    sender: user.username,
-                    content: params.content,
-                    quote,
-                    mentions,
-                    kind,
-                    file,
-                });
-                const ids = await groups.memberIdsOf(row.id);
-                for (const id of ids)
-                    gateway.emitToUser(id, "message:new", {
-                        message: saved,
-                    });
-                return saved;
-            }
-
-            const saved = await store.save({
-                session: rawSession,
-                sender: user.username,
+            return sendTo(user, rawSession, {
                 content: params.content,
                 quote,
                 mentions,
                 kind,
                 file,
             });
-            gateway.broadcast("message:new", { message: saved });
-            return saved;
+        });
+
+        gateway.rpc("message.forward", async (raw, conn) => {
+            const user = requireUser(conn);
+            const { ids, id, sessions } = raw as unknown as {
+                ids?: string[];
+                id?: string;
+                sessions: string[];
+            };
+            const list = (
+                Array.isArray(ids) && ids.length
+                    ? ids
+                    : typeof id === "string"
+                      ? [id]
+                      : []
+            )
+                .filter((x): x is string => typeof x === "string")
+                .slice(0, 100);
+            if (!Array.isArray(sessions) || sessions.length === 0)
+                throw new Error("请选择转发目标");
+            if (sessions.length > 50) throw new Error("一次最多转发 50 个会话");
+            if (list.length === 0) throw new Error("请选择要转发的消息");
+            const sources: ChatMessage[] = [];
+            for (const mid of list) {
+                const message = await store.byId(mid);
+                if (!message || message.recalledAt)
+                    throw new Error("消息不存在或已撤回");
+                const visible = message.session.startsWith("p2p:")
+                    ? message.session
+                          .slice(4)
+                          .split("|")
+                          .includes(user.username)
+                    : message.session.startsWith("g:")
+                      ? (
+                            await groups.memberIdsOf(message.session.slice(2))
+                        ).includes(user.id)
+                      : true;
+                if (!visible) throw new Error("无权转发该消息");
+                sources.push(message);
+            }
+            sources.sort(
+                (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+            );
+            const merged: SendMessageParams | null =
+                sources.length > 1
+                    ? {
+                          session: "",
+                          content: JSON.stringify({
+                              merge: 1,
+                              title: `${sources.length} 条转发消息`,
+                              list: sources.map((m) => ({
+                                  sender: m.sender,
+                                  content:
+                                      m.kind && m.kind !== "text"
+                                          ? `[${m.kind}]`
+                                          : m.content.slice(0, 500),
+                                  kind: m.kind ?? "text",
+                                  createdAt: m.createdAt,
+                              })),
+                          } satisfies MergePayload),
+                          kind: "merge",
+                      }
+                    : null;
+            const targets = [...new Set(sessions.map((s) => String(s)))];
+            const sent: ChatMessage[] = [];
+            for (const target of targets) {
+                const rawSession = target || config.defaultSession;
+                if (
+                    rawSession.startsWith("p2p:") &&
+                    `p2p:${user.username}` === rawSession
+                )
+                    continue;
+                if (merged) {
+                    sent.push(
+                        await sendTo(user, rawSession, {
+                            content: merged.content,
+                            quote: null,
+                            mentions: null,
+                            kind: "merge",
+                            file: null,
+                        }),
+                    );
+                    continue;
+                }
+                for (const message of sources) {
+                    sent.push(
+                        await sendTo(user, rawSession, {
+                            content: message.content,
+                            quote: null,
+                            mentions: null,
+                            kind: message.kind ?? "text",
+                            file: message.file ?? null,
+                        }),
+                    );
+                }
+            }
+            if (sent.length === 0) throw new Error("没有有效的转发目标");
+            return sent;
         });
 
         gateway.rpc("history.list", async (raw, conn) => {

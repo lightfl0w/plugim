@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import type { Plugin } from "@plugim/core";
 import type { FileMeta, GroupRole, MessageQuote } from "@plugim/protocol";
 import Database from "better-sqlite3";
-import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
 import {
     boolean as pgBoolean,
@@ -348,6 +348,12 @@ const parseFile = (raw: unknown): FileMeta | null => {
     return null;
 };
 
+const escapeLike = (value: string) =>
+    value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
+const likeKeyword = (col: unknown, keyword: string) =>
+    sql`${col} LIKE ${`%${escapeLike(keyword)}%`} ESCAPE '\\'`;
+
 interface MessageDbRow {
     id: string;
     session: string;
@@ -499,6 +505,56 @@ export const storagePlugin: Plugin = {
                     return rows[0]?.recalledAt
                         ? rows[0].recalledAt.toISOString()
                         : null;
+                },
+                async search(params) {
+                    const conds = [isNull(messagesPg.recalledAt)];
+                    if (params.session)
+                        conds.push(eq(messagesPg.session, params.session));
+                    if (params.sender)
+                        conds.push(eq(messagesPg.sender, params.sender));
+                    if (params.media) conds.push(ne(messagesPg.kind, "text"));
+                    if (params.keyword)
+                        conds.push(
+                            likeKeyword(messagesPg.content, params.keyword),
+                        );
+                    const where = and(...conds);
+                    const counted = await db
+                        .select({ id: messagesPg.id })
+                        .from(messagesPg)
+                        .where(where);
+                    const rows = await db
+                        .select()
+                        .from(messagesPg)
+                        .where(where)
+                        .orderBy(desc(messagesPg.createdAt))
+                        .limit(params.limit)
+                        .offset(params.offset);
+                    return {
+                        rows: rows.map(messageRowToChat),
+                        total: counted.length,
+                    };
+                },
+                async deleteOlderThan(iso) {
+                    const rows = await db
+                        .delete(messagesPg)
+                        .where(lt(messagesPg.createdAt, new Date(iso)))
+                        .returning({ id: messagesPg.id });
+                    return rows.length;
+                },
+                async count() {
+                    const rows = await db
+                        .select({ id: messagesPg.id })
+                        .from(messagesPg);
+                    return rows.length;
+                },
+                async mediaBytes() {
+                    const rows = await db
+                        .select({
+                            total: sql<number>`coalesce(sum(octet_length(${messagesPg.content})), 0)`,
+                        })
+                        .from(messagesPg)
+                        .where(ne(messagesPg.kind, "text"));
+                    return Number(rows[0]?.total ?? 0);
                 },
             };
 
@@ -1001,6 +1057,62 @@ export const storagePlugin: Plugin = {
                     return rows[0]?.recalledAt
                         ? new Date(rows[0].recalledAt).toISOString()
                         : null;
+                },
+                async search(params) {
+                    const conds = [isNull(messagesSqlite.recalledAt)];
+                    if (params.session)
+                        conds.push(eq(messagesSqlite.session, params.session));
+                    if (params.sender)
+                        conds.push(eq(messagesSqlite.sender, params.sender));
+                    if (params.media)
+                        conds.push(ne(messagesSqlite.kind, "text"));
+                    if (params.keyword)
+                        conds.push(
+                            likeKeyword(messagesSqlite.content, params.keyword),
+                        );
+                    const where = and(...conds);
+                    const counted = await db
+                        .select({ id: messagesSqlite.id })
+                        .from(messagesSqlite)
+                        .where(where);
+                    const rows = await db
+                        .select()
+                        .from(messagesSqlite)
+                        .where(where)
+                        .orderBy(desc(messagesSqlite.createdAt))
+                        .limit(params.limit)
+                        .offset(params.offset);
+                    return {
+                        rows: rows.map(messageRowToChat),
+                        total: counted.length,
+                    };
+                },
+                async deleteOlderThan(iso) {
+                    const rows = await db
+                        .delete(messagesSqlite)
+                        .where(
+                            lt(
+                                messagesSqlite.createdAt,
+                                new Date(iso).getTime(),
+                            ),
+                        )
+                        .returning({ id: messagesSqlite.id });
+                    return rows.length;
+                },
+                async count() {
+                    const rows = await db
+                        .select({ id: messagesSqlite.id })
+                        .from(messagesSqlite);
+                    return rows.length;
+                },
+                async mediaBytes() {
+                    const rows = await db
+                        .select({
+                            total: sql<number>`coalesce(sum(length(${messagesSqlite.content})), 0)`,
+                        })
+                        .from(messagesSqlite)
+                        .where(ne(messagesSqlite.kind, "text"));
+                    return Number(rows[0]?.total ?? 0);
                 },
             };
 

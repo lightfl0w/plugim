@@ -1,18 +1,21 @@
 import type { Context } from "@plugim/core";
-import type { ChatMessage, GroupInfo } from "@plugim/protocol";
+import type { ChatMessage, GroupInfo, MergePayload } from "@plugim/protocol";
 import {
     AlertCircleIcon,
     ArrowDownIcon,
+    CheckIcon,
     ClockIcon,
     CopyIcon,
     CornerUpLeftIcon,
     FileIcon,
+    ForwardIcon,
+    ListChecksIcon,
     MegaphoneIcon,
     RotateCcwIcon,
     XIcon,
 } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { Bubble, BubbleContent } from "../components/ui/bubble";
 import {
     Message,
@@ -26,6 +29,8 @@ import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { CacheService } from "./cache";
 import type { ConnStatus, RpcService } from "./connection";
+import type { FriendsService } from "./friends";
+import type { GroupsService } from "./groups";
 import type { PendingEvent, PendingMessage, SenderService } from "./sender";
 import { formatBytes } from "./ui-shared";
 import type { UiService } from "./ui-types";
@@ -54,6 +59,18 @@ function formatStamp(iso: string): string {
 
 const isImage = (content: string) => content.startsWith("data:image/");
 
+const parseMerge = (message: ChatMessage): MergePayload | null => {
+    if (message.kind !== "merge") return null;
+    try {
+        const parsed = JSON.parse(message.content) as MergePayload;
+        return parsed?.merge === 1 && Array.isArray(parsed.list)
+            ? parsed
+            : null;
+    } catch {
+        return null;
+    }
+};
+
 const mediaKind = (message: ChatMessage) =>
     message.kind ??
     (message.content.startsWith("data:")
@@ -77,6 +94,8 @@ function contentPreview(message: ChatMessage): string {
             return "[视频]";
         case "file":
             return `[文件] ${message.file?.name ?? ""}`;
+        case "merge":
+            return "[聊天记录]";
         default:
             return message.content.replace(/\s+/g, " ");
     }
@@ -146,6 +165,8 @@ export const uiMessagesSetup = async (ctx: Context) => {
     const rpc = ctx.get<RpcService>("rpc");
     const cache = ctx.get<CacheService>("cache");
     const sender = ctx.get<SenderService>("sender");
+    const friends = ctx.get<FriendsService>("friends");
+    const groups = ctx.get<GroupsService>("groups");
 
     const Messages = () => {
         const [session, setSession] = useState("");
@@ -166,6 +187,24 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [highlightId, setHighlightId] = useState<string | null>(null);
         const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
         const [peerReadAt, setPeerReadAt] = useState<string | null>(null);
+        const [forwardIds, setForwardIds] = useState<string[]>([]);
+        const [forwardPreview, setForwardPreview] = useState("");
+        const [forwardSel, setForwardSel] = useState<Set<string>>(new Set());
+        const [forwardBusy, setForwardBusy] = useState(false);
+        const [forwardError, setForwardError] = useState<string | null>(null);
+        const [selectMode, setSelectMode] = useState(false);
+        const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+        const [mergeView, setMergeView] = useState<MergePayload | null>(null);
+        const [, bumpForward] = useReducer((n: number) => n + 1, 0);
+        useEffect(() => {
+            if (forwardIds.length === 0) return undefined;
+            const offA = friends.onUpdate(bumpForward);
+            const offB = groups.onUpdate(bumpForward);
+            return () => {
+                offA();
+                offB();
+            };
+        }, [forwardIds.length]);
         const bottomRef = useRef<HTMLDivElement>(null);
         const scrollRef = useRef<HTMLDivElement>(null);
         const sessionRef = useRef(session);
@@ -183,6 +222,8 @@ export const uiMessagesSetup = async (ctx: Context) => {
         useEffect(() => {
             const dispose = ctx.on("ui:chat:open", (payload) => {
                 setSession((payload as { session: string }).session);
+                setSelectMode(false);
+                setSelectedIds(new Set());
             });
             return () => {
                 void dispose();
@@ -537,6 +578,64 @@ export const uiMessagesSetup = async (ctx: Context) => {
             !message.recalledAt &&
             Date.now() - Date.parse(message.createdAt) <= RECALL_WINDOW_MS;
 
+        const openForward = (ids: string[], preview: string) => {
+            setForwardIds(ids);
+            setForwardPreview(preview);
+            setForwardSel(new Set());
+            setForwardError(null);
+            void friends.refresh().catch(() => {});
+            void groups.refresh().catch(() => {});
+        };
+
+        const exitSelect = () => {
+            setSelectMode(false);
+            setSelectedIds(new Set());
+        };
+
+        const toggleSelect = (message: ChatMessage) => {
+            if (message.recalledAt) return;
+            setSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(message.id)) next.delete(message.id);
+                else next.add(message.id);
+                return next;
+            });
+        };
+
+        const submitForward = async () => {
+            if (forwardIds.length === 0 || forwardSel.size === 0 || forwardBusy)
+                return;
+            setForwardBusy(true);
+            setForwardError(null);
+            try {
+                await rpc.call("message.forward", {
+                    ids: forwardIds,
+                    sessions: [...forwardSel],
+                });
+                setForwardIds([]);
+                exitSelect();
+            } catch (err) {
+                setForwardError(
+                    err instanceof Error ? err.message : String(err),
+                );
+            } finally {
+                setForwardBusy(false);
+            }
+        };
+
+        const forwardTargets = [
+            ...(friends.cached()?.friends ?? []).map((username) => ({
+                key: `p2p:${username}`,
+                label: username,
+                group: "好友" as const,
+            })),
+            ...(groups.cached() ?? []).map((group) => ({
+                key: `g:${group.id}`,
+                label: group.name,
+                group: "群组" as const,
+            })),
+        ];
+
         const renderText = (message: ChatMessage, mine: boolean) => {
             const mentions = message.mentions;
             if (!mentions || mentions.length === 0) return message.content;
@@ -705,7 +804,8 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                         const media = mediaKind(message);
                                         const bare =
                                             media === "image" ||
-                                            media === "video";
+                                            media === "video" ||
+                                            media === "merge";
                                         return (
                                             <Message
                                                 key={message.id}
@@ -716,26 +816,61 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                     highlightId ===
                                                         message.id &&
                                                         "rounded-xl bg-primary/10",
+                                                    selectMode &&
+                                                        !message.recalledAt &&
+                                                        "cursor-pointer",
+                                                    selectMode &&
+                                                        selectedIds.has(
+                                                            message.id,
+                                                        ) &&
+                                                        "rounded-xl bg-primary/10",
                                                 )}
+                                                onClick={
+                                                    selectMode
+                                                        ? () =>
+                                                              toggleSelect(
+                                                                  message,
+                                                              )
+                                                        : undefined
+                                                }
                                             >
                                                 <MessageAvatar>
-                                                    <button
-                                                        type="button"
-                                                        title="查看资料"
-                                                        className="rounded-full"
-                                                        onClick={(e) =>
-                                                            openProfile(
-                                                                message.sender,
-                                                                e,
-                                                            )
-                                                        }
-                                                    >
-                                                        <UserAvatar
-                                                            name={
-                                                                message.sender
+                                                    {selectMode ? (
+                                                        <span
+                                                            className={cn(
+                                                                "flex size-7 items-center justify-center self-center rounded-full border-2 transition-colors",
+                                                                selectedIds.has(
+                                                                    message.id,
+                                                                )
+                                                                    ? "border-primary bg-primary text-primary-foreground"
+                                                                    : "border-border bg-card",
+                                                            )}
+                                                        >
+                                                            {selectedIds.has(
+                                                                message.id,
+                                                            ) ? (
+                                                                <CheckIcon className="size-4" />
+                                                            ) : null}
+                                                        </span>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            title="查看资料"
+                                                            className="rounded-full"
+                                                            onClick={(e) =>
+                                                                openProfile(
+                                                                    message.sender,
+                                                                    e,
+                                                                )
                                                             }
-                                                        />
-                                                    </button>
+                                                        >
+                                                            <UserAvatar
+                                                                name={
+                                                                    message.sender
+                                                                }
+                                                            />
+                                                        </button>
+                                                    )}
                                                 </MessageAvatar>
                                                 <MessageContent>
                                                     {!mine && !isP2p ? (
@@ -775,7 +910,62 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                             }
                                                         >
                                                             {media ===
-                                                            "image" ? (
+                                                            "merge" ? (
+                                                                (() => {
+                                                                    const payload =
+                                                                        parseMerge(
+                                                                            message,
+                                                                        );
+                                                                    if (
+                                                                        !payload
+                                                                    )
+                                                                        return (
+                                                                            <p className="whitespace-pre-wrap">
+                                                                                {
+                                                                                    message.content
+                                                                                }
+                                                                            </p>
+                                                                        );
+                                                                    return (
+                                                                        <button
+                                                                            type="button"
+                                                                            title="点击查看合并的转发消息"
+                                                                            className="flex w-56 flex-col gap-1 rounded-lg bg-card px-3 py-2.5 text-left text-foreground transition-colors hover:bg-accent/60"
+                                                                            onClick={() =>
+                                                                                setMergeView(
+                                                                                    payload,
+                                                                                )
+                                                                            }
+                                                                        >
+                                                                            <p className="truncate text-sm font-medium">
+                                                                                {
+                                                                                    payload.title
+                                                                                }
+                                                                            </p>
+                                                                            <p className="truncate text-xs text-muted-foreground">
+                                                                                {payload.list
+                                                                                    .slice(
+                                                                                        0,
+                                                                                        2,
+                                                                                    )
+                                                                                    .map(
+                                                                                        (
+                                                                                            item,
+                                                                                        ) =>
+                                                                                            `${item.sender}: ${item.content}`,
+                                                                                    )
+                                                                                    .join(
+                                                                                        " \n",
+                                                                                    )}
+                                                                            </p>
+                                                                            <p className="text-[10px] text-muted-foreground/80">
+                                                                                点击查看
+                                                                            </p>
+                                                                        </button>
+                                                                    );
+                                                                })()
+                                                            ) : media ===
+                                                              "image" ? (
                                                                 <button
                                                                     type="button"
                                                                     title="点击查看大图"
@@ -920,7 +1110,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                     {isP2p &&
                                                     mine &&
                                                     message.id === lastOwnId ? (
-                                                        <p className="px-1 text-[10px] text-muted-foreground">
+                                                        <p className="self-end px-1 text-[10px] text-muted-foreground">
                                                             {peerReadAt &&
                                                             message.createdAt <=
                                                                 peerReadAt
@@ -1007,6 +1197,34 @@ export const uiMessagesSetup = async (ctx: Context) => {
                             <ArrowDownIcon className="size-4" />
                         </button>
                     ) : null}
+                    {selectMode ? (
+                        <div className="absolute bottom-3 left-1/2 z-10 flex h-10 -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-background px-4 text-xs shadow-md">
+                            <span className="font-medium">
+                                已选 {selectedIds.size} 条
+                            </span>
+                            <button
+                                type="button"
+                                className="text-muted-foreground hover:text-foreground"
+                                onClick={exitSelect}
+                            >
+                                取消
+                            </button>
+                            <button
+                                type="button"
+                                disabled={selectedIds.size === 0}
+                                className="flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                                onClick={() =>
+                                    openForward(
+                                        [...selectedIds],
+                                        `${selectedIds.size} 条消息`,
+                                    )
+                                }
+                            >
+                                <ForwardIcon className="size-3.5" />
+                                转发
+                            </button>
+                        </div>
+                    ) : null}
                 </div>
 
                 {menu ? (
@@ -1025,6 +1243,31 @@ export const uiMessagesSetup = async (ctx: Context) => {
                             "回复",
                             () => reply(menu.message),
                         )}
+                        {!menu.message.recalledAt
+                            ? menuItem(
+                                  "forward",
+                                  <ForwardIcon className="size-4" />,
+                                  "转发",
+                                  () =>
+                                      openForward(
+                                          [menu.message.id],
+                                          contentPreview(menu.message),
+                                      ),
+                              )
+                            : null}
+                        {!menu.message.recalledAt
+                            ? menuItem(
+                                  "select",
+                                  <ListChecksIcon className="size-4" />,
+                                  "多选",
+                                  () => {
+                                      setSelectMode(true);
+                                      setSelectedIds(
+                                          new Set([menu.message.id]),
+                                      );
+                                  },
+                              )
+                            : null}
                         {isImage(menu.message.content)
                             ? null
                             : menuItem(
@@ -1041,6 +1284,197 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                   () => void recall(menu.message),
                               )
                             : null}
+                    </div>
+                ) : null}
+
+                {forwardIds.length > 0 ? (
+                    <div
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="转发消息"
+                        onKeyDown={(e) => {
+                            if (e.key === "Escape") setForwardIds([]);
+                        }}
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget) setForwardIds([]);
+                        }}
+                    >
+                        <div className="flex max-h-[70vh] w-full max-w-sm flex-col rounded-xl border border-border bg-card shadow-xl">
+                            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                                <p className="flex-1 text-sm font-semibold">
+                                    转发 {forwardIds.length} 条消息
+                                </p>
+                                <button
+                                    type="button"
+                                    aria-label="关闭"
+                                    className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+                                    onClick={() => setForwardIds([])}
+                                >
+                                    <XIcon className="size-4" />
+                                </button>
+                            </div>
+                            <div className="truncate border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+                                {forwardIds.length > 1
+                                    ? `${forwardIds.length} 条消息`
+                                    : forwardPreview}
+                            </div>
+                            <div className="min-h-0 flex-1 overflow-y-auto py-1">
+                                {forwardTargets.length === 0 ? (
+                                    <p className="py-8 text-center text-xs text-muted-foreground">
+                                        暂无可转发的会话
+                                    </p>
+                                ) : null}
+                                {(["好友", "群组"] as const).map((label) => {
+                                    const items = forwardTargets.filter(
+                                        (t) => t.group === label,
+                                    );
+                                    if (items.length === 0) return null;
+                                    return (
+                                        <div key={label}>
+                                            <p className="px-4 pt-2 pb-1 text-xs font-semibold text-muted-foreground">
+                                                {label}
+                                            </p>
+                                            {items.map((target) => (
+                                                <button
+                                                    key={target.key}
+                                                    type="button"
+                                                    className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-accent/60"
+                                                    onClick={() =>
+                                                        setForwardSel(
+                                                            (prev) => {
+                                                                const next =
+                                                                    new Set(
+                                                                        prev,
+                                                                    );
+                                                                if (
+                                                                    next.has(
+                                                                        target.key,
+                                                                    )
+                                                                )
+                                                                    next.delete(
+                                                                        target.key,
+                                                                    );
+                                                                else
+                                                                    next.add(
+                                                                        target.key,
+                                                                    );
+                                                                return next;
+                                                            },
+                                                        )
+                                                    }
+                                                >
+                                                    <span
+                                                        className={cn(
+                                                            "flex size-4 items-center justify-center rounded border",
+                                                            forwardSel.has(
+                                                                target.key,
+                                                            )
+                                                                ? "border-primary bg-primary text-primary-foreground"
+                                                                : "border-border",
+                                                        )}
+                                                    >
+                                                        {forwardSel.has(
+                                                            target.key,
+                                                        ) ? (
+                                                            <CheckIcon className="size-3" />
+                                                        ) : null}
+                                                    </span>
+                                                    <span className="truncate">
+                                                        {target.label}
+                                                    </span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            {forwardError ? (
+                                <p className="mx-4 mb-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                                    {forwardError}
+                                </p>
+                            ) : null}
+                            <div className="flex items-center gap-2 border-t border-border px-4 py-3">
+                                <p className="flex-1 text-xs text-muted-foreground">
+                                    已选 {forwardSel.size} 个会话
+                                </p>
+                                <button
+                                    type="button"
+                                    disabled={
+                                        forwardSel.size === 0 || forwardBusy
+                                    }
+                                    className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                                    onClick={() => void submitForward()}
+                                >
+                                    {forwardBusy ? "转发中…" : "转发"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
+
+                {mergeView ? (
+                    <div
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="合并转发记录"
+                        onKeyDown={(e) => {
+                            if (e.key === "Escape") setMergeView(null);
+                        }}
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget)
+                                setMergeView(null);
+                        }}
+                    >
+                        <div className="flex max-h-[75vh] w-full max-w-md flex-col rounded-xl border border-border bg-card shadow-xl">
+                            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                                <p className="flex-1 truncate text-sm font-semibold">
+                                    {mergeView.title}
+                                </p>
+                                <button
+                                    type="button"
+                                    aria-label="关闭"
+                                    className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+                                    onClick={() => setMergeView(null)}
+                                >
+                                    <XIcon className="size-4" />
+                                </button>
+                            </div>
+                            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                                {mergeView.list.map((item) => (
+                                    <div
+                                        key={`${item.sender}:${item.createdAt}:${item.content.slice(0, 16)}`}
+                                        className="flex flex-col gap-0.5 py-1.5"
+                                    >
+                                        <p className="text-xs text-muted-foreground">
+                                            {item.sender}
+                                            <span className="ml-2">
+                                                {item.createdAt
+                                                    .slice(5, 16)
+                                                    .replace("T", " ")}
+                                            </span>
+                                        </p>
+                                        <p className="whitespace-pre-wrap break-words text-sm">
+                                            {item.kind && item.kind !== "text"
+                                                ? contentPreview({
+                                                      id: "",
+                                                      session: "",
+                                                      sender: item.sender,
+                                                      content: item.content,
+                                                      createdAt: item.createdAt,
+                                                      recalledAt: null,
+                                                      quote: null,
+                                                      mentions: null,
+                                                      kind: item.kind,
+                                                      file: null,
+                                                  })
+                                                : item.content}
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 ) : null}
             </>
