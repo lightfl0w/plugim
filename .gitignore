@@ -6,3 +6,8 @@ data
 .env.local
 
 .trae/
+
+docs/.vitepress/cache
+docs/.vitepress/dist
+
+.vercel/

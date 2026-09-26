@@ -10,9 +10,13 @@
         "lint": "biome check .",
         "lint:fix": "biome check --write .",
         "build": "pnpm --filter @plugim/web build && pnpm --filter @plugim/server build",
-        "start": "pnpm --filter @plugim/server serve"
+        "start": "pnpm --filter @plugim/server serve",
+        "docs:dev": "vitepress dev docs",
+        "docs:build": "vitepress build docs",
+        "docs:preview": "vitepress preview docs"
     },
     "devDependencies": {
-        "@biomejs/biome": "^2.5.12"
+        "@biomejs/biome": "^2.5.12",
+        "vitepress": "^1.6.4"
     }
 }
