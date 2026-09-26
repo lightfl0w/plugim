@@ -1,5 +1,6 @@
 import type { Context } from "@plugim/core";
-import type { MessageQuote } from "@plugim/protocol";
+import type { GroupRole, MessageQuote, TypingEvent } from "@plugim/protocol";
+import { MENTION_ALL, MENTION_ALL_LABEL } from "@plugim/protocol";
 import {
     ImageIcon,
     MicIcon,
@@ -12,6 +13,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
+import type { AuthService } from "./auth";
 import type { ConnStatus, RpcService } from "./connection";
 import type { SenderService } from "./sender";
 import type { UiService } from "./ui-types";
@@ -43,12 +45,13 @@ const EMOJIS = [
     "🌹",
 ];
 
-const MENTION_TOKEN_RE = /(^|\s)@([a-z0-9_]*)$/;
+const MENTION_TOKEN_RE = /(^|\s)@([a-z0-9_一-龥]*)$/;
 
 export const uiComposerSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
     const rpc = ctx.get<RpcService>("rpc");
     const sender = ctx.get<SenderService>("sender");
+    const auth = ctx.get<AuthService>("auth");
     let currentSession = "";
     let uploadLimitMb = 20;
     void rpc
@@ -79,12 +82,43 @@ export const uiComposerSetup = async (ctx: Context) => {
         const [mentionIndex, setMentionIndex] = useState(0);
         const [recording, setRecording] = useState(false);
         const [groupMembers, setGroupMembers] = useState<string[]>([]);
+        const [canMentionAll, setCanMentionAll] = useState(false);
+        const [typers, setTypers] = useState<Record<string, number>>({});
         const textareaRef = useRef<HTMLTextAreaElement>(null);
         const fileRef = useRef<HTMLInputElement>(null);
         const recorderRef = useRef<MediaRecorder | null>(null);
         const chunksRef = useRef<Blob[]>([]);
+        const typingAtRef = useRef(0);
 
         useEffect(() => rpc.onStatus(setStatus), []);
+
+        useEffect(() => {
+            const dispose = ctx.on("server:typing", (payload) => {
+                const { session, username } = payload as TypingEvent;
+                if (!session || !username) return;
+                if (username === (auth.user()?.username ?? "")) return;
+                setTypers((prev) => ({
+                    ...prev,
+                    [`${session}\n${username}`]: Date.now(),
+                }));
+            });
+            const timer = setInterval(() => {
+                setTypers((prev) => {
+                    const now = Date.now();
+                    let dropped = false;
+                    const next: Record<string, number> = {};
+                    for (const [key, at] of Object.entries(prev)) {
+                        if (now - at < 4000) next[key] = at;
+                        else dropped = true;
+                    }
+                    return dropped ? next : prev;
+                });
+            }, 1000);
+            return () => {
+                void dispose();
+                clearInterval(timer);
+            };
+        }, []);
 
         useEffect(() => {
             const dispose = ctx.on("ui:chat:quote", (payload) => {
@@ -111,11 +145,19 @@ export const uiComposerSetup = async (ctx: Context) => {
                     })
                     .then((result) => {
                         const { members } = result as {
-                            members: { username: string }[];
+                            members: { username: string; role: GroupRole }[];
                         };
                         setGroupMembers(members.map((m) => m.username));
+                        const me = auth.user()?.username ?? "";
+                        const mine = members.find((m) => m.username === me);
+                        setCanMentionAll(
+                            mine?.role === "owner" || mine?.role === "admin",
+                        );
                     })
-                    .catch(() => setGroupMembers([]));
+                    .catch(() => {
+                        setGroupMembers([]);
+                        setCanMentionAll(false);
+                    });
             };
             load();
             sessionListeners.add(load);
@@ -133,6 +175,20 @@ export const uiComposerSetup = async (ctx: Context) => {
             el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
         };
 
+        const notifyTyping = (value: string) => {
+            if (!value.trim() || !currentSession || status !== "open") return;
+            const now = Date.now();
+            if (now - typingAtRef.current < 2500) return;
+            typingAtRef.current = now;
+            void rpc
+                .call("typing.send", { session: currentSession })
+                .catch(() => undefined);
+        };
+
+        const typingNames = Object.keys(typers)
+            .filter((key) => key.startsWith(`${currentSession}\n`))
+            .map((key) => key.slice(currentSession.length + 1));
+
         const isGroup = currentSession.startsWith("g:");
         const mentionMatch = isGroup ? MENTION_TOKEN_RE.exec(draft) : null;
         const mentionQuery = mentionMatch?.[2]?.toLowerCase() ?? null;
@@ -140,19 +196,29 @@ export const uiComposerSetup = async (ctx: Context) => {
         const candidates =
             mentionQuery === null
                 ? []
-                : mentionPool
-                      .filter((name) => name.startsWith(mentionQuery))
-                      .slice(0, 8);
+                : [
+                      ...(canMentionAll &&
+                      MENTION_ALL_LABEL.startsWith(mentionQuery)
+                          ? [MENTION_ALL_LABEL]
+                          : []),
+                      ...mentionPool
+                          .filter((name) => name.startsWith(mentionQuery))
+                          .slice(0, 8),
+                  ];
 
         useEffect(() => {
             void mentionQuery;
             setMentionIndex(0);
         }, [mentionQuery]);
 
-        const collectMentions = (text: string): string[] =>
-            mentionPool.filter((name) =>
+        const collectMentions = (text: string): string[] => {
+            const found = mentionPool.filter((name) =>
                 new RegExp(`@${name}($|\\s|[^a-z0-9_])`).test(text),
             );
+            if (canMentionAll && /@全体成员($|\s|[^a-zA-Z0-9_])/.test(text))
+                found.push(MENTION_ALL);
+            return found;
+        };
 
         const insertMention = (name: string) => {
             setDraft((prev) =>
@@ -320,7 +386,16 @@ export const uiComposerSetup = async (ctx: Context) => {
                                 onMouseEnter={() => setMentionIndex(index)}
                                 onClick={() => insertMention(name)}
                             >
-                                <span className="truncate">{name}</span>
+                                <span className="truncate">
+                                    {name === MENTION_ALL_LABEL
+                                        ? `@${MENTION_ALL_LABEL}`
+                                        : name}
+                                </span>
+                                {name === MENTION_ALL_LABEL ? (
+                                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                                        提醒所有人
+                                    </span>
+                                ) : null}
                             </button>
                         ))}
                     </div>
@@ -409,6 +484,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                     onChange={(e) => {
                         setDraft(e.target.value);
                         autoGrow();
+                        notifyTyping(e.target.value);
                     }}
                     onKeyDown={(e) => {
                         if (candidates.length > 0) {
@@ -447,6 +523,13 @@ export const uiComposerSetup = async (ctx: Context) => {
                 />
 
                 <div className="flex items-center justify-end gap-2">
+                    {typingNames.length > 0 ? (
+                        <span className="mr-auto truncate text-xs text-muted-foreground">
+                            {isGroup
+                                ? `${typingNames.slice(0, 2).join("、")}${typingNames.length > 2 ? " 等" : ""} 正在输入...`
+                                : "对方正在输入..."}
+                        </span>
+                    ) : null}
                     <span className="text-xs text-muted-foreground/70">
                         Enter 发送 / Shift+Enter 换行
                     </span>

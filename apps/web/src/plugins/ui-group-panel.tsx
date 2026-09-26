@@ -3,12 +3,16 @@ import type {
     GroupCallInfo,
     GroupFileItem,
     GroupInfo,
+    GroupJoinRequest,
+    GroupJoinResult,
     GroupMember,
 } from "@plugim/protocol";
 import {
+    CheckIcon,
     CrownIcon,
     DownloadIcon,
     FileIcon,
+    LinkIcon,
     PhoneIcon,
     PinOffIcon,
     ShieldIcon,
@@ -29,6 +33,7 @@ import { UserAvatar } from "../components/ui/user-avatar";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
+import type { GroupsService } from "./groups";
 import type { PresenceService } from "./presence";
 import type { SenderService } from "./sender";
 import { formatBytes } from "./ui-shared";
@@ -39,11 +44,36 @@ interface MembersResult {
     online: number;
 }
 
+type InviteExpiry = "never" | "7d" | "30d";
+
+const INVITE_EXPIRY_OPTIONS: { value: InviteExpiry; label: string }[] = [
+    { value: "never", label: "永久有效" },
+    { value: "7d", label: "7 天有效" },
+    { value: "30d", label: "30 天有效" },
+];
+
+const JOIN_KEY = "plugim:join-code";
+
+const consumeJoinLink = () => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("join");
+    if (!code) return;
+    params.delete("join");
+    const query = params.toString();
+    window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+    sessionStorage.setItem(JOIN_KEY, code.trim().toUpperCase());
+};
+
 export const uiGroupPanelSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
     const rpc = ctx.get<RpcService>("rpc");
     const auth = ctx.get<AuthService>("auth");
     const friends = ctx.get<FriendsService>("friends");
+    const groups = ctx.get<GroupsService>("groups");
     const presence = ctx.get<PresenceService>("presence");
     const sender = ctx.get<SenderService>("sender");
     let uploadLimitMb = 20;
@@ -56,6 +86,42 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
             if (value > 0) uploadLimitMb = value;
         })
         .catch(() => undefined);
+
+    consumeJoinLink();
+
+    const JoinBridge = () => {
+        useEffect(() => {
+            let ticks = 0;
+            const timer = window.setInterval(() => {
+                ticks += 1;
+                const code = sessionStorage.getItem(JOIN_KEY);
+                if (!code || ticks > 200) {
+                    window.clearInterval(timer);
+                    return;
+                }
+                if (!auth.user() || rpc.status() !== "open") return;
+                sessionStorage.removeItem(JOIN_KEY);
+                window.clearInterval(timer);
+                void (async () => {
+                    try {
+                        const result = (await rpc.call("group.join", {
+                            code,
+                        })) as GroupJoinResult;
+                        await groups.refresh().catch(() => undefined);
+                        alert(
+                            result.status === "joined"
+                                ? `已加入群「${result.name}」`
+                                : `已提交加群申请，等待「${result.name}」管理员同意`,
+                        );
+                    } catch (err) {
+                        alert(String(err instanceof Error ? err.message : err));
+                    }
+                })();
+            }, 300);
+            return () => window.clearInterval(timer);
+        }, []);
+        return null;
+    };
 
     const GroupPanel = () => {
         const [groupId, setGroupId] = useState<string | null>(null);
@@ -70,6 +136,8 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
         const [total, setTotal] = useState(0);
         const [uploading, setUploading] = useState("");
         const [call, setCall] = useState<GroupCallInfo | null>(null);
+        const [requests, setRequests] = useState<GroupJoinRequest[]>([]);
+        const [expiry, setExpiry] = useState<InviteExpiry>("never");
         const panelRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
         const fileRef = useRef<HTMLInputElement>(null);
@@ -102,6 +170,15 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 setFiles(nextFiles?.files ?? []);
                 setTotal(nextFiles?.total ?? 0);
                 setCall(nextCall);
+                const manager =
+                    nextInfo.myRole === "owner" || nextInfo.myRole === "admin";
+                setRequests(
+                    manager
+                        ? ((await rpc.call("group.requests", {
+                              groupId: id,
+                          })) as GroupJoinRequest[])
+                        : [],
+                );
             } catch {
                 setGroupId(null);
             }
@@ -118,9 +195,16 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 setSelected([]);
                 setNoticeDraft(null);
                 setNameDraft(null);
+                setRequests([]);
                 void loadRef.current(id);
             });
             const disposeUpdate = ctx.on("server:group:update", (payload) => {
+                const { groupId: changed } = payload as {
+                    groupId: string;
+                };
+                if (changed === groupId) void loadRef.current(groupId);
+            });
+            const disposeRequest = ctx.on("server:group:request", (payload) => {
                 const { groupId: changed } = payload as {
                     groupId: string;
                 };
@@ -135,6 +219,7 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
             return () => {
                 void dispose();
                 void disposeUpdate();
+                void disposeRequest();
                 void disposeCall();
             };
         }, [groupId]);
@@ -484,6 +569,188 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                         </section>
 
                         {privileged ? (
+                            <section className="border-b border-border p-4">
+                                <div className="mb-2 flex items-center justify-between">
+                                    <p className="text-xs font-semibold text-muted-foreground">
+                                        邀请与审批
+                                    </p>
+                                    {info.inviteExpiresAt ? (
+                                        <span className="text-xs text-muted-foreground">
+                                            有效期至{" "}
+                                            {new Date(
+                                                info.inviteExpiresAt,
+                                            ).toLocaleDateString()}
+                                        </span>
+                                    ) : null}
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-sm">入群审批</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            开启后通过邀请链接申请，需要管理员同意
+                                        </p>
+                                    </div>
+                                    <Switch
+                                        checked={info.joinApproval}
+                                        disabled={busy}
+                                        onToggle={() =>
+                                            void act("group.joinApproval", {
+                                                on: !info.joinApproval,
+                                            })
+                                        }
+                                    />
+                                </div>
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                    <select
+                                        className="h-8 rounded-md border border-border bg-transparent px-2 text-xs"
+                                        value={expiry}
+                                        onChange={(e) =>
+                                            setExpiry(
+                                                e.target.value as InviteExpiry,
+                                            )
+                                        }
+                                    >
+                                        {INVITE_EXPIRY_OPTIONS.map((option) => (
+                                            <option
+                                                key={option.value}
+                                                value={option.value}
+                                            >
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={busy}
+                                        onClick={() =>
+                                            void act("group.invite.set", {
+                                                expiresIn: expiry,
+                                            })
+                                        }
+                                    >
+                                        <LinkIcon />
+                                        {info.inviteCode
+                                            ? "重新生成"
+                                            : "生成邀请码"}
+                                    </Button>
+                                    {info.inviteCode ? (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            disabled={busy}
+                                            onClick={() =>
+                                                void act(
+                                                    "group.invite.disable",
+                                                    {},
+                                                )
+                                            }
+                                        >
+                                            关闭邀请
+                                        </Button>
+                                    ) : null}
+                                    {info.inviteCode ? (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            onClick={() => {
+                                                const link = `${window.location.origin}/?join=${info.inviteCode}`;
+                                                void navigator.clipboard
+                                                    .writeText(link)
+                                                    .then(() =>
+                                                        alert(
+                                                            `邀请链接已复制\n${link}`,
+                                                        ),
+                                                    )
+                                                    .catch(() => alert(link));
+                                            }}
+                                        >
+                                            <CheckIcon />
+                                            复制链接
+                                        </Button>
+                                    ) : null}
+                                </div>
+                                {info.inviteCode ? (
+                                    <p className="mt-2 truncate rounded-lg bg-muted/40 px-2 py-1.5 font-mono text-xs">
+                                        {window.location.origin}/?join=
+                                        {info.inviteCode}
+                                    </p>
+                                ) : (
+                                    <p className="mt-2 text-xs text-muted-foreground">
+                                        未开启邀请链接，成员只能由管理员手动拉入
+                                    </p>
+                                )}
+                                <div className="mt-3">
+                                    <p className="mb-1 text-xs text-muted-foreground">
+                                        加群申请 {requests.length} 条
+                                    </p>
+                                    {requests.length === 0 ? (
+                                        <p className="text-xs text-muted-foreground">
+                                            暂无待审批申请
+                                        </p>
+                                    ) : (
+                                        <div className="flex flex-col gap-1">
+                                            {requests.map((item) => (
+                                                <div
+                                                    key={item.username}
+                                                    className="flex items-center gap-2 rounded-lg bg-muted/40 px-2 py-1.5"
+                                                >
+                                                    <UserAvatar
+                                                        name={item.username}
+                                                        size="sm"
+                                                    />
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="truncate text-sm">
+                                                            {item.username}
+                                                        </p>
+                                                        <p className="truncate text-xs text-muted-foreground">
+                                                            {item.message ||
+                                                                "申请加入群聊"}
+                                                        </p>
+                                                    </div>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        disabled={busy}
+                                                        onClick={() =>
+                                                            void act(
+                                                                "group.request.approve",
+                                                                {
+                                                                    username:
+                                                                        item.username,
+                                                                    on: true,
+                                                                },
+                                                            )
+                                                        }
+                                                    >
+                                                        同意
+                                                    </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        disabled={busy}
+                                                        onClick={() =>
+                                                            void act(
+                                                                "group.request.approve",
+                                                                {
+                                                                    username:
+                                                                        item.username,
+                                                                    on: false,
+                                                                },
+                                                            )
+                                                        }
+                                                    >
+                                                        拒绝
+                                                    </Button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </section>
+                        ) : null}
+
+                        {privileged ? (
                             <section className="border-b border-border">
                                 <div className="flex items-center gap-3 px-4 py-3">
                                     <Volume2Icon className="size-4 text-muted-foreground" />
@@ -771,5 +1038,10 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
         );
     };
 
-    return ui.register("overlay", GroupPanel, 30);
+    const unregisterPanel = ui.register("overlay", GroupPanel, 30);
+    const unregisterJoin = ui.register("overlay", JoinBridge, 31);
+    return () => {
+        unregisterPanel();
+        unregisterJoin();
+    };
 };

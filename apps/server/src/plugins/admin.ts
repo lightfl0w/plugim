@@ -1,3 +1,4 @@
+import { hash } from "@node-rs/argon2";
 import type { Plugin } from "@plugim/core";
 import type {
     AccountsStore,
@@ -124,6 +125,23 @@ export const adminPlugin: Plugin = {
                 on: boolean;
             };
             await accounts.setFlag(userId, "isAdmin", !!on);
+            return true;
+        });
+
+        gateway.rpc("admin.password", async (raw, conn) => {
+            await requireAdmin(conn, accounts);
+            const { userId, password } = raw as unknown as {
+                userId?: unknown;
+                password?: unknown;
+            };
+            const id = String(userId ?? "");
+            const next = String(password ?? "");
+            if (!id) throw new Error("缺少用户");
+            if (next.length < 6) throw new Error("密码至少需要 6 位");
+            const row = await accounts.fullById(id);
+            if (!row) throw new Error("用户不存在");
+            await accounts.setPassword(id, await hash(next));
+            gateway.kickUser(id);
             return true;
         });
 

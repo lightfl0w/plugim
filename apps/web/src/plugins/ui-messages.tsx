@@ -1,5 +1,6 @@
 import type { Context } from "@plugim/core";
 import type { ChatMessage, GroupInfo, MergePayload } from "@plugim/protocol";
+import { MENTION_ALL, MENTION_ALL_LABEL } from "@plugim/protocol";
 import {
     AlertCircleIcon,
     ArrowDownIcon,
@@ -829,8 +830,11 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const renderText = (message: ChatMessage, mine: boolean) => {
             const mentions = message.mentions;
             if (!mentions || mentions.length === 0) return message.content;
+            const labels = mentions.map((token) =>
+                token === MENTION_ALL ? MENTION_ALL_LABEL : token,
+            );
             const re = new RegExp(
-                `@(?:${mentions.map(escapeRegExp).join("|")})`,
+                `@(?:${labels.map(escapeRegExp).join("|")})`,
                 "g",
             );
             const nodes: ReactNode[] = [];

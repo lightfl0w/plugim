@@ -44,6 +44,9 @@ export const groupsPlugin: Plugin = {
         const disposeUpdate = ctx.on("server:group:update", () => {
             void fetchList().catch(() => undefined);
         });
+        const disposeRequest = ctx.on("server:group:request", () => {
+            void fetchList().catch(() => undefined);
+        });
         if (rpc.status() === "open") void fetchList().catch(() => undefined);
         const unstatus = rpc.onStatus((status) => {
             if (status === "open") void fetchList().catch(() => undefined);
@@ -59,6 +62,7 @@ export const groupsPlugin: Plugin = {
         });
         return () => {
             disposeUpdate();
+            disposeRequest();
             unstatus();
         };
     },

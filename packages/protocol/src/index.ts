@@ -24,6 +24,9 @@ export interface MergePayload {
     list: MergedChat[];
 }
 
+export const MENTION_ALL = "@all";
+export const MENTION_ALL_LABEL = "全体成员";
+
 export interface FileMeta {
     name: string;
     size: number;
@@ -82,9 +85,30 @@ export interface GroupInfo {
     notice: string;
     muteAll: boolean;
     noFriendAdd: boolean;
+    inviteCode: string | null;
+    inviteExpiresAt: string | null;
+    joinApproval: boolean;
+    pendingRequests: number;
     createdAt: string;
     memberCount: number;
     myRole: GroupRole | null;
+}
+
+export interface GroupJoinRequest {
+    username: string;
+    message: string;
+    createdAt: string;
+}
+
+export interface GroupJoinResult {
+    status: "joined" | "pending";
+    groupId: string;
+    name: string;
+}
+
+export interface GroupRequestEvent {
+    groupId: string;
+    username: string;
 }
 
 export interface GroupMember {
@@ -173,11 +197,18 @@ export type ServerEventName =
     | "message:recalled"
     | "friend:update"
     | "group:update"
+    | "group:request"
     | "presence:update"
     | "receipt:update"
+    | "typing"
     | "screen:signal"
     | "group:call"
     | "group:call:signal";
+
+export interface TypingEvent {
+    session: string;
+    username: string;
+}
 
 export interface ServerEvent<P = unknown> {
     kind: "event";
@@ -222,6 +253,10 @@ export interface HistoryParams {
     after?: string;
     beforeId?: string;
     afterId?: string;
+}
+
+export interface TypingParams {
+    session: string;
 }
 
 export interface RecallParams {

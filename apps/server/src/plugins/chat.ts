@@ -8,7 +8,10 @@ import type {
     MessageSearchParams,
     RecallParams,
     SendMessageParams,
+    TypingEvent,
+    TypingParams,
 } from "@plugim/protocol";
+import { MENTION_ALL } from "@plugim/protocol";
 import type {
     AccountsStore,
     AuthUser,
@@ -208,6 +211,13 @@ export const chatPlugin: Plugin = {
                       ),
                   ].slice(0, 50)
                 : null;
+            if (mentions?.includes(MENTION_ALL)) {
+                if (!rawSession.startsWith("g:"))
+                    throw new Error("只有群聊支持 @全体成员");
+                const { mine } = await resolveGroup(user, rawSession);
+                if (mine !== "owner" && mine !== "admin")
+                    throw new Error("只有群主或管理员可以 @全体成员");
+            }
             const kind: MessageKind =
                 params.kind && KINDS.includes(params.kind)
                     ? params.kind
@@ -229,6 +239,44 @@ export const chatPlugin: Plugin = {
                 kind,
                 file,
             });
+        });
+
+        const typingGate = new Map<string, number>();
+
+        gateway.rpc("typing.send", async (raw, conn) => {
+            const user = requireUser(conn);
+            const rawSession = String(
+                (raw as unknown as TypingParams).session ?? "",
+            ).trim();
+            if (!rawSession) return false;
+            const now = Date.now();
+            if (now - (typingGate.get(user.id) ?? 0) < 1500) return false;
+            typingGate.set(user.id, now);
+            if (rawSession.startsWith("p2p:")) {
+                const peer = await resolveP2p(user, rawSession);
+                gateway.emitToUser(peer.id, "typing", {
+                    session: `p2p:${user.username}`,
+                    username: user.username,
+                } satisfies TypingEvent);
+                return true;
+            }
+            if (rawSession.startsWith("g:")) {
+                const { row } = await resolveGroup(user, rawSession);
+                const ids = await groups.memberIdsOf(row.id);
+                for (const id of ids) {
+                    if (id === user.id) continue;
+                    gateway.emitToUser(id, "typing", {
+                        session: rawSession,
+                        username: user.username,
+                    } satisfies TypingEvent);
+                }
+                return true;
+            }
+            gateway.broadcast("typing", {
+                session: rawSession,
+                username: user.username,
+            } satisfies TypingEvent);
+            return true;
         });
 
         gateway.rpc("message.forward", async (raw, conn) => {

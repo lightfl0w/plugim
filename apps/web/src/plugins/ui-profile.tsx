@@ -3,6 +3,7 @@ import {
     ArrowLeftIcon,
     BellIcon,
     ChevronRightIcon,
+    KeyRoundIcon,
     LogOutIcon,
     MonitorIcon,
     MoonIcon,
@@ -16,6 +17,13 @@ import type { ReactNode } from "react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
+import {
+    Field,
+    FieldError,
+    FieldGroup,
+    FieldLabel,
+} from "../components/ui/field";
+import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
@@ -127,6 +135,145 @@ export const uiProfileSetup = async (ctx: Context) => {
             >
                 <Icon className="size-5" />
             </button>
+        );
+    };
+
+    const PasswordSection = () => {
+        const [open, setOpen] = useState(false);
+        const [oldPassword, setOldPassword] = useState("");
+        const [newPassword, setNewPassword] = useState("");
+        const [confirm, setConfirm] = useState("");
+        const [busy, setBusy] = useState(false);
+        const [hint, setHint] = useState<{ bad: boolean; text: string } | null>(
+            null,
+        );
+
+        const submit = async () => {
+            if (busy) return;
+            if (newPassword.length < 6) {
+                setHint({ bad: true, text: "新密码至少需要 6 位" });
+                return;
+            }
+            if (newPassword !== confirm) {
+                setHint({ bad: true, text: "两次输入的新密码不一致" });
+                return;
+            }
+            setBusy(true);
+            setHint(null);
+            try {
+                const result = (await rpc.call("auth.password", {
+                    oldPassword,
+                    newPassword,
+                })) as { token: string };
+                auth.setToken(result.token);
+                setOldPassword("");
+                setNewPassword("");
+                setConfirm("");
+                setHint({ bad: false, text: "密码已更新，其他设备已下线" });
+            } catch (err) {
+                setHint({
+                    bad: true,
+                    text: String(err instanceof Error ? err.message : err),
+                });
+            } finally {
+                setBusy(false);
+            }
+        };
+
+        return (
+            <section className={section}>
+                <button
+                    type="button"
+                    className={cn(
+                        rowClass,
+                        "w-full text-left hover:bg-accent/60",
+                    )}
+                    onClick={() => setOpen((prev) => !prev)}
+                >
+                    <KeyRoundIcon className="size-4 text-muted-foreground" />
+                    <p className="flex-1 text-sm">修改密码</p>
+                    <ChevronRightIcon
+                        className={cn(
+                            "size-4 text-muted-foreground transition-transform",
+                            open && "rotate-90",
+                        )}
+                    />
+                </button>
+                {open ? (
+                    <form
+                        className="border-t border-border p-4"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void submit();
+                        }}
+                    >
+                        <FieldGroup>
+                            <Field>
+                                <FieldLabel htmlFor="pwd-old">
+                                    当前密码
+                                </FieldLabel>
+                                <Input
+                                    id="pwd-old"
+                                    type="password"
+                                    autoComplete="current-password"
+                                    value={oldPassword}
+                                    onChange={(event) =>
+                                        setOldPassword(event.target.value)
+                                    }
+                                />
+                            </Field>
+                            <Field>
+                                <FieldLabel htmlFor="pwd-new">
+                                    新密码
+                                </FieldLabel>
+                                <Input
+                                    id="pwd-new"
+                                    type="password"
+                                    placeholder="至少 6 位"
+                                    autoComplete="new-password"
+                                    value={newPassword}
+                                    onChange={(event) =>
+                                        setNewPassword(event.target.value)
+                                    }
+                                />
+                            </Field>
+                            <Field>
+                                <FieldLabel htmlFor="pwd-confirm">
+                                    确认新密码
+                                </FieldLabel>
+                                <Input
+                                    id="pwd-confirm"
+                                    type="password"
+                                    autoComplete="new-password"
+                                    value={confirm}
+                                    onChange={(event) =>
+                                        setConfirm(event.target.value)
+                                    }
+                                />
+                            </Field>
+                            {hint ? (
+                                <FieldError
+                                    className={cn(!hint.bad && "text-primary")}
+                                >
+                                    {hint.text}
+                                </FieldError>
+                            ) : null}
+                            <Button
+                                type="submit"
+                                variant="outline"
+                                disabled={
+                                    busy ||
+                                    !oldPassword ||
+                                    newPassword.length < 6 ||
+                                    !confirm
+                                }
+                            >
+                                更新密码
+                            </Button>
+                        </FieldGroup>
+                    </form>
+                ) : null}
+            </section>
         );
     };
 
@@ -432,6 +579,8 @@ export const uiProfileSetup = async (ctx: Context) => {
                                 </button>
                             ) : null}
                         </section>
+
+                        <PasswordSection />
 
                         <section className={section}>
                             <div className={cn(rowClass, "gap-2")}>

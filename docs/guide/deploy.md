@@ -31,7 +31,6 @@
 cd /opt/plugim
 cp .env.example .env
 openssl rand -hex 32
-# 把输出填进 .env 的 PLUGIM_JWT_SECRET
 pnpm install && pnpm build
 pnpm start
 ```

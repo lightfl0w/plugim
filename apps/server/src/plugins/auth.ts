@@ -28,8 +28,11 @@ export const authPlugin: Plugin = {
         const settings = ctx.get<SettingsStore>("settings");
         const secret = new TextEncoder().encode(config.jwtSecret);
 
-        const signToken = async (user: AuthUser): Promise<string> =>
-            new SignJWT({ username: user.username })
+        const signToken = async (
+            user: AuthUser,
+            tokenVersion: number,
+        ): Promise<string> =>
+            new SignJWT({ username: user.username, v: tokenVersion })
                 .setProtectedHeader({ alg: "HS256" })
                 .setSubject(user.id)
                 .setIssuedAt()
@@ -44,10 +47,16 @@ export const authPlugin: Plugin = {
                 const { payload } = await jwtVerify(token, secret);
                 const id = payload.sub;
                 const username = payload.username;
+                const version = payload.v;
                 if (typeof id !== "string" || typeof username !== "string")
                     return null;
                 const row = await accounts.fullById(id);
                 if (!row || row.banned) return null;
+                if (
+                    (typeof version === "number" ? version : 0) !==
+                    row.tokenVersion
+                )
+                    return null;
                 return { id, username };
             } catch {
                 return null;
@@ -115,7 +124,7 @@ export const authPlugin: Plugin = {
             const passwordHash = await hash(password);
             const user = await accounts.create(username, passwordHash);
             await ensureBootstrapAdmin(username);
-            return toAuthSuccess(user, await signToken(user));
+            return toAuthSuccess(user, await signToken(user, 0));
         });
 
         gateway.rpc("auth.login", async (raw) => {
@@ -140,7 +149,34 @@ export const authPlugin: Plugin = {
                 username: row.username,
                 createdAt: row.createdAt,
             };
-            return toAuthSuccess(user, await signToken(user));
+            return toAuthSuccess(user, await signToken(user, row.tokenVersion));
+        });
+
+        gateway.rpc("auth.password", async (raw, conn) => {
+            const user = requireUser(conn);
+            const params = raw as unknown as {
+                oldPassword?: unknown;
+                newPassword?: unknown;
+            };
+            const oldPassword = String(params.oldPassword ?? "");
+            const newPassword = String(params.newPassword ?? "");
+            if (newPassword.length < 6) throw new Error("新密码至少需要 6 位");
+            if (newPassword === oldPassword)
+                throw new Error("新密码不能与原密码相同");
+            const row = await accounts.fullById(user.id);
+            if (!row) throw new Error(unauthorized().message);
+            const ok = await verify(row.passwordHash, oldPassword).catch(
+                () => false,
+            );
+            if (!ok) throw new Error("原密码不正确");
+            const passwordHash = await hash(newPassword);
+            const version = await accounts.setPassword(user.id, passwordHash);
+            const token = await signToken(
+                { id: row.id, username: row.username },
+                version,
+            );
+            setTimeout(() => gateway.kickUser(user.id), 1000);
+            return { token };
         });
 
         gateway.rpc("auth.me", async (_raw, conn) => {

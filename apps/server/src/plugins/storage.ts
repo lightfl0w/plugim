@@ -44,6 +44,8 @@ import type {
     GroupMemberRow,
     GroupRow,
     GroupsStore,
+    JoinRequestRow,
+    JoinRequestsStore,
     MediaFileRow,
     MediaFilesStore,
     MessageStore,
@@ -91,6 +93,7 @@ const usersSqlite = sqliteTable("users", {
     createdAt: integer("created_at").notNull(),
     isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
     banned: integer("banned", { mode: "boolean" }).notNull().default(false),
+    tokenVersion: integer("token_version").notNull().default(0),
 });
 
 const usersPg = pgTable("users", {
@@ -102,6 +105,7 @@ const usersPg = pgTable("users", {
         .defaultNow(),
     isAdmin: pgBoolean("is_admin").notNull().default(false),
     banned: pgBoolean("banned").notNull().default(false),
+    tokenVersion: pgInteger("token_version").notNull().default(0),
 });
 
 const groupsSqlite = sqliteTable("groups", {
@@ -113,6 +117,11 @@ const groupsSqlite = sqliteTable("groups", {
     noFriendAdd: integer("no_friend_add", { mode: "boolean" })
         .notNull()
         .default(false),
+    inviteCode: sqliteText("invite_code"),
+    inviteExpiresAt: integer("invite_expires_at"),
+    joinApproval: integer("join_approval", { mode: "boolean" })
+        .notNull()
+        .default(true),
     createdAt: integer("created_at").notNull(),
 });
 
@@ -123,10 +132,37 @@ const groupsPg = pgTable("groups", {
     notice: pgText("notice").notNull().default(""),
     muteAll: pgBoolean("mute_all").notNull().default(false),
     noFriendAdd: pgBoolean("no_friend_add").notNull().default(false),
+    inviteCode: pgText("invite_code"),
+    inviteExpiresAt: timestamp("invite_expires_at", { withTimezone: true }),
+    joinApproval: pgBoolean("join_approval").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
         .notNull()
         .defaultNow(),
 });
+
+const joinRequestsSqlite = sqliteTable(
+    "group_join_requests",
+    {
+        groupId: sqliteText("group_id").notNull(),
+        userId: sqliteText("user_id").notNull(),
+        message: sqliteText("message").notNull().default(""),
+        createdAt: integer("created_at").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.groupId, table.userId] })],
+);
+
+const joinRequestsPg = pgTable(
+    "group_join_requests",
+    {
+        groupId: pgText("group_id").notNull(),
+        userId: pgText("user_id").notNull(),
+        message: pgText("message").notNull().default(""),
+        createdAt: timestamp("created_at", { withTimezone: true })
+            .notNull()
+            .defaultNow(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.groupId, table.userId] })],
+);
 
 const groupMembersSqlite = sqliteTable(
     "group_members",
@@ -322,7 +358,8 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   is_admin INTEGER NOT NULL DEFAULT 0,
-  banned INTEGER NOT NULL DEFAULT 0
+  banned INTEGER NOT NULL DEFAULT 0,
+  token_version INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS friendships (
   requester_id TEXT NOT NULL,
@@ -344,7 +381,17 @@ CREATE TABLE IF NOT EXISTS groups (
   notice TEXT NOT NULL DEFAULT '',
   mute_all INTEGER NOT NULL DEFAULT 0,
   no_friend_add INTEGER NOT NULL DEFAULT 0,
+  invite_code TEXT,
+  invite_expires_at INTEGER,
+  join_approval INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS group_join_requests (
+  group_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (group_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS group_members (
   group_id TEXT NOT NULL,
@@ -410,7 +457,8 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   is_admin BOOLEAN NOT NULL DEFAULT FALSE,
-  banned BOOLEAN NOT NULL DEFAULT FALSE
+  banned BOOLEAN NOT NULL DEFAULT FALSE,
+  token_version INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS friendships (
   requester_id TEXT NOT NULL,
@@ -432,7 +480,17 @@ CREATE TABLE IF NOT EXISTS groups (
   notice TEXT NOT NULL DEFAULT '',
   mute_all BOOLEAN NOT NULL DEFAULT FALSE,
   no_friend_add BOOLEAN NOT NULL DEFAULT FALSE,
+  invite_code TEXT,
+  invite_expires_at TIMESTAMPTZ,
+  join_approval BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS group_join_requests (
+  group_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (group_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS group_members (
   group_id TEXT NOT NULL,
@@ -648,6 +706,7 @@ export const storagePlugin: Plugin = {
         "pushes",
         "mediaFiles",
         "groupFiles",
+        "join-requests",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -661,6 +720,7 @@ export const storagePlugin: Plugin = {
         let pushes: PushStore;
         let mediaFiles: MediaFilesStore;
         let groupFiles: GroupFilesStore;
+        let joinRequests: JoinRequestsStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -688,6 +748,18 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE groups ADD COLUMN IF NOT EXISTS no_friend_add BOOLEAN NOT NULL DEFAULT FALSE",
+            );
+            await client.unsafe(
+                "ALTER TABLE groups ADD COLUMN IF NOT EXISTS invite_code TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE groups ADD COLUMN IF NOT EXISTS invite_expires_at TIMESTAMPTZ",
+            );
+            await client.unsafe(
+                "ALTER TABLE groups ADD COLUMN IF NOT EXISTS join_approval BOOLEAN NOT NULL DEFAULT TRUE",
+            );
+            await client.unsafe(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0",
             );
             const db = drizzlePg(client);
 
@@ -717,6 +789,7 @@ export const storagePlugin: Plugin = {
                 createdAt: toIso(row.createdAt),
                 isAdmin: row.isAdmin,
                 banned: row.banned,
+                tokenVersion: row.tokenVersion,
             });
             const edgeToRow = (row: {
                 requesterId: string;
@@ -738,6 +811,11 @@ export const storagePlugin: Plugin = {
                 notice: row.notice,
                 muteAll: row.muteAll,
                 noFriendAdd: row.noFriendAdd,
+                inviteCode: row.inviteCode,
+                inviteExpiresAt: row.inviteExpiresAt
+                    ? toIso(row.inviteExpiresAt)
+                    : null,
+                joinApproval: row.joinApproval,
                 createdAt: toIso(row.createdAt),
             });
             const pushToRow = (
@@ -971,6 +1049,19 @@ export const storagePlugin: Plugin = {
                         )
                         .where(eq(usersPg.id, id));
                 },
+                async setPassword(id, passwordHash) {
+                    const rows = await db
+                        .select({ version: usersPg.tokenVersion })
+                        .from(usersPg)
+                        .where(eq(usersPg.id, id))
+                        .limit(1);
+                    const version = (rows[0]?.version ?? 0) + 1;
+                    await db
+                        .update(usersPg)
+                        .set({ passwordHash, tokenVersion: version })
+                        .where(eq(usersPg.id, id));
+                    return version;
+                },
                 async count() {
                     const rows = await db
                         .select({ id: usersPg.id })
@@ -1119,10 +1210,22 @@ export const storagePlugin: Plugin = {
                     const row = rows[0];
                     return row ? groupToRow(row) : null;
                 },
+                async byInviteCode(code) {
+                    const rows = await db
+                        .select()
+                        .from(groupsPg)
+                        .where(eq(groupsPg.inviteCode, code))
+                        .limit(1);
+                    const row = rows[0];
+                    return row ? groupToRow(row) : null;
+                },
                 async remove(id) {
                     await db
                         .delete(groupMembersPg)
                         .where(eq(groupMembersPg.groupId, id));
+                    await db
+                        .delete(joinRequestsPg)
+                        .where(eq(joinRequestsPg.groupId, id));
                     await db
                         .delete(groupFilesPg)
                         .where(eq(groupFilesPg.groupId, id));
@@ -1153,6 +1256,23 @@ export const storagePlugin: Plugin = {
                     await db
                         .update(groupsPg)
                         .set({ noFriendAdd: on })
+                        .where(eq(groupsPg.id, id));
+                },
+                async setInvite(id, code, expiresAt) {
+                    await db
+                        .update(groupsPg)
+                        .set({
+                            inviteCode: code,
+                            inviteExpiresAt: expiresAt
+                                ? new Date(expiresAt)
+                                : null,
+                        })
+                        .where(eq(groupsPg.id, id));
+                },
+                async setJoinApproval(id, on) {
+                    await db
+                        .update(groupsPg)
+                        .set({ joinApproval: on })
                         .where(eq(groupsPg.id, id));
                 },
                 async addMember(groupId, userId) {
@@ -1484,6 +1604,53 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            joinRequests = {
+                async upsert({ groupId, userId, message }) {
+                    await db
+                        .insert(joinRequestsPg)
+                        .values({ groupId, userId, message })
+                        .onConflictDoUpdate({
+                            target: [
+                                joinRequestsPg.groupId,
+                                joinRequestsPg.userId,
+                            ],
+                            set: { message, createdAt: new Date() },
+                        });
+                },
+                async byGroup(groupId) {
+                    const rows = await db
+                        .select()
+                        .from(joinRequestsPg)
+                        .where(eq(joinRequestsPg.groupId, groupId))
+                        .orderBy(joinRequestsPg.createdAt);
+                    return rows.map(
+                        (row): JoinRequestRow => ({
+                            groupId: row.groupId,
+                            userId: row.userId,
+                            message: row.message,
+                            createdAt: toIso(row.createdAt),
+                        }),
+                    );
+                },
+                async countByGroup(groupId) {
+                    const rows = await db
+                        .select({ userId: joinRequestsPg.userId })
+                        .from(joinRequestsPg)
+                        .where(eq(joinRequestsPg.groupId, groupId));
+                    return rows.length;
+                },
+                async remove(groupId, userId) {
+                    await db
+                        .delete(joinRequestsPg)
+                        .where(
+                            and(
+                                eq(joinRequestsPg.groupId, groupId),
+                                eq(joinRequestsPg.userId, userId),
+                            ),
+                        );
+                },
+            };
+
             ctx.log.info(`storage driver: postgres (${config.dbUrl})`);
         } else {
             const file = resolve(process.cwd(), config.dbFile);
@@ -1512,7 +1679,7 @@ export const storagePlugin: Plugin = {
             const userColumns = client.pragma("table_info(users)") as Array<{
                 name: string;
             }>;
-            for (const col of ["is_admin", "banned"]) {
+            for (const col of ["is_admin", "banned", "token_version"]) {
                 if (!userColumns.some((item) => item.name === col)) {
                     client.exec(
                         `ALTER TABLE users ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 0`,
@@ -1522,10 +1689,15 @@ export const storagePlugin: Plugin = {
             const groupColumns = client.pragma("table_info(groups)") as Array<{
                 name: string;
             }>;
-            if (!groupColumns.some((item) => item.name === "no_friend_add")) {
-                client.exec(
-                    "ALTER TABLE groups ADD COLUMN no_friend_add INTEGER NOT NULL DEFAULT 0",
-                );
+            for (const [col, type] of [
+                ["no_friend_add", "INTEGER NOT NULL DEFAULT 0"],
+                ["invite_code", "TEXT"],
+                ["invite_expires_at", "INTEGER"],
+                ["join_approval", "INTEGER NOT NULL DEFAULT 1"],
+            ]) {
+                if (!groupColumns.some((item) => item.name === col)) {
+                    client.exec(`ALTER TABLE groups ADD COLUMN ${col} ${type}`);
+                }
             }
             const db = drizzleSqlite(client);
 
@@ -1555,6 +1727,7 @@ export const storagePlugin: Plugin = {
                 createdAt: toIso(row.createdAt),
                 isAdmin: row.isAdmin,
                 banned: row.banned,
+                tokenVersion: row.tokenVersion,
             });
             const edgeToRow = (row: {
                 requesterId: string;
@@ -1576,6 +1749,12 @@ export const storagePlugin: Plugin = {
                 notice: row.notice,
                 muteAll: row.muteAll,
                 noFriendAdd: row.noFriendAdd,
+                inviteCode: row.inviteCode,
+                inviteExpiresAt:
+                    row.inviteExpiresAt === null
+                        ? null
+                        : toIso(row.inviteExpiresAt),
+                joinApproval: row.joinApproval,
                 createdAt: toIso(row.createdAt),
             });
             const pushToRow = (
@@ -1839,6 +2018,19 @@ export const storagePlugin: Plugin = {
                         )
                         .where(eq(usersSqlite.id, id));
                 },
+                async setPassword(id, passwordHash) {
+                    const rows = await db
+                        .select({ version: usersSqlite.tokenVersion })
+                        .from(usersSqlite)
+                        .where(eq(usersSqlite.id, id))
+                        .limit(1);
+                    const version = (rows[0]?.version ?? 0) + 1;
+                    await db
+                        .update(usersSqlite)
+                        .set({ passwordHash, tokenVersion: version })
+                        .where(eq(usersSqlite.id, id));
+                    return version;
+                },
                 async count() {
                     const rows = await db
                         .select({ id: usersSqlite.id })
@@ -1989,6 +2181,9 @@ export const storagePlugin: Plugin = {
                         notice: "",
                         muteAll: false,
                         noFriendAdd: false,
+                        inviteCode: null,
+                        inviteExpiresAt: null,
+                        joinApproval: true,
                         createdAt: new Date(now).toISOString(),
                     };
                 },
@@ -2001,10 +2196,22 @@ export const storagePlugin: Plugin = {
                     const row = rows[0];
                     return row ? groupToRow(row) : null;
                 },
+                async byInviteCode(code) {
+                    const rows = await db
+                        .select()
+                        .from(groupsSqlite)
+                        .where(eq(groupsSqlite.inviteCode, code))
+                        .limit(1);
+                    const row = rows[0];
+                    return row ? groupToRow(row) : null;
+                },
                 async remove(id) {
                     await db
                         .delete(groupMembersSqlite)
                         .where(eq(groupMembersSqlite.groupId, id));
+                    await db
+                        .delete(joinRequestsSqlite)
+                        .where(eq(joinRequestsSqlite.groupId, id));
                     await db
                         .delete(groupFilesSqlite)
                         .where(eq(groupFilesSqlite.groupId, id));
@@ -2037,6 +2244,23 @@ export const storagePlugin: Plugin = {
                     await db
                         .update(groupsSqlite)
                         .set({ noFriendAdd: on })
+                        .where(eq(groupsSqlite.id, id));
+                },
+                async setInvite(id, code, expiresAt) {
+                    await db
+                        .update(groupsSqlite)
+                        .set({
+                            inviteCode: code,
+                            inviteExpiresAt: expiresAt
+                                ? new Date(expiresAt).getTime()
+                                : null,
+                        })
+                        .where(eq(groupsSqlite.id, id));
+                },
+                async setJoinApproval(id, on) {
+                    await db
+                        .update(groupsSqlite)
+                        .set({ joinApproval: on })
                         .where(eq(groupsSqlite.id, id));
                 },
                 async addMember(groupId, userId) {
@@ -2387,6 +2611,58 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            joinRequests = {
+                async upsert({ groupId, userId, message }) {
+                    await db
+                        .insert(joinRequestsSqlite)
+                        .values({
+                            groupId,
+                            userId,
+                            message,
+                            createdAt: Date.now(),
+                        })
+                        .onConflictDoUpdate({
+                            target: [
+                                joinRequestsSqlite.groupId,
+                                joinRequestsSqlite.userId,
+                            ],
+                            set: { message, createdAt: Date.now() },
+                        });
+                },
+                async byGroup(groupId) {
+                    const rows = await db
+                        .select()
+                        .from(joinRequestsSqlite)
+                        .where(eq(joinRequestsSqlite.groupId, groupId))
+                        .orderBy(joinRequestsSqlite.createdAt);
+                    return rows.map(
+                        (row): JoinRequestRow => ({
+                            groupId: row.groupId,
+                            userId: row.userId,
+                            message: row.message,
+                            createdAt: toIso(row.createdAt),
+                        }),
+                    );
+                },
+                async countByGroup(groupId) {
+                    const rows = await db
+                        .select({ userId: joinRequestsSqlite.userId })
+                        .from(joinRequestsSqlite)
+                        .where(eq(joinRequestsSqlite.groupId, groupId));
+                    return rows.length;
+                },
+                async remove(groupId, userId) {
+                    await db
+                        .delete(joinRequestsSqlite)
+                        .where(
+                            and(
+                                eq(joinRequestsSqlite.groupId, groupId),
+                                eq(joinRequestsSqlite.userId, userId),
+                            ),
+                        );
+                },
+            };
+
             ctx.log.info(`storage driver: sqlite (${file})`);
         }
 
@@ -2399,6 +2675,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<PushStore>("pushes", pushes);
         ctx.provide<MediaFilesStore>("mediaFiles", mediaFiles);
         ctx.provide<GroupFilesStore>("groupFiles", groupFiles);
+        ctx.provide<JoinRequestsStore>("join-requests", joinRequests);
         return undefined;
     },
 };

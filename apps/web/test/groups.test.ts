@@ -10,6 +10,11 @@ const group = (id: string, name: string): GroupInfo => ({
     ownerId: "u1",
     notice: "",
     muteAll: false,
+    noFriendAdd: false,
+    inviteCode: null,
+    inviteExpiresAt: null,
+    joinApproval: true,
+    pendingRequests: 0,
     createdAt: new Date().toISOString(),
     memberCount: 2,
     myRole: "owner",
@@ -67,6 +72,27 @@ describe("groups service", () => {
         expect(spy).toHaveBeenCalledTimes(1);
         ctx.emit("server:group:update", { groupId: "g1" });
         await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    });
+
+    it("refetches when a join request arrives so pending counts stay fresh", async () => {
+        const { service, spy, ctx } = await makeGroups([group("g1", "团队")]);
+        await service.refresh();
+        ctx.emit("server:group:request", {
+            groupId: "g1",
+            username: "joiner",
+        });
+        await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+        await expect(service.refresh()).resolves.toHaveLength(1);
+        expect(service.cached()?.[0].pendingRequests).toBe(0);
+    });
+
+    it("stops refetching join requests after dispose", async () => {
+        const { service, spy, ctx } = await makeGroups([group("g1", "x")]);
+        await service.refresh();
+        await ctx.stop();
+        ctx.emit("server:group:request", { groupId: "g1", username: "j" });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(spy).toHaveBeenCalledTimes(1);
     });
 
     it("surfaces refresh failures to every caller", async () => {

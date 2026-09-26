@@ -106,6 +106,7 @@ export interface UserWithHash extends User {
     passwordHash: string;
     isAdmin: boolean;
     banned: boolean;
+    tokenVersion: number;
 }
 
 export interface AdminUserRow extends User {
@@ -125,6 +126,7 @@ export interface AccountsStore {
         flag: "isAdmin" | "banned",
         value: boolean,
     ): Promise<void>;
+    setPassword(id: string, passwordHash: string): Promise<number>;
     count(): Promise<number>;
 }
 
@@ -135,6 +137,9 @@ export interface GroupRow {
     notice: string;
     muteAll: boolean;
     noFriendAdd: boolean;
+    inviteCode: string | null;
+    inviteExpiresAt: string | null;
+    joinApproval: boolean;
     createdAt: string;
 }
 
@@ -145,14 +150,39 @@ export interface GroupMemberRow {
     joinedAt: string;
 }
 
+export interface JoinRequestRow {
+    groupId: string;
+    userId: string;
+    message: string;
+    createdAt: string;
+}
+
+export interface JoinRequestsStore {
+    upsert(input: {
+        groupId: string;
+        userId: string;
+        message: string;
+    }): Promise<void>;
+    byGroup(groupId: string): Promise<JoinRequestRow[]>;
+    countByGroup(groupId: string): Promise<number>;
+    remove(groupId: string, userId: string): Promise<void>;
+}
+
 export interface GroupsStore {
     create(name: string, ownerId: string): Promise<GroupRow>;
     byId(id: string): Promise<GroupRow | null>;
+    byInviteCode(code: string): Promise<GroupRow | null>;
     remove(id: string): Promise<void>;
     rename(id: string, name: string): Promise<void>;
     setNotice(id: string, notice: string): Promise<void>;
     setMuteAll(id: string, on: boolean): Promise<void>;
     setNoFriendAdd(id: string, on: boolean): Promise<void>;
+    setInvite(
+        id: string,
+        code: string | null,
+        expiresAt: string | null,
+    ): Promise<void>;
+    setJoinApproval(id: string, on: boolean): Promise<void>;
     addMember(groupId: string, userId: string): Promise<void>;
     removeMember(groupId: string, userId: string): Promise<void>;
     setRole(groupId: string, userId: string, role: GroupRole): Promise<void>;

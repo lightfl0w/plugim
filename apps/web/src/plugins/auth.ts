@@ -14,6 +14,7 @@ export interface AuthService {
         inviteCode?: string,
     ): Promise<User>;
     logout(): void;
+    setToken(token: string): void;
     onChange(cb: () => void): () => void;
 }
 
@@ -120,6 +121,11 @@ export const authPlugin: Plugin = {
                 currentUser = null;
                 isRestoring = false;
                 localStorage.removeItem(TOKEN_KEY);
+                notify();
+            },
+            setToken(token) {
+                currentToken = token;
+                localStorage.setItem(TOKEN_KEY, token);
                 notify();
             },
             onChange(cb) {

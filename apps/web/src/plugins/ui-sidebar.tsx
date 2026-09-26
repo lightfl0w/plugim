@@ -4,6 +4,7 @@ import type {
     FriendListResult,
     GroupInfo,
 } from "@plugim/protocol";
+import { MENTION_ALL } from "@plugim/protocol";
 import {
     BellIcon,
     BellOffIcon,
@@ -384,7 +385,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 const message = (payload as { message: ChatMessage }).message;
                 applyPreview(message);
                 if (message.sender === auth.user()?.username) return;
-                if (message.mentions?.includes(auth.user()?.username ?? "")) {
+                if (
+                    message.mentions?.includes(auth.user()?.username ?? "") ||
+                    message.mentions?.includes(MENTION_ALL)
+                ) {
                     setMentioned((prev) => ({
                         ...prev,
                         [message.session]: true,
@@ -538,16 +542,19 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 session: "general",
                 label: "综合频道",
                 isGroup: false,
+                pending: 0,
             },
             ...(groupList ?? []).map((group) => ({
                 session: `g:${group.id}`,
                 label: group.name,
                 isGroup: true,
+                pending: group.pendingRequests,
             })),
             ...(list?.friends ?? []).map((name) => ({
                 session: `p2p:${name}`,
                 label: displayName(name, list?.remarks),
                 isGroup: false,
+                pending: 0,
             })),
         ].sort((a, b) => {
             const pinDiff =
@@ -583,8 +590,9 @@ export const uiSidebarSetup = async (ctx: Context) => {
             session: string;
             label: string;
             isGroup: boolean;
+            pending: number;
         }) => {
-            const { session, label, isGroup } = entry;
+            const { session, label, isGroup, pending } = entry;
             const preview = previews[session];
             const count = unread[session] ?? 0;
             const peerName = session.startsWith("p2p:")
@@ -642,6 +650,11 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         </span>
                         <span className="flex items-center justify-between gap-2">
                             <span className="min-w-0 truncate text-xs text-muted-foreground">
+                                {pending > 0 ? (
+                                    <span className="mr-1 text-amber-600 dark:text-amber-400">
+                                        [{pending} 条加群申请]
+                                    </span>
+                                ) : null}
                                 {mentioned[session] ? (
                                     <span className="mr-1 text-red-500">
                                         [@我]

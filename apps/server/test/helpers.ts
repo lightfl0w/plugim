@@ -88,6 +88,7 @@ export const createTestApp = async (
         isUserOnline: (userId: string) => onlineIds.has(userId),
         kickUser: (userId: string) => {
             onlineIds.delete(userId);
+            events.push({ name: "kick", userId });
         },
         onOffline: (cb: (userId: string) => void) => {
             offlineListeners.add(cb);
