@@ -17,6 +17,16 @@ export interface AppConfig {
     vapidPrivateKey: string;
     vapidSubject: string;
     iceServers: IceServerConfig[];
+    storageDriver: string;
+    storageDir: string;
+    uploadLimitMb: number;
+    s3Endpoint: string;
+    s3Region: string;
+    s3Bucket: string;
+    s3AccessKey: string;
+    s3SecretKey: string;
+    s3PathStyle: string;
+    s3PublicBase: string;
 }
 
 export const configPlugin: Plugin = {
@@ -78,6 +88,16 @@ export const configPlugin: Plugin = {
                       ]
                     : []),
             ],
+            storageDriver: process.env.PLUGIM_STORAGE_DRIVER ?? "local",
+            storageDir: process.env.PLUGIM_STORAGE_DIR ?? "data/uploads",
+            uploadLimitMb: Number(process.env.PLUGIM_UPLOAD_LIMIT_MB ?? 20),
+            s3Endpoint: process.env.PLUGIM_S3_ENDPOINT ?? "",
+            s3Region: process.env.PLUGIM_S3_REGION ?? "",
+            s3Bucket: process.env.PLUGIM_S3_BUCKET ?? "",
+            s3AccessKey: process.env.PLUGIM_S3_ACCESS_KEY ?? "",
+            s3SecretKey: process.env.PLUGIM_S3_SECRET_KEY ?? "",
+            s3PathStyle: process.env.PLUGIM_S3_PATH_STYLE ?? "",
+            s3PublicBase: process.env.PLUGIM_S3_PUBLIC_BASE ?? "",
         });
         return undefined;
     },

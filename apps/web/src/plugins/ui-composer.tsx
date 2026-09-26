@@ -1,5 +1,5 @@
 import type { Context } from "@plugim/core";
-import type { FileMeta, MessageKind, MessageQuote } from "@plugim/protocol";
+import type { MessageQuote } from "@plugim/protocol";
 import {
     ImageIcon,
     MicIcon,
@@ -43,37 +43,23 @@ const EMOJIS = [
     "🌹",
 ];
 
-const LIMITS: Record<MessageKind, number> = {
-    text: 0,
-    image: 1.5 * 1024 * 1024,
-    audio: 8 * 1024 * 1024,
-    video: 8 * 1024 * 1024,
-    file: 20 * 1024 * 1024,
-    merge: 0,
-};
-
 const MENTION_TOKEN_RE = /(^|\s)@([a-z0-9_]*)$/;
-
-const kindFor = (mime: string): MessageKind => {
-    if (mime.startsWith("image/")) return "image";
-    if (mime.startsWith("audio/")) return "audio";
-    if (mime.startsWith("video/")) return "video";
-    return "file";
-};
-
-const readAsDataUrl = (blob: Blob) =>
-    new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(reader.error ?? new Error("读取失败"));
-        reader.readAsDataURL(blob);
-    });
 
 export const uiComposerSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
     const rpc = ctx.get<RpcService>("rpc");
     const sender = ctx.get<SenderService>("sender");
     let currentSession = "";
+    let uploadLimitMb = 20;
+    void rpc
+        .call("files.info", {})
+        .then((result) => {
+            const { uploadLimitMb: value } = result as {
+                uploadLimitMb: number;
+            };
+            if (value > 0) uploadLimitMb = value;
+        })
+        .catch(() => undefined);
     const sessionListeners = new Set<() => void>();
     const bumpSession = () => {
         for (const cb of sessionListeners) cb();
@@ -206,26 +192,15 @@ export const uiComposerSetup = async (ctx: Context) => {
 
         const sendFile = async (file: File) => {
             if (status !== "open" || sending || !currentSession) return;
-            const kind = kindFor(file.type);
-            if (file.size > LIMITS[kind]) {
-                alert(
-                    `文件过大，${kind === "image" ? "图片" : kind === "file" ? "文件" : "音视频"}上限 ${Math.floor(LIMITS[kind] / 1024 / 1024) || Math.floor(LIMITS[kind] / 1024)}MB`,
-                );
+            if (file.size > uploadLimitMb * 1024 * 1024) {
+                alert(`文件超过 ${uploadLimitMb} MB 上限`);
                 return;
             }
             setSending(true);
             try {
-                const dataUrl = await readAsDataUrl(file);
-                const meta: FileMeta = { name: file.name, size: file.size };
-                await sender.send(
-                    currentSession,
-                    dataUrl,
-                    null,
-                    null,
-                    kind,
-                    meta,
-                );
-            } catch {
+                await sender.sendMedia(currentSession, file, file.name);
+            } catch (err) {
+                alert(String(err instanceof Error ? err.message : err));
             } finally {
                 setSending(false);
             }
@@ -262,22 +237,19 @@ export const uiComposerSetup = async (ctx: Context) => {
                         type: recorder.mimeType || "audio/webm",
                     });
                     if (blob.size === 0) return;
-                    if (blob.size > LIMITS.audio) {
+                    if (blob.size > uploadLimitMb * 1024 * 1024) {
                         alert("录音过长，请分段发送");
                         return;
                     }
                     setSending(true);
                     try {
-                        const dataUrl = await readAsDataUrl(blob);
-                        await sender.send(
+                        await sender.sendMedia(
                             currentSession,
-                            dataUrl,
-                            null,
-                            null,
-                            "audio",
-                            { name: "语音消息.webm", size: blob.size },
+                            blob,
+                            "语音消息.webm",
                         );
-                    } catch {
+                    } catch (err) {
+                        alert(String(err instanceof Error ? err.message : err));
                     } finally {
                         setSending(false);
                     }

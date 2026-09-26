@@ -3,10 +3,22 @@ import { dirname, resolve } from "node:path";
 import type { Plugin } from "@plugim/core";
 import type { FileMeta, GroupRole, MessageQuote } from "@plugim/protocol";
 import Database from "better-sqlite3";
-import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import {
+    and,
+    desc,
+    eq,
+    gte,
+    inArray,
+    isNull,
+    lt,
+    ne,
+    or,
+    sql,
+} from "drizzle-orm";
 import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
 import {
     boolean as pgBoolean,
+    integer as pgInteger,
     primaryKey as pgPrimaryKey,
     pgTable,
     text as pgText,
@@ -28,7 +40,10 @@ import type {
     GroupMemberRow,
     GroupRow,
     GroupsStore,
+    MediaFileRow,
+    MediaFilesStore,
     MessageStore,
+    MessageTrendPoint,
     PushStore,
     PushSubscriptionRow,
     ReadsStore,
@@ -213,6 +228,26 @@ const pushPg = pgTable("push_subscriptions", {
         .defaultNow(),
 });
 
+const mediaFilesSqlite = sqliteTable("media_files", {
+    key: sqliteText("key").primaryKey(),
+    name: sqliteText("name").notNull(),
+    mime: sqliteText("mime").notNull(),
+    size: integer("size").notNull(),
+    uploaderId: sqliteText("uploader_id").notNull(),
+    createdAt: integer("created_at").notNull(),
+});
+
+const mediaFilesPg = pgTable("media_files", {
+    key: pgText("key").primaryKey(),
+    name: pgText("name").notNull(),
+    mime: pgText("mime").notNull(),
+    size: pgInteger("size").notNull(),
+    uploaderId: pgText("uploader_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+});
+
 const CREATE_SQLITE = `
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -274,6 +309,14 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   user_id TEXT NOT NULL,
   p256dh TEXT NOT NULL,
   auth TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS media_files (
+  key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  uploader_id TEXT NOT NULL,
   created_at INTEGER NOT NULL
 )`;
 
@@ -339,6 +382,14 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   p256dh TEXT NOT NULL,
   auth TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS media_files (
+  key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  uploader_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )`;
 
 const toIso = (value: Date | number): string =>
@@ -383,9 +434,69 @@ const parseFile = (raw: unknown): FileMeta | null => {
             typeof parsed?.name === "string" &&
             typeof parsed?.size === "number"
         )
-            return { name: parsed.name, size: parsed.size };
+            return {
+                name: parsed.name,
+                size: parsed.size,
+                ...(typeof parsed.mime === "string"
+                    ? { mime: parsed.mime }
+                    : {}),
+            };
     } catch {}
     return null;
+};
+
+const mediaFileToRow = (row: {
+    key: string;
+    name: string;
+    mime: string;
+    size: number;
+    uploaderId: string;
+    createdAt: Date | number;
+}): MediaFileRow => ({
+    key: row.key,
+    name: row.name,
+    mime: row.mime,
+    size: row.size,
+    uploaderId: row.uploaderId,
+    createdAt: toIso(row.createdAt),
+});
+
+const CHART_DAYS_MAX = 90;
+
+const localDayKey = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+const fillTrend = (
+    rows: { date: string; messages: number; senders: number }[],
+    days: number,
+): MessageTrendPoint[] => {
+    const byDate = new Map(rows.map((row) => [row.date, row]));
+    const out: MessageTrendPoint[] = [];
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    for (let i = 0; i < days; i++) {
+        const day = new Date(start);
+        day.setDate(start.getDate() + i);
+        const key = localDayKey(day);
+        const hit = byDate.get(key);
+        out.push({
+            date: key,
+            messages: Number(hit?.messages ?? 0),
+            senders: Number(hit?.senders ?? 0),
+        });
+    }
+    return out;
+};
+
+const trendDays = (days: number) =>
+    Math.min(Math.max(Math.floor(days) || 14, 1), CHART_DAYS_MAX);
+
+const trendStart = (days: number) => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    return start;
 };
 
 const escapeLike = (value: string) =>
@@ -431,6 +542,7 @@ export const storagePlugin: Plugin = {
         "reads",
         "settings",
         "pushes",
+        "mediaFiles",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -442,6 +554,7 @@ export const storagePlugin: Plugin = {
         let reads: ReadsStore;
         let settings: SettingsStore;
         let pushes: PushStore;
+        let mediaFiles: MediaFilesStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -593,8 +706,30 @@ export const storagePlugin: Plugin = {
                     const rows = await db
                         .delete(messagesPg)
                         .where(lt(messagesPg.createdAt, new Date(iso)))
-                        .returning({ id: messagesPg.id });
+                        .returning();
+                    return rows.map(messageRowToChat);
+                },
+                async countByContent(content) {
+                    const rows = await db
+                        .select({ id: messagesPg.id })
+                        .from(messagesPg)
+                        .where(eq(messagesPg.content, content));
                     return rows.length;
+                },
+                async trend(days) {
+                    const count = trendDays(days);
+                    const dayExpr = sql<string>`to_char(${messagesPg.createdAt}, 'YYYY-MM-DD')`;
+                    const rows = await db
+                        .select({
+                            date: dayExpr,
+                            messages: sql<number>`count(*)`,
+                            senders: sql<number>`count(distinct ${messagesPg.sender})`,
+                        })
+                        .from(messagesPg)
+                        .where(gte(messagesPg.createdAt, trendStart(count)))
+                        .groupBy(dayExpr)
+                        .orderBy(dayExpr);
+                    return fillTrend(rows, count);
                 },
                 async count() {
                     const rows = await db
@@ -1041,6 +1176,71 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            mediaFiles = {
+                async save(row) {
+                    await db
+                        .insert(mediaFilesPg)
+                        .values({ ...row, createdAt: new Date(row.createdAt) })
+                        .onConflictDoUpdate({
+                            target: mediaFilesPg.key,
+                            set: {
+                                name: row.name,
+                                mime: row.mime,
+                                size: row.size,
+                            },
+                        });
+                },
+                async byKey(key) {
+                    const rows = await db
+                        .select()
+                        .from(mediaFilesPg)
+                        .where(eq(mediaFilesPg.key, key))
+                        .limit(1);
+                    return rows[0] ? mediaFileToRow(rows[0]) : null;
+                },
+                async list({ offset, limit }) {
+                    const all = await db
+                        .select({ key: mediaFilesPg.key })
+                        .from(mediaFilesPg);
+                    const rows = await db
+                        .select()
+                        .from(mediaFilesPg)
+                        .orderBy(desc(mediaFilesPg.createdAt))
+                        .limit(limit)
+                        .offset(offset);
+                    return {
+                        rows: rows.map(mediaFileToRow),
+                        total: all.length,
+                    };
+                },
+                async olderThan(iso) {
+                    const rows = await db
+                        .select()
+                        .from(mediaFilesPg)
+                        .where(lt(mediaFilesPg.createdAt, new Date(iso)));
+                    return rows.map(mediaFileToRow);
+                },
+                async totalBytes() {
+                    const rows = await db
+                        .select({
+                            total: sql<number>`coalesce(sum(${mediaFilesPg.size}), 0)`,
+                        })
+                        .from(mediaFilesPg);
+                    return Number(rows[0]?.total ?? 0);
+                },
+                async count() {
+                    const rows = await db
+                        .select({ key: mediaFilesPg.key })
+                        .from(mediaFilesPg);
+                    return rows.length;
+                },
+                async remove(key) {
+                    await db
+                        .delete(mediaFilesPg)
+                        .where(eq(mediaFilesPg.key, key));
+                },
+            };
+
             ctx.log.info(`storage driver: postgres (${config.dbUrl})`);
         } else {
             const file = resolve(process.cwd(), config.dbFile);
@@ -1226,8 +1426,35 @@ export const storagePlugin: Plugin = {
                                 new Date(iso).getTime(),
                             ),
                         )
-                        .returning({ id: messagesSqlite.id });
+                        .returning();
+                    return rows.map(messageRowToChat);
+                },
+                async countByContent(content) {
+                    const rows = await db
+                        .select({ id: messagesSqlite.id })
+                        .from(messagesSqlite)
+                        .where(eq(messagesSqlite.content, content));
                     return rows.length;
+                },
+                async trend(days) {
+                    const count = trendDays(days);
+                    const dayExpr = sql<string>`date(${messagesSqlite.createdAt} / 1000, 'unixepoch', 'localtime')`;
+                    const rows = await db
+                        .select({
+                            date: dayExpr,
+                            messages: sql<number>`count(*)`,
+                            senders: sql<number>`count(distinct ${messagesSqlite.sender})`,
+                        })
+                        .from(messagesSqlite)
+                        .where(
+                            gte(
+                                messagesSqlite.createdAt,
+                                trendStart(count).getTime(),
+                            ),
+                        )
+                        .groupBy(dayExpr)
+                        .orderBy(dayExpr);
+                    return fillTrend(rows, count);
                 },
                 async count() {
                     const rows = await db
@@ -1699,6 +1926,74 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            mediaFiles = {
+                async save(row) {
+                    await db
+                        .insert(mediaFilesSqlite)
+                        .values({
+                            ...row,
+                            createdAt: Date.parse(row.createdAt),
+                        })
+                        .onConflictDoUpdate({
+                            target: mediaFilesSqlite.key,
+                            set: {
+                                name: row.name,
+                                mime: row.mime,
+                                size: row.size,
+                            },
+                        });
+                },
+                async byKey(key) {
+                    const rows = await db
+                        .select()
+                        .from(mediaFilesSqlite)
+                        .where(eq(mediaFilesSqlite.key, key))
+                        .limit(1);
+                    return rows[0] ? mediaFileToRow(rows[0]) : null;
+                },
+                async list({ offset, limit }) {
+                    const all = await db
+                        .select({ key: mediaFilesSqlite.key })
+                        .from(mediaFilesSqlite);
+                    const rows = await db
+                        .select()
+                        .from(mediaFilesSqlite)
+                        .orderBy(desc(mediaFilesSqlite.createdAt))
+                        .limit(limit)
+                        .offset(offset);
+                    return {
+                        rows: rows.map(mediaFileToRow),
+                        total: all.length,
+                    };
+                },
+                async olderThan(iso) {
+                    const rows = await db
+                        .select()
+                        .from(mediaFilesSqlite)
+                        .where(lt(mediaFilesSqlite.createdAt, Date.parse(iso)));
+                    return rows.map(mediaFileToRow);
+                },
+                async totalBytes() {
+                    const rows = await db
+                        .select({
+                            total: sql<number>`coalesce(sum(${mediaFilesSqlite.size}), 0)`,
+                        })
+                        .from(mediaFilesSqlite);
+                    return Number(rows[0]?.total ?? 0);
+                },
+                async count() {
+                    const rows = await db
+                        .select({ key: mediaFilesSqlite.key })
+                        .from(mediaFilesSqlite);
+                    return rows.length;
+                },
+                async remove(key) {
+                    await db
+                        .delete(mediaFilesSqlite)
+                        .where(eq(mediaFilesSqlite.key, key));
+                },
+            };
+
             ctx.log.info(`storage driver: sqlite (${file})`);
         }
 
@@ -1709,6 +2004,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<ReadsStore>("reads", reads);
         ctx.provide<SettingsStore>("settings", settings);
         ctx.provide<PushStore>("pushes", pushes);
+        ctx.provide<MediaFilesStore>("mediaFiles", mediaFiles);
         return undefined;
     },
 };

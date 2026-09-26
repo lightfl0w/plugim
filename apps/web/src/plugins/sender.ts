@@ -27,6 +27,11 @@ export interface PendingEvent {
     pending: PendingMessage;
 }
 
+export interface UploadedFile {
+    url: string;
+    file: FileMeta;
+}
+
 export interface SenderService {
     send(
         session: string,
@@ -36,7 +41,33 @@ export interface SenderService {
         kind?: MessageKind,
         file?: FileMeta | null,
     ): Promise<ChatMessage>;
+    upload(blob: Blob, name: string): Promise<UploadedFile>;
+    sendMedia(
+        session: string,
+        blob: Blob,
+        name: string,
+        quote?: MessageQuote | null,
+        mentions?: string[] | null,
+    ): Promise<ChatMessage>;
     retry(tempId: string): Promise<void>;
+}
+
+export const kindFor = (mime: string): MessageKind => {
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime.startsWith("video/")) return "video";
+    return "file";
+};
+
+interface UploadResponse {
+    ok: boolean;
+    result?: {
+        url: string;
+        name: string;
+        size: number;
+        mime: string;
+    };
+    message?: string;
 }
 
 export const senderPlugin: Plugin = {
@@ -105,6 +136,42 @@ export const senderPlugin: Plugin = {
                     } satisfies PendingEvent);
                     throw err;
                 }
+            },
+            async upload(blob, name) {
+                const token = auth.token();
+                if (!token) throw new Error("未登录或登录已过期");
+                const res = await fetch("/upload", {
+                    method: "POST",
+                    headers: {
+                        authorization: `Bearer ${token}`,
+                        "content-type": blob.type || "application/octet-stream",
+                        "x-file-name": encodeURIComponent(name),
+                    },
+                    body: blob,
+                });
+                const body = (await res
+                    .json()
+                    .catch(() => null)) as UploadResponse | null;
+                if (!res.ok || !body?.ok || !body.result)
+                    throw new Error(
+                        body?.message ?? `上传失败 (${res.status})`,
+                    );
+                const { url, name: savedName, size, mime } = body.result;
+                return {
+                    url,
+                    file: { name: savedName || name, size, mime },
+                };
+            },
+            async sendMedia(session, blob, name, quote, mentions) {
+                const { url, file } = await service.upload(blob, name);
+                return service.send(
+                    session,
+                    url,
+                    quote ?? null,
+                    mentions ?? null,
+                    kindFor(file.mime ?? blob.type),
+                    file,
+                );
             },
             async retry(tempId) {
                 const old = registry.get(tempId);

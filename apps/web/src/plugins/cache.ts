@@ -6,6 +6,7 @@ export interface SessionPreview {
     sender: string;
     content: string;
     at: number;
+    kind?: string;
 }
 
 export interface CacheService {

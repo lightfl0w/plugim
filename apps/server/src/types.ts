@@ -29,12 +29,19 @@ export interface GatewayService {
     broadcast(name: string, payload: unknown): void;
     emitToUser(userId: string, name: string, payload: unknown): void;
     setAuthenticator(verifier: TokenVerifier): void;
+    verify(token: string | null): Promise<AuthUser | null>;
     connections(): number;
     onlineUserIds(): string[];
     isUserOnline(userId: string): boolean;
     kickUser(userId: string): void;
     onOffline(cb: (userId: string) => void): () => void;
     hono(): Hono;
+}
+
+export interface MessageTrendPoint {
+    date: string;
+    messages: number;
+    senders: number;
 }
 
 export interface MessageStore {
@@ -62,9 +69,33 @@ export interface MessageStore {
         offset: number;
         limit: number;
     }): Promise<{ rows: ChatMessage[]; total: number }>;
-    deleteOlderThan(iso: string): Promise<number>;
+    deleteOlderThan(iso: string): Promise<ChatMessage[]>;
+    countByContent(content: string): Promise<number>;
+    trend(days: number): Promise<MessageTrendPoint[]>;
     count(): Promise<number>;
     mediaBytes(): Promise<number>;
+}
+
+export interface MediaFileRow {
+    key: string;
+    name: string;
+    mime: string;
+    size: number;
+    uploaderId: string;
+    createdAt: string;
+}
+
+export interface MediaFilesStore {
+    save(row: MediaFileRow): Promise<void>;
+    byKey(key: string): Promise<MediaFileRow | null>;
+    list(params: {
+        offset: number;
+        limit: number;
+    }): Promise<{ rows: MediaFileRow[]; total: number }>;
+    olderThan(iso: string): Promise<MediaFileRow[]>;
+    totalBytes(): Promise<number>;
+    count(): Promise<number>;
+    remove(key: string): Promise<void>;
 }
 
 export interface UserWithHash extends User {

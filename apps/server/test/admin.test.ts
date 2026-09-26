@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createTestApp } from "./helpers";
+import { createTestApp, uploadFile } from "./helpers";
 
 const adminSetup = async () => {
     const app = await createTestApp({ admins: ["root"] });
@@ -171,24 +171,135 @@ describe("admin rpc", () => {
             { session: "general", content: "text only" },
             root.user,
         );
+        const uploaded = await uploadFile(
+            app,
+            root.token,
+            "a.png",
+            "image/png",
+            24,
+        );
         await app.call(
             "message.send",
             {
                 session: "general",
-                content: "data:image/png;base64,AAAA",
+                content: uploaded.url,
                 kind: "image",
-                file: { name: "a.png", size: 24 },
+                file: { name: "a.png", size: 24, mime: "image/png" },
             },
             root.user,
         );
         const files = (await app.call("admin.files", {}, root.user)) as {
-            rows: { kind: string }[];
+            rows: {
+                key: string;
+                mime: string;
+                size: number;
+                uploaderName: string;
+            }[];
             total: number;
             totalBytes: number;
         };
         expect(files.total).toBe(1);
-        expect(files.rows[0].kind).toBe("image");
-        expect(files.totalBytes).toBeGreaterThan(0);
+        expect(files.rows[0]).toMatchObject({
+            key: uploaded.key,
+            mime: "image/png",
+            size: 24,
+            uploaderName: "root",
+        });
+        expect(files.totalBytes).toBe(24);
+        await expect(
+            app.call("admin.files.delete", { key: uploaded.key }, root.user),
+        ).rejects.toThrow("仍被消息引用");
+        await expect(
+            app.call("admin.files.delete", {}, root.user),
+        ).rejects.toThrow("文件不存在");
+    });
+
+    it("returns daily message and sender trends", async () => {
+        const { app, root } = await adminSetup();
+        const bob = await app.register("bob");
+        for (const user of [root.user, bob.user, root.user]) {
+            await app.call(
+                "message.send",
+                { session: "general", content: "趋势" },
+                user,
+            );
+        }
+        const trend = (await app.call(
+            "admin.trend",
+            { days: 7 },
+            root.user,
+        )) as {
+            days: number;
+            points: { date: string; messages: number; senders: number }[];
+        };
+        expect(trend.days).toBe(7);
+        expect(trend.points).toHaveLength(7);
+        expect(trend.points[6]).toMatchObject({ messages: 3, senders: 2 });
+        expect(trend.points[0].messages).toBe(0);
+        await expect(app.call("admin.trend", {}, bob.user)).rejects.toThrow(
+            "需要管理员权限",
+        );
+    });
+
+    it("lists scheduled tasks and updates their state", async () => {
+        const { app, root, victim } = await adminSetup();
+        const tasks = (await app.call("admin.tasks", {}, root.user)) as {
+            name: string;
+            title: string;
+            enabled: boolean;
+            intervalMinutes: number;
+            lastRun: string | null;
+        }[];
+        expect(tasks.map((task) => task.name).sort()).toEqual([
+            "media-sweep",
+            "message-cleanup",
+        ]);
+        expect(tasks[0]).toMatchObject({
+            enabled: true,
+            intervalMinutes: 1440,
+            lastRun: null,
+        });
+        await expect(app.call("admin.tasks", {}, victim.user)).rejects.toThrow(
+            "管理员",
+        );
+        await expect(
+            app.call(
+                "admin.task.set",
+                { name: "media-sweep", intervalMinutes: 0 },
+                root.user,
+            ),
+        ).rejects.toThrow("执行周期");
+        await expect(
+            app.call(
+                "admin.task.set",
+                { name: "nope", enabled: false },
+                root.user,
+            ),
+        ).rejects.toThrow("任务不存在");
+        const updated = (await app.call(
+            "admin.task.set",
+            { name: "media-sweep", enabled: false, intervalMinutes: 60 },
+            root.user,
+        )) as { enabled: boolean; intervalMinutes: number };
+        expect(updated).toMatchObject({
+            enabled: false,
+            intervalMinutes: 60,
+        });
+        await app.call("admin.retention.set", { days: 30 }, root.user);
+        const ran = (await app.call(
+            "admin.task.run",
+            { name: "message-cleanup" },
+            root.user,
+        )) as {
+            lastStatus: string;
+            lastMessage: string;
+            runs: number;
+            lastRun: string | null;
+        };
+        expect(ran.lastStatus).toBe("ok");
+        expect(ran.lastMessage).toContain("删除 0 条消息");
+        expect(ran.runs).toBe(1);
+        expect(ran.lastRun).not.toBeNull();
     });
 
     it("stores retention policy and rejects invalid values", async () => {

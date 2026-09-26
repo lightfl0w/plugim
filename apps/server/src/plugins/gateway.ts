@@ -262,6 +262,7 @@ export const gatewayPlugin: Plugin = {
             setAuthenticator: (verifier) => {
                 verifyToken = verifier;
             },
+            verify: (token) => verifyToken(token),
             connections: () => sockets.size,
             onlineUserIds,
             isUserOnline,

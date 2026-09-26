@@ -13,6 +13,8 @@ export default defineConfig({
     server: {
         proxy: {
             "/rpc": "http://localhost:3000",
+            "/upload": "http://localhost:3000",
+            "/files": "http://localhost:3000",
             "/ws": { target: "ws://localhost:3000", ws: true },
         },
     },

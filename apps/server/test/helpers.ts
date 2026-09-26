@@ -2,16 +2,19 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Context } from "@plugim/core";
+import { Hono } from "hono";
 import { adminPlugin } from "../src/plugins/admin";
 import { authPlugin } from "../src/plugins/auth";
 import { chatPlugin } from "../src/plugins/chat";
 import type { AppConfig } from "../src/plugins/config";
+import { filesPlugin } from "../src/plugins/files";
 import { friendsPlugin } from "../src/plugins/friends";
 import { groupPlugin } from "../src/plugins/group";
 import { installPlugin } from "../src/plugins/install";
 import { pushPlugin } from "../src/plugins/push";
 import { screenPlugin } from "../src/plugins/screen";
 import { storagePlugin } from "../src/plugins/storage";
+import { tasksPlugin } from "../src/plugins/tasks";
 import type { AuthUser, RpcHandler } from "../src/types";
 
 export interface RecordedEvent {
@@ -22,6 +25,7 @@ export interface RecordedEvent {
 
 export interface TestApp {
     ctx: Context;
+    app: Hono;
     call(
         method: string,
         params?: Record<string, unknown>,
@@ -54,6 +58,7 @@ export const createTestApp = async (
     const ctx = new Context();
     const handlers = new Map<string, RpcHandler>();
     const events: RecordedEvent[] = [];
+    const honoApp = new Hono();
     let authenticator:
         | ((token: string | null) => Promise<AuthUser | null>)
         | undefined;
@@ -75,6 +80,8 @@ export const createTestApp = async (
         ) => {
             authenticator = verifier;
         },
+        verify: (token: string | null) =>
+            authenticator ? authenticator(token) : Promise.resolve(null),
         connections: () => 1,
         onlineUserIds: () => [...onlineIds],
         isUserOnline: (userId: string) => onlineIds.has(userId),
@@ -85,6 +92,7 @@ export const createTestApp = async (
             offlineListeners.add(cb);
             return () => offlineListeners.delete(cb);
         },
+        hono: () => honoApp,
     });
 
     const dbFile = join(mkdtempSync(join(tmpdir(), "plugim-test-")), "test.db");
@@ -104,9 +112,20 @@ export const createTestApp = async (
         vapidPrivateKey: "",
         vapidSubject: "",
         iceServers: [{ urls: ["stun:stun.test:3478"] }],
+        storageDriver: "local",
+        storageDir: join(dirname(dbFile), "uploads"),
+        uploadLimitMb: 20,
+        s3Endpoint: "",
+        s3Region: "",
+        s3Bucket: "",
+        s3AccessKey: "",
+        s3SecretKey: "",
+        s3PathStyle: "",
+        s3PublicBase: "",
     });
 
     ctx.plugin(storagePlugin);
+    ctx.plugin(tasksPlugin);
     ctx.plugin(authPlugin);
     ctx.plugin(installPlugin);
     ctx.plugin(friendsPlugin);
@@ -115,6 +134,7 @@ export const createTestApp = async (
     ctx.plugin(chatPlugin);
     ctx.plugin(screenPlugin);
     ctx.plugin(adminPlugin);
+    ctx.plugin(filesPlugin);
     await ctx.start();
 
     const call: TestApp["call"] = async (method, params = {}, user = null) => {
@@ -133,6 +153,7 @@ export const createTestApp = async (
 
     return {
         ctx,
+        app: honoApp,
         call,
         events,
         eventsFor: (userId, name) =>
@@ -161,3 +182,37 @@ export const createTestApp = async (
 };
 
 export const asUser = (user: { id: string }): AuthUser => user as AuthUser;
+
+export interface UploadResult {
+    key: string;
+    url: string;
+    name: string;
+    size: number;
+    mime: string;
+}
+
+export const uploadFile = async (
+    app: TestApp,
+    token: string,
+    name: string,
+    mime: string,
+    bytes: number,
+): Promise<UploadResult> => {
+    const res = await app.app.request("/upload", {
+        method: "POST",
+        headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": mime,
+            "x-file-name": encodeURIComponent(name),
+        },
+        body: new Uint8Array(bytes).fill(65),
+    });
+    const body = (await res.json()) as {
+        ok: boolean;
+        result?: UploadResult;
+        message?: string;
+    };
+    if (!body.ok || !body.result)
+        throw new Error(body.message ?? `upload failed: ${res.status}`);
+    return body.result;
+};

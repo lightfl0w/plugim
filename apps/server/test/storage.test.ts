@@ -273,7 +273,9 @@ describe("message admin queries", () => {
             content: "now",
         });
         const future = new Date(Date.now() + 60_000).toISOString();
-        expect(await messages.deleteOlderThan(future)).toBe(1);
+        const removed = await messages.deleteOlderThan(future);
+        expect(removed).toHaveLength(1);
+        expect(removed[0].content).toBe("now");
         expect(await messages.count()).toBe(0);
     });
 });

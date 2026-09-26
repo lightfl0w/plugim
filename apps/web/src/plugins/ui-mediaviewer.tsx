@@ -44,7 +44,7 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
 
         if (!message) return null;
 
-        const mime = mimeOf(message.content);
+        const mime = message.file?.mime || mimeOf(message.content);
         const isVideo = message.kind === "video" || mime.startsWith("video/");
         const isAudio = message.kind === "audio" || mime.startsWith("audio/");
         const isImage = message.kind === "image" || mime.startsWith("image/");

@@ -27,6 +27,7 @@ export interface MergePayload {
 export interface FileMeta {
     name: string;
     size: number;
+    mime?: string;
 }
 
 export interface ChatMessage {

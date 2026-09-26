@@ -22,4 +22,6 @@ features:
     details: SQLite 或 PostgreSQL，由安装向导写入的 data/install.json 决定
   - title: WebRTC 通话
     details: 语音、视频、屏幕共享；两端不在同一网络时需要 coturn 中继
+  - title: 媒体文件外置
+    details: 图片、语音、文件存本地磁盘或 S3 兼容对象存储，后台可切换、改上限、逐个删除
 ---

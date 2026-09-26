@@ -35,18 +35,15 @@ import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { PresenceService } from "./presence";
 import type { AdminService } from "./ui-admin";
+import { messageLabel } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const BASE_TITLE = "plugim";
 
-const previewText = (content: string) => {
-    if (content.startsWith('{"merge":1')) return "[聊天记录]";
-    if (content.startsWith("data:image/")) return "[图片]";
-    if (content.startsWith("data:audio/")) return "[语音]";
-    if (content.startsWith("data:video/")) return "[视频]";
-    if (content.startsWith("data:")) return "[文件]";
-    return content.replace(/\s+/g, " ");
-};
+const previewText = (content: string, kind?: string) =>
+    content.startsWith('{"merge":1')
+        ? "[聊天记录]"
+        : (messageLabel(kind, content) ?? content.replace(/\s+/g, " "));
 
 function previewTime(at: number): string {
     const d = new Date(at);
@@ -294,6 +291,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         ? "[消息已撤回]"
                         : message.content,
                     at,
+                    kind: message.kind,
                 },
             };
             previewsRef.current = next;
@@ -595,7 +593,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                     </span>
                                 ) : null}
                                 {preview
-                                    ? previewText(preview.content)
+                                    ? previewText(preview.content, preview.kind)
                                     : "暂无消息"}
                             </span>
                             {count > 0 ? (
@@ -861,7 +859,7 @@ const notifyInBackground = (message: ChatMessage, dnd: string[]) => {
         return;
     try {
         new Notification(message.sender, {
-            body: previewText(message.content).slice(0, 80),
+            body: previewText(message.content, message.kind).slice(0, 80),
             tag: message.session,
         });
     } catch {}

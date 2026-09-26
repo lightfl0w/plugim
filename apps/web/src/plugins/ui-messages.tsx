@@ -32,7 +32,7 @@ import type { ConnStatus, RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { PendingEvent, PendingMessage, SenderService } from "./sender";
-import { formatBytes } from "./ui-shared";
+import { formatBytes, messageLabel } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const PAGE_SIZE = 30;
@@ -57,7 +57,8 @@ function formatStamp(iso: string): string {
     return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${time}`;
 }
 
-const isImage = (content: string) => content.startsWith("data:image/");
+const isImage = (message: ChatMessage) =>
+    message.kind === "image" || message.content.startsWith("data:image/");
 
 const parseMerge = (message: ChatMessage): MergePayload | null => {
     if (message.kind !== "merge") return null;
@@ -78,27 +79,17 @@ const mediaKind = (message: ChatMessage) =>
             ? "audio"
             : message.content.startsWith("data:video/")
               ? "video"
-              : isImage(message.content)
+              : isImage(message)
                 ? "image"
                 : "file"
         : "text");
 
 function contentPreview(message: ChatMessage): string {
     if (message.recalledAt) return "[消息已撤回]";
-    switch (mediaKind(message)) {
-        case "image":
-            return "[图片]";
-        case "audio":
-            return "[语音]";
-        case "video":
-            return "[视频]";
-        case "file":
-            return `[文件] ${message.file?.name ?? ""}`;
-        case "merge":
-            return "[聊天记录]";
-        default:
-            return message.content.replace(/\s+/g, " ");
-    }
+    return (
+        messageLabel(message.kind, message.content, message.file?.name) ??
+        message.content.replace(/\s+/g, " ")
+    );
 }
 
 const escapeRegExp = (text: string) =>
@@ -731,7 +722,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                         {formatStamp(message.createdAt)}
                                     </span>
                                     <span className="truncate text-sm">
-                                        {message.content}
+                                        {contentPreview(message)}
                                     </span>
                                 </button>
                             ))
@@ -921,9 +912,9 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                                     )
                                                                         return (
                                                                             <p className="whitespace-pre-wrap">
-                                                                                {
-                                                                                    message.content
-                                                                                }
+                                                                                {contentPreview(
+                                                                                    message,
+                                                                                )}
                                                                             </p>
                                                                         );
                                                                     return (
@@ -952,7 +943,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                                                         (
                                                                                             item,
                                                                                         ) =>
-                                                                                            `${item.sender}: ${item.content}`,
+                                                                                            `${item.sender}: ${messageLabel(item.kind, item.content) ?? item.content}`,
                                                                                     )
                                                                                     .join(
                                                                                         " \n",
@@ -1166,13 +1157,11 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                         >
                                             <BubbleContent className="rounded-xl rounded-br-sm">
                                                 <p className="whitespace-pre-wrap">
-                                                    {item.content.startsWith(
-                                                        "data:",
-                                                    )
-                                                        ? item.kind === "file"
-                                                            ? `[文件] ${item.file?.name ?? ""}`
-                                                            : `[${item.kind === "audio" ? "语音" : item.kind === "video" ? "视频" : "图片"}]`
-                                                        : item.content}
+                                                    {messageLabel(
+                                                        item.kind,
+                                                        item.content,
+                                                        item.file?.name,
+                                                    ) ?? item.content}
                                                 </p>
                                             </BubbleContent>
                                         </Bubble>
@@ -1268,7 +1257,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                   },
                               )
                             : null}
-                        {isImage(menu.message.content)
+                        {isImage(menu.message)
                             ? null
                             : menuItem(
                                   "copy",
@@ -1456,20 +1445,10 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                             </span>
                                         </p>
                                         <p className="whitespace-pre-wrap break-words text-sm">
-                                            {item.kind && item.kind !== "text"
-                                                ? contentPreview({
-                                                      id: "",
-                                                      session: "",
-                                                      sender: item.sender,
-                                                      content: item.content,
-                                                      createdAt: item.createdAt,
-                                                      recalledAt: null,
-                                                      quote: null,
-                                                      mentions: null,
-                                                      kind: item.kind,
-                                                      file: null,
-                                                  })
-                                                : item.content}
+                                            {messageLabel(
+                                                item.kind,
+                                                item.content,
+                                            ) ?? item.content}
                                         </p>
                                     </div>
                                 ))}

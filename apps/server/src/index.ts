@@ -7,6 +7,7 @@ import { adminPlugin } from "./plugins/admin";
 import { authPlugin } from "./plugins/auth";
 import { chatPlugin } from "./plugins/chat";
 import { configPlugin } from "./plugins/config";
+import { filesPlugin } from "./plugins/files";
 import { friendsPlugin } from "./plugins/friends";
 import { gatewayPlugin } from "./plugins/gateway";
 import { groupPlugin } from "./plugins/group";
@@ -14,6 +15,7 @@ import { installPlugin } from "./plugins/install";
 import { pushPlugin } from "./plugins/push";
 import { screenPlugin } from "./plugins/screen";
 import { storagePlugin } from "./plugins/storage";
+import { tasksPlugin } from "./plugins/tasks";
 import { webPlugin } from "./plugins/web";
 
 const nodeMajor = Number(process.versions.node.split(".")[0]);
@@ -64,6 +66,7 @@ const ctx = new Context();
 ctx.plugin(configPlugin);
 ctx.plugin(gatewayPlugin);
 ctx.plugin(storagePlugin);
+ctx.plugin(tasksPlugin);
 ctx.plugin(authPlugin);
 ctx.plugin(installPlugin);
 ctx.plugin(friendsPlugin);
@@ -72,6 +75,7 @@ ctx.plugin(pushPlugin);
 ctx.plugin(chatPlugin);
 ctx.plugin(screenPlugin);
 ctx.plugin(adminPlugin);
+ctx.plugin(filesPlugin);
 ctx.plugin(webPlugin);
 
 ctx.start().catch((err) => {

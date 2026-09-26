@@ -39,6 +39,29 @@
 | `PLUGIM_TURN_USER` | 空 | TURN 用户名 |
 | `PLUGIM_TURN_PASS` | 空 | TURN 密钥，需与 coturn 的 `static-auth-secret` 一致 |
 
+## 媒体存储
+
+图片、语音、文件默认落本地磁盘，也可以切到 S3 兼容的对象存储（MinIO、Cloudflare R2、AWS S3 等）。后台「文件管理」页改的是同一批值，写进 `settings` 表后优先级高于环境变量。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PLUGIM_STORAGE_DRIVER` | `local` | `local` 或 `s3` |
+| `PLUGIM_STORAGE_DIR` | `data/uploads` | 本地磁盘目录，相对进程工作目录 |
+| `PLUGIM_UPLOAD_LIMIT_MB` | `20` | 单文件上限，1 到 1024 之间的整数 |
+| `PLUGIM_S3_ENDPOINT` | 空 | 自建服务填地址，AWS 留空走官方端点 |
+| `PLUGIM_S3_REGION` | 空 | 区域，留空时按 `us-east-1` 处理 |
+| `PLUGIM_S3_BUCKET` | 空 | 存储桶，切到 `s3` 后必填 |
+| `PLUGIM_S3_ACCESS_KEY` | 空 | 访问密钥 ID，切到 `s3` 后必填 |
+| `PLUGIM_S3_SECRET_KEY` | 空 | 访问密钥 Secret |
+| `PLUGIM_S3_PATH_STYLE` | 空 | 填 `true` 走路径风格访问，MinIO 这类自建服务需要 |
+| `PLUGIM_S3_PUBLIC_BASE` | 空 | 公开访问前缀，比如 CDN 域名；留空则读文件时下发一小时有效的预签名链接 |
+
+上传走 `POST /upload`，请求体是文件本身，`content-type` 是文件类型，`x-file-name` 是 URL 编码过的文件名，需要带 `Authorization: Bearer <token>`。超过上限返回 413，未登录返回 401。
+
+读取走 `GET /files/<32位十六进制 key>`，不加鉴权，靠 key 不可猜；带 `?download=1` 时响应头是 `content-disposition: attachment`。本地磁盘按文件流回源，S3 直接 302 到公开前缀或预签名地址。
+
+消息里存的只是 `/files/<key>` 这个路径，文件名、大小、类型记在消息的 `file` 字段。更早版本内联的 base64 图片仍然照常显示。
+
 ## 离线推送
 
 | 变量 | 默认值 | 说明 |

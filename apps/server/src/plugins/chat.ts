@@ -224,6 +224,7 @@ export const chatPlugin: Plugin = {
                     ? {
                           name: params.file.name.slice(0, 200),
                           size: params.file.size,
+                          mime: String(params.file.mime ?? "").slice(0, 100),
                       }
                     : null;
             return sendTo(user, rawSession, {
