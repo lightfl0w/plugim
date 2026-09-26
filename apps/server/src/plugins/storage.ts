@@ -39,6 +39,8 @@ import type {
     AdminUserRow,
     FriendEdge,
     FriendsStore,
+    GroupFileRow,
+    GroupFilesStore,
     GroupMemberRow,
     GroupRow,
     GroupsStore,
@@ -270,6 +272,36 @@ const mediaFilesPg = pgTable("media_files", {
         .defaultNow(),
 });
 
+const groupFilesSqlite = sqliteTable(
+    "group_files",
+    {
+        groupId: sqliteText("group_id").notNull(),
+        key: sqliteText("key").notNull(),
+        name: sqliteText("name").notNull(),
+        mime: sqliteText("mime").notNull(),
+        size: integer("size").notNull(),
+        uploaderId: sqliteText("uploader_id").notNull(),
+        createdAt: integer("created_at").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.groupId, table.key] })],
+);
+
+const groupFilesPg = pgTable(
+    "group_files",
+    {
+        groupId: pgText("group_id").notNull(),
+        key: pgText("key").notNull(),
+        name: pgText("name").notNull(),
+        mime: pgText("mime").notNull(),
+        size: pgInteger("size").notNull(),
+        uploaderId: pgText("uploader_id").notNull(),
+        createdAt: timestamp("created_at", { withTimezone: true })
+            .notNull()
+            .defaultNow(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.groupId, table.key] })],
+);
+
 const CREATE_SQLITE = `
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -346,6 +378,16 @@ CREATE TABLE IF NOT EXISTS media_files (
   size INTEGER NOT NULL,
   uploader_id TEXT NOT NULL,
   created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS group_files (
+  group_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  uploader_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (group_id, key)
 )`;
 
 const CREATE_PG = `
@@ -424,6 +466,16 @@ CREATE TABLE IF NOT EXISTS media_files (
   size INTEGER NOT NULL,
   uploader_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS group_files (
+  group_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  uploader_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (group_id, key)
 )`;
 
 const toIso = (value: Date | number): string =>
@@ -487,6 +539,24 @@ const mediaFileToRow = (row: {
     uploaderId: string;
     createdAt: Date | number;
 }): MediaFileRow => ({
+    key: row.key,
+    name: row.name,
+    mime: row.mime,
+    size: row.size,
+    uploaderId: row.uploaderId,
+    createdAt: toIso(row.createdAt),
+});
+
+const groupFileToRow = (row: {
+    groupId: string;
+    key: string;
+    name: string;
+    mime: string;
+    size: number;
+    uploaderId: string;
+    createdAt: Date | number;
+}): GroupFileRow => ({
+    groupId: row.groupId,
     key: row.key,
     name: row.name,
     mime: row.mime,
@@ -577,6 +647,7 @@ export const storagePlugin: Plugin = {
         "settings",
         "pushes",
         "mediaFiles",
+        "groupFiles",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -589,6 +660,7 @@ export const storagePlugin: Plugin = {
         let settings: SettingsStore;
         let pushes: PushStore;
         let mediaFiles: MediaFilesStore;
+        let groupFiles: GroupFilesStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -1051,6 +1123,9 @@ export const storagePlugin: Plugin = {
                     await db
                         .delete(groupMembersPg)
                         .where(eq(groupMembersPg.groupId, id));
+                    await db
+                        .delete(groupFilesPg)
+                        .where(eq(groupFilesPg.groupId, id));
                     await db.delete(groupsPg).where(eq(groupsPg.id, id));
                     await db
                         .delete(readsPg)
@@ -1343,6 +1418,69 @@ export const storagePlugin: Plugin = {
                     await db
                         .delete(mediaFilesPg)
                         .where(eq(mediaFilesPg.key, key));
+                },
+            };
+
+            groupFiles = {
+                async save(row) {
+                    await db
+                        .insert(groupFilesPg)
+                        .values({ ...row, createdAt: new Date(row.createdAt) })
+                        .onConflictDoUpdate({
+                            target: [groupFilesPg.groupId, groupFilesPg.key],
+                            set: {
+                                name: row.name,
+                                mime: row.mime,
+                                size: row.size,
+                            },
+                        });
+                },
+                async byKey(groupId, key) {
+                    const rows = await db
+                        .select()
+                        .from(groupFilesPg)
+                        .where(
+                            and(
+                                eq(groupFilesPg.groupId, groupId),
+                                eq(groupFilesPg.key, key),
+                            ),
+                        )
+                        .limit(1);
+                    return rows[0] ? groupFileToRow(rows[0]) : null;
+                },
+                async list(groupId, { offset, limit }) {
+                    const all = await db
+                        .select({ key: groupFilesPg.key })
+                        .from(groupFilesPg)
+                        .where(eq(groupFilesPg.groupId, groupId));
+                    const rows = await db
+                        .select()
+                        .from(groupFilesPg)
+                        .where(eq(groupFilesPg.groupId, groupId))
+                        .orderBy(desc(groupFilesPg.createdAt))
+                        .limit(limit)
+                        .offset(offset);
+                    return {
+                        rows: rows.map(groupFileToRow),
+                        total: all.length,
+                    };
+                },
+                async countByKey(key) {
+                    const rows = await db
+                        .select({ key: groupFilesPg.key })
+                        .from(groupFilesPg)
+                        .where(eq(groupFilesPg.key, key));
+                    return rows.length;
+                },
+                async remove(groupId, key) {
+                    await db
+                        .delete(groupFilesPg)
+                        .where(
+                            and(
+                                eq(groupFilesPg.groupId, groupId),
+                                eq(groupFilesPg.key, key),
+                            ),
+                        );
                 },
             };
 
@@ -1868,6 +2006,9 @@ export const storagePlugin: Plugin = {
                         .delete(groupMembersSqlite)
                         .where(eq(groupMembersSqlite.groupId, id));
                     await db
+                        .delete(groupFilesSqlite)
+                        .where(eq(groupFilesSqlite.groupId, id));
+                    await db
                         .delete(groupsSqlite)
                         .where(eq(groupsSqlite.id, id));
                     await db
@@ -2177,6 +2318,75 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            groupFiles = {
+                async save(row) {
+                    await db
+                        .insert(groupFilesSqlite)
+                        .values({
+                            ...row,
+                            createdAt: Date.parse(row.createdAt),
+                        })
+                        .onConflictDoUpdate({
+                            target: [
+                                groupFilesSqlite.groupId,
+                                groupFilesSqlite.key,
+                            ],
+                            set: {
+                                name: row.name,
+                                mime: row.mime,
+                                size: row.size,
+                            },
+                        });
+                },
+                async byKey(groupId, key) {
+                    const rows = await db
+                        .select()
+                        .from(groupFilesSqlite)
+                        .where(
+                            and(
+                                eq(groupFilesSqlite.groupId, groupId),
+                                eq(groupFilesSqlite.key, key),
+                            ),
+                        )
+                        .limit(1);
+                    return rows[0] ? groupFileToRow(rows[0]) : null;
+                },
+                async list(groupId, { offset, limit }) {
+                    const all = await db
+                        .select({ key: groupFilesSqlite.key })
+                        .from(groupFilesSqlite)
+                        .where(eq(groupFilesSqlite.groupId, groupId));
+                    const rows = await db
+                        .select()
+                        .from(groupFilesSqlite)
+                        .where(eq(groupFilesSqlite.groupId, groupId))
+                        .orderBy(desc(groupFilesSqlite.createdAt))
+                        .limit(limit)
+                        .offset(offset);
+                    return {
+                        rows: rows.map(groupFileToRow),
+                        total: all.length,
+                    };
+                },
+                async countByKey(key) {
+                    const rows = await db
+                        .select({ key: groupFilesSqlite.key })
+                        .from(groupFilesSqlite)
+                        .where(eq(groupFilesSqlite.key, key));
+                    return rows.length;
+                },
+                async remove(groupId, key) {
+                    await db
+                        .delete(groupFilesSqlite)
+                        .where(
+                            and(
+                                eq(groupFilesSqlite.groupId, groupId),
+                                eq(groupFilesSqlite.key, key),
+                            ),
+                        );
+                },
+            };
+
             ctx.log.info(`storage driver: sqlite (${file})`);
         }
 
@@ -2188,6 +2398,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<SettingsStore>("settings", settings);
         ctx.provide<PushStore>("pushes", pushes);
         ctx.provide<MediaFilesStore>("mediaFiles", mediaFiles);
+        ctx.provide<GroupFilesStore>("groupFiles", groupFiles);
         return undefined;
     },
 };

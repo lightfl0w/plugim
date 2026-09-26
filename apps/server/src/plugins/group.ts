@@ -5,6 +5,7 @@ import type {
     AuthUser,
     ConnInfo,
     GatewayService,
+    GroupAclService,
     GroupRow,
     GroupsStore,
 } from "../types";
@@ -19,7 +20,7 @@ const sessionOf = (groupId: string) => `g:${groupId}`;
 export const groupPlugin: Plugin = {
     name: "group",
     description: "群组管理 RPC",
-    provides: ["group-rpc"],
+    provides: ["group-rpc", "group-acl"],
     inject: ["gateway", "groups", "accounts"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
@@ -299,7 +300,7 @@ export const groupPlugin: Plugin = {
             return true;
         });
 
-        ctx.provide("group-acl", {
+        ctx.provide<GroupAclService>("group-acl", {
             requireMembership,
             sessionOf,
         });

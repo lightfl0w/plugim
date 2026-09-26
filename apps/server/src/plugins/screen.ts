@@ -1,6 +1,10 @@
 import type { Plugin } from "@plugim/core";
 import type {
     CallKind,
+    GroupCallEvent,
+    GroupCallEventType,
+    GroupCallInfo,
+    GroupCallSignal,
     ScreenSignal,
     ScreenSignalType,
 } from "@plugim/protocol";
@@ -10,6 +14,7 @@ import type {
     ConnInfo,
     FriendsStore,
     GatewayService,
+    GroupsStore,
 } from "../types";
 import type { AppConfig } from "./config";
 
@@ -23,22 +28,38 @@ interface Call {
     active: boolean;
 }
 
+interface Room {
+    id: string;
+    groupId: string;
+    groupName: string;
+    kind: CallKind;
+    hostId: string;
+    members: Map<string, string>;
+}
+
 const requireUser = (conn: ConnInfo): AuthUser => {
     if (!conn.user) throw new Error("未登录或登录已过期");
     return conn.user;
 };
 
 const RELAY_TYPES: ScreenSignalType[] = ["offer", "answer", "ice"];
+const GROUP_SIGNAL_TYPES: GroupCallSignal["type"][] = [
+    "offer",
+    "answer",
+    "ice",
+];
+const ROOM_LIMIT = 6;
 
 export const screenPlugin: Plugin = {
     name: "screen",
-    description: "1v1 通话(屏幕共享/语音)信令中继",
+    description: "通话信令中继(1v1 屏幕共享/语音视频、群组通话)",
     provides: ["screen-rpc"],
-    inject: ["gateway", "accounts", "friendships", "config"],
+    inject: ["gateway", "accounts", "friendships", "groups", "config"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const accounts = ctx.get<AccountsStore>("accounts");
         const friendships = ctx.get<FriendsStore>("friendships");
+        const groups = ctx.get<GroupsStore>("groups");
         const config = ctx.get<AppConfig>("config");
 
         const calls = new Map<string, Call>();
@@ -102,8 +123,9 @@ export const screenPlugin: Plugin = {
             if (!peer || peer.id === me.id) throw new Error("用户不存在");
             if (!(await areFriends(me, peer.id)))
                 throw new Error("只能向好友发起通话");
-            if (callOf(me.id)) throw new Error("你正在进行通话");
-            if (callOf(peer.id)) throw new Error("对方正忙");
+            if (callOf(me.id) || roomOf(me.id))
+                throw new Error("你正在进行通话");
+            if (callOf(peer.id) || roomOf(peer.id)) throw new Error("对方正忙");
             if (!gateway.isUserOnline(peer.id)) throw new Error("对方不在线");
             const call: Call = {
                 id: crypto.randomUUID(),
@@ -187,19 +209,208 @@ export const screenPlugin: Plugin = {
             });
             return true;
         });
+        const rooms = new Map<string, Room>();
+        const roomOf = (userId: string) =>
+            [...rooms.values()].find((room) => room.members.has(userId));
+        const roomOfGroup = (groupId: string) =>
+            [...rooms.values()].find((room) => room.groupId === groupId);
+
+        const roomInfo = (room: Room): GroupCallInfo => ({
+            roomId: room.id,
+            groupId: room.groupId,
+            groupName: room.groupName,
+            kind: room.kind,
+            host: room.members.get(room.hostId) ?? "",
+            members: [...room.members.values()],
+        });
+
+        const emitRoom = (
+            room: Room,
+            type: GroupCallEventType,
+            from: string,
+            to?: string[],
+        ) => {
+            const payload: GroupCallEvent = {
+                type,
+                roomId: room.id,
+                groupId: room.groupId,
+                groupName: room.groupName,
+                kind: room.kind,
+                from,
+            };
+            for (const id of to ?? [...room.members.keys()])
+                gateway.emitToUser(id, "group:call", payload);
+        };
+
+        const requireGroup = async (groupId: string, me: AuthUser) => {
+            const row = await groups.byId(groupId);
+            if (!row) throw new Error("群组不存在");
+            const members = await groups.membersOf(groupId);
+            if (!members.some((member) => member.userId === me.id))
+                throw new Error("你不在该群中");
+            return { row, members };
+        };
+
+        gateway.rpc("call.group.info", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { groupId } = raw as unknown as { groupId?: string };
+            await requireGroup(String(groupId ?? ""), me);
+            const room = roomOfGroup(String(groupId ?? ""));
+            return room ? roomInfo(room) : null;
+        });
+
+        gateway.rpc("call.group.start", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { groupId, kind } = raw as unknown as {
+                groupId?: string;
+                kind?: CallKind;
+            };
+            const callKind: CallKind = kind === "video" ? "video" : "voice";
+            const { row, members } = await requireGroup(
+                String(groupId ?? ""),
+                me,
+            );
+            if (callOf(me.id) || roomOf(me.id))
+                throw new Error("你正在进行通话");
+            if (roomOfGroup(row.id)) throw new Error("该群已有通话进行中");
+            const room: Room = {
+                id: crypto.randomUUID(),
+                groupId: row.id,
+                groupName: row.name,
+                kind: callKind,
+                hostId: me.id,
+                members: new Map([[me.id, me.username]]),
+            };
+            rooms.set(room.id, room);
+            emitRoom(
+                room,
+                "invite",
+                me.username,
+                members
+                    .map((member) => member.userId)
+                    .filter((id) => id !== me.id),
+            );
+            return roomInfo(room);
+        });
+
+        gateway.rpc("call.group.join", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { roomId } = raw as unknown as { roomId?: string };
+            const room = rooms.get(String(roomId ?? ""));
+            if (!room) throw new Error("通话已结束");
+            await requireGroup(room.groupId, me);
+            if (callOf(me.id)) throw new Error("你正在进行通话");
+            const current = roomOf(me.id);
+            if (current && current.id !== room.id)
+                throw new Error("你正在进行其他群通话");
+            const others = [...room.members.entries()].filter(
+                ([id]) => id !== me.id,
+            );
+            if (!room.members.has(me.id)) {
+                if (room.members.size >= ROOM_LIMIT)
+                    throw new Error(`群通话最多 ${ROOM_LIMIT} 人`);
+                room.members.set(me.id, me.username);
+                emitRoom(
+                    room,
+                    "join",
+                    me.username,
+                    others.map(([id]) => id),
+                );
+            }
+            return {
+                room: roomInfo(room),
+                others: others.map(([, name]) => name),
+            };
+        });
+
+        gateway.rpc("call.group.leave", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { roomId } = raw as unknown as { roomId?: string };
+            const room = rooms.get(String(roomId ?? ""));
+            if (!room?.members.has(me.id)) return true;
+            room.members.delete(me.id);
+            if (room.hostId === me.id || room.members.size === 0) {
+                emitRoom(room, "end", me.username);
+                rooms.delete(room.id);
+                return true;
+            }
+            emitRoom(room, "leave", me.username);
+            return true;
+        });
+
+        gateway.rpc("call.group.end", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { roomId } = raw as unknown as { roomId?: string };
+            const room = rooms.get(String(roomId ?? ""));
+            if (!room) return true;
+            if (room.hostId !== me.id)
+                throw new Error("只有发起人可以结束通话");
+            emitRoom(room, "end", me.username);
+            rooms.delete(room.id);
+            return true;
+        });
+
+        gateway.rpc("call.group.signal", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { roomId, to, type, sdp, candidate } = raw as unknown as {
+                roomId?: string;
+                to?: string;
+                type?: GroupCallSignal["type"];
+                sdp?: string;
+                candidate?: unknown;
+            };
+            const signalType = String(type ?? "") as GroupCallSignal["type"];
+            if (!GROUP_SIGNAL_TYPES.includes(signalType))
+                throw new Error("非法信令类型");
+            const room = rooms.get(String(roomId ?? ""));
+            if (!room) throw new Error("通话已结束");
+            if (!room.members.has(me.id)) throw new Error("你不在该通话中");
+            const targetName = String(to ?? "").trim();
+            const target = [...room.members.entries()].find(
+                ([id, name]) => name === targetName && id !== me.id,
+            );
+            if (!target) throw new Error("对方不在该通话中");
+            if (signalType === "ice" && typeof candidate !== "object")
+                throw new Error("非法 ICE 候选");
+            if (signalType !== "ice" && typeof sdp !== "string")
+                throw new Error("缺少 SDP");
+            gateway.emitToUser(target[0], "group:call:signal", {
+                type: signalType,
+                roomId: room.id,
+                from: me.username,
+                sdp:
+                    typeof sdp === "string"
+                        ? sdp.slice(0, 32 * 1024)
+                        : undefined,
+                candidate: signalType === "ice" ? candidate : undefined,
+            } satisfies GroupCallSignal);
+            return true;
+        });
+
         const cleanupForOffline = (userId: string) => {
             const call = callOf(userId);
-            if (!call) return;
-            const goneName =
-                call.fromId === userId ? call.fromName : call.toName;
-            const toId = call.fromId === userId ? call.toId : call.fromId;
-            gateway.emitToUser(toId, "screen:signal", {
-                type: "hangup",
-                callId: call.id,
-                from: goneName,
-                kind: call.kind,
-            } satisfies ScreenSignal);
-            drop(call);
+            if (call) {
+                const goneName =
+                    call.fromId === userId ? call.fromName : call.toName;
+                const toId = call.fromId === userId ? call.toId : call.fromId;
+                gateway.emitToUser(toId, "screen:signal", {
+                    type: "hangup",
+                    callId: call.id,
+                    from: goneName,
+                    kind: call.kind,
+                } satisfies ScreenSignal);
+                drop(call);
+            }
+            const room = roomOf(userId);
+            if (!room) return;
+            const goneName = room.members.get(userId) ?? "";
+            room.members.delete(userId);
+            if (room.hostId === userId || room.members.size === 0) {
+                emitRoom(room, "end", goneName);
+                rooms.delete(room.id);
+                return;
+            }
+            emitRoom(room, "leave", goneName);
         };
 
         const offOffline = gateway.onOffline(cleanupForOffline);

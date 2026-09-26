@@ -131,6 +131,43 @@ export interface IceServerConfig {
     credential?: string;
 }
 
+export interface GroupFileItem {
+    key: string;
+    name: string;
+    mime: string;
+    size: number;
+    uploader: string;
+    createdAt: string;
+}
+
+export interface GroupCallInfo {
+    roomId: string;
+    groupId: string;
+    groupName: string;
+    kind: CallKind;
+    host: string;
+    members: string[];
+}
+
+export type GroupCallEventType = "invite" | "join" | "leave" | "end";
+
+export interface GroupCallEvent {
+    type: GroupCallEventType;
+    roomId: string;
+    groupId: string;
+    groupName: string;
+    kind: CallKind;
+    from: string;
+}
+
+export interface GroupCallSignal {
+    type: "offer" | "answer" | "ice";
+    roomId: string;
+    from: string;
+    sdp?: string;
+    candidate?: unknown;
+}
+
 export type ServerEventName =
     | "message:new"
     | "message:recalled"
@@ -138,7 +175,9 @@ export type ServerEventName =
     | "group:update"
     | "presence:update"
     | "receipt:update"
-    | "screen:signal";
+    | "screen:signal"
+    | "group:call"
+    | "group:call:signal";
 
 export interface ServerEvent<P = unknown> {
     kind: "event";

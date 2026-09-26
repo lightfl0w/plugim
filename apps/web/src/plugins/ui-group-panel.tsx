@@ -1,12 +1,23 @@
 import type { Context } from "@plugim/core";
-import type { GroupInfo, GroupMember } from "@plugim/protocol";
+import type {
+    GroupCallInfo,
+    GroupFileItem,
+    GroupInfo,
+    GroupMember,
+} from "@plugim/protocol";
 import {
     CrownIcon,
+    DownloadIcon,
+    FileIcon,
+    PhoneIcon,
     PinOffIcon,
     ShieldIcon,
+    Trash2Icon,
+    UploadIcon,
     UserMinusIcon,
     UserPlusIcon,
     UserXIcon,
+    VideoIcon,
     Volume2Icon,
     VolumeXIcon,
     XIcon,
@@ -19,6 +30,8 @@ import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { PresenceService } from "./presence";
+import type { SenderService } from "./sender";
+import { formatBytes } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 interface MembersResult {
@@ -32,6 +45,17 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
     const auth = ctx.get<AuthService>("auth");
     const friends = ctx.get<FriendsService>("friends");
     const presence = ctx.get<PresenceService>("presence");
+    const sender = ctx.get<SenderService>("sender");
+    let uploadLimitMb = 20;
+    void rpc
+        .call("files.info", {})
+        .then((result) => {
+            const { uploadLimitMb: value } = result as {
+                uploadLimitMb: number;
+            };
+            if (value > 0) uploadLimitMb = value;
+        })
+        .catch(() => undefined);
 
     const GroupPanel = () => {
         const [groupId, setGroupId] = useState<string | null>(null);
@@ -42,21 +66,42 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
         const [adding, setAdding] = useState(false);
         const [selected, setSelected] = useState<string[]>([]);
         const [busy, setBusy] = useState(false);
+        const [files, setFiles] = useState<GroupFileItem[]>([]);
+        const [total, setTotal] = useState(0);
+        const [uploading, setUploading] = useState("");
+        const [call, setCall] = useState<GroupCallInfo | null>(null);
         const panelRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
+        const fileRef = useRef<HTMLInputElement>(null);
 
         const load = async (id: string) => {
             try {
-                const [nextInfo, nextMembers] = await Promise.all([
-                    rpc.call("group.info", {
-                        groupId: id,
-                    }) as Promise<GroupInfo>,
-                    rpc.call("group.members", {
-                        groupId: id,
-                    }) as Promise<MembersResult>,
-                ]);
+                const [nextInfo, nextMembers, nextFiles, nextCall] =
+                    await Promise.all([
+                        rpc.call("group.info", {
+                            groupId: id,
+                        }) as Promise<GroupInfo>,
+                        rpc.call("group.members", {
+                            groupId: id,
+                        }) as Promise<MembersResult>,
+                        rpc
+                            .call("group.file.list", {
+                                groupId: id,
+                                limit: 50,
+                            })
+                            .catch(() => null) as Promise<{
+                            files: GroupFileItem[];
+                            total: number;
+                        } | null>,
+                        rpc
+                            .call("call.group.info", { groupId: id })
+                            .catch(() => null) as Promise<GroupCallInfo | null>,
+                    ]);
                 setInfo(nextInfo);
                 setMembers(nextMembers.members);
+                setFiles(nextFiles?.files ?? []);
+                setTotal(nextFiles?.total ?? 0);
+                setCall(nextCall);
             } catch {
                 setGroupId(null);
             }
@@ -81,9 +126,16 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 };
                 if (changed === groupId) void loadRef.current(groupId);
             });
+            const disposeCall = ctx.on("server:group:call", (payload) => {
+                const { groupId: changed } = payload as {
+                    groupId: string;
+                };
+                if (changed === groupId) void loadRef.current(groupId);
+            });
             return () => {
                 void dispose();
                 void disposeUpdate();
+                void disposeCall();
             };
         }, [groupId]);
 
@@ -127,6 +179,48 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
             } finally {
                 setBusy(false);
             }
+        };
+
+        const uploadFile = async (file: File) => {
+            if (!groupId) return;
+            if (file.size > uploadLimitMb * 1024 * 1024) {
+                alert(`文件超过 ${uploadLimitMb} MB 上限`);
+                return;
+            }
+            setUploading(file.name);
+            try {
+                const { key } = await sender.upload(file, file.name);
+                await rpc.call("group.file.add", { groupId, key });
+                await load(groupId);
+            } catch (err) {
+                alert(String(err instanceof Error ? err.message : err));
+            } finally {
+                setUploading("");
+            }
+        };
+
+        const removeFile = async (file: GroupFileItem) => {
+            if (!groupId) return;
+            if (!confirm(`确定删除群文件「${file.name}」吗？`)) return;
+            setBusy(true);
+            try {
+                await rpc.call("group.file.delete", {
+                    groupId,
+                    key: file.key,
+                });
+                await load(groupId);
+            } catch (err) {
+                alert(String(err instanceof Error ? err.message : err));
+            } finally {
+                setBusy(false);
+            }
+        };
+
+        const startCall = (kind: "voice" | "video", room?: string) => {
+            if (!groupId) return;
+            const target = groupId;
+            setGroupId(null);
+            ctx.emit("ui:group:call", { groupId: target, kind, roomId: room });
         };
 
         const roleBadge = (member: GroupMember) =>
@@ -245,6 +339,147 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                         </span>
                                     )}
                                 </p>
+                            )}
+                        </section>
+
+                        <section className="border-b border-border p-4">
+                            <p className="mb-2 text-xs font-semibold text-muted-foreground">
+                                群通话
+                            </p>
+                            {call ? (
+                                <div className="flex items-center gap-2.5 rounded-lg bg-emerald-500/10 px-3 py-2">
+                                    <span className="shrink-0 text-emerald-600">
+                                        {call.kind === "video" ? (
+                                            <VideoIcon className="size-4" />
+                                        ) : (
+                                            <PhoneIcon className="size-4" />
+                                        )}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm">
+                                            {call.kind === "video"
+                                                ? "视频通话"
+                                                : "语音通话"}
+                                            进行中
+                                        </p>
+                                        <p className="truncate text-xs text-muted-foreground">
+                                            {call.host} 发起 ·{" "}
+                                            {call.members.length} 人
+                                        </p>
+                                    </div>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() =>
+                                            startCall(
+                                                call.kind === "video"
+                                                    ? "video"
+                                                    : "voice",
+                                                call.roomId,
+                                            )
+                                        }
+                                    >
+                                        加入
+                                    </Button>
+                                </div>
+                            ) : (
+                                <div className="flex gap-2">
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={busy}
+                                        onClick={() => startCall("voice")}
+                                    >
+                                        <PhoneIcon />
+                                        发起语音
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={busy}
+                                        onClick={() => startCall("video")}
+                                    >
+                                        <VideoIcon />
+                                        发起视频
+                                    </Button>
+                                </div>
+                            )}
+                        </section>
+
+                        <section className="border-b border-border p-4">
+                            <div className="mb-2 flex items-center justify-between">
+                                <p className="text-xs font-semibold text-muted-foreground">
+                                    群文件
+                                    {total > files.length
+                                        ? ` (${files.length}/${total})`
+                                        : ""}
+                                </p>
+                                <button
+                                    type="button"
+                                    className="flex items-center gap-1 text-xs text-primary disabled:text-muted-foreground"
+                                    disabled={Boolean(uploading)}
+                                    onClick={() => fileRef.current?.click()}
+                                >
+                                    <UploadIcon className="size-3.5" />
+                                    {uploading ? "上传中..." : "上传文件"}
+                                </button>
+                            </div>
+                            <input
+                                ref={fileRef}
+                                type="file"
+                                className="hidden"
+                                onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    e.target.value = "";
+                                    if (file) void uploadFile(file);
+                                }}
+                            />
+                            {files.length === 0 ? (
+                                <p className="py-1 text-xs text-muted-foreground">
+                                    暂无文件
+                                </p>
+                            ) : (
+                                <div className="flex flex-col gap-1">
+                                    {files.map((file) => (
+                                        <div
+                                            key={file.key}
+                                            className="flex items-center gap-2 rounded-lg bg-muted/40 px-2 py-1.5"
+                                        >
+                                            <FileIcon className="size-4 shrink-0 text-muted-foreground" />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-sm">
+                                                    {file.name}
+                                                </p>
+                                                <p className="truncate text-xs text-muted-foreground">
+                                                    {formatBytes(file.size)} ·{" "}
+                                                    {file.uploader}
+                                                </p>
+                                            </div>
+                                            <a
+                                                title="下载"
+                                                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+                                                href={`/files/${file.key}?download=1`}
+                                                download={file.name}
+                                            >
+                                                <DownloadIcon className="size-4" />
+                                            </a>
+                                            {privileged ||
+                                            file.uploader === me ? (
+                                                <button
+                                                    type="button"
+                                                    title="删除"
+                                                    className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+                                                    disabled={busy}
+                                                    onClick={() =>
+                                                        void removeFile(file)
+                                                    }
+                                                >
+                                                    <Trash2Icon className="size-4" />
+                                                </button>
+                                            ) : null}
+                                        </div>
+                                    ))}
+                                </div>
                             )}
                         </section>
 

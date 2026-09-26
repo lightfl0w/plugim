@@ -164,6 +164,51 @@ export interface GroupsStore {
     friendAddBlocked(aId: string, bId: string): Promise<boolean>;
 }
 
+export interface GroupFileRow {
+    groupId: string;
+    key: string;
+    name: string;
+    mime: string;
+    size: number;
+    uploaderId: string;
+    createdAt: string;
+}
+
+export interface GroupFilesStore {
+    save(row: GroupFileRow): Promise<void>;
+    byKey(groupId: string, key: string): Promise<GroupFileRow | null>;
+    list(
+        groupId: string,
+        params: { offset: number; limit: number },
+    ): Promise<{ rows: GroupFileRow[]; total: number }>;
+    countByKey(key: string): Promise<number>;
+    remove(groupId: string, key: string): Promise<void>;
+}
+
+export interface ChatSendPayload {
+    content: string;
+    quote: MessageQuote | null;
+    mentions: string[] | null;
+    kind: MessageKind;
+    file: FileMeta | null;
+}
+
+export interface ChatService {
+    sendTo(
+        user: AuthUser,
+        session: string,
+        payload: ChatSendPayload,
+    ): Promise<ChatMessage>;
+}
+
+export interface GroupAclService {
+    requireMembership(
+        groupId: string,
+        me: AuthUser,
+    ): Promise<{ row: GroupRow; members: GroupMemberRow[]; mine: GroupRole }>;
+    sessionOf(groupId: string): string;
+}
+
 export interface ReadsStore {
     set(userId: string, session: string, at: string): Promise<void>;
     ofSession(session: string): Promise<{ userId: string; at: string }[]>;

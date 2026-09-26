@@ -28,6 +28,7 @@ export interface PendingEvent {
 }
 
 export interface UploadedFile {
+    key: string;
     url: string;
     file: FileMeta;
 }
@@ -62,6 +63,7 @@ export const kindFor = (mime: string): MessageKind => {
 interface UploadResponse {
     ok: boolean;
     result?: {
+        key: string;
         url: string;
         name: string;
         size: number;
@@ -156,8 +158,9 @@ export const senderPlugin: Plugin = {
                     throw new Error(
                         body?.message ?? `上传失败 (${res.status})`,
                     );
-                const { url, name: savedName, size, mime } = body.result;
+                const { key, url, name: savedName, size, mime } = body.result;
                 return {
+                    key,
                     url,
                     file: { name: savedName || name, size, mime },
                 };

@@ -5,6 +5,7 @@ import { uiAuthSetup } from "./ui-auth";
 import { uiCallSetup } from "./ui-call";
 import { uiComposerSetup } from "./ui-composer";
 import { uiFriendsPanelSetup } from "./ui-friends-panel";
+import { uiGroupCallSetup } from "./ui-group-call";
 import { uiGroupPanelSetup } from "./ui-group-panel";
 import { uiHeaderSetup } from "./ui-header";
 import { uiInstallSetup } from "./ui-install";
@@ -38,6 +39,7 @@ const SECTIONS: { name: string; setup: UiSetup }[] = [
     { name: "群面板", setup: uiGroupPanelSetup },
     { name: "屏幕共享", setup: uiScreenSetup },
     { name: "语音视频通话", setup: uiCallSetup },
+    { name: "群组通话", setup: uiGroupCallSetup },
     { name: "离线推送", setup: uiPwaSetup },
 ];
 

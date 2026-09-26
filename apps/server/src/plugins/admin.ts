@@ -4,6 +4,7 @@ import type {
     AuthUser,
     ConnInfo,
     GatewayService,
+    GroupFilesStore,
     GroupsStore,
     MediaFileRow,
     MediaFilesStore,
@@ -39,6 +40,7 @@ export const adminPlugin: Plugin = {
         "settings",
         "files",
         "mediaFiles",
+        "groupFiles",
         "tasks",
     ],
     async apply(ctx) {
@@ -49,6 +51,7 @@ export const adminPlugin: Plugin = {
         const settings = ctx.get<SettingsStore>("settings");
         const files = ctx.get<FileService>("files");
         const mediaFiles = ctx.get<MediaFilesStore>("mediaFiles");
+        const groupFiles = ctx.get<GroupFilesStore>("groupFiles");
         const tasks = ctx.get<TasksService>("tasks");
 
         const retentionDays = async () => {
@@ -61,6 +64,7 @@ export const adminPlugin: Plugin = {
             let removed = 0;
             for (const row of candidates) {
                 if (await store.countByContent(files.url(row.key))) continue;
+                if (await groupFiles.countByKey(row.key)) continue;
                 await files.remove(row.key);
                 await mediaFiles.remove(row.key);
                 removed += 1;
@@ -197,6 +201,8 @@ export const adminPlugin: Plugin = {
             if (!row) throw new Error("文件不存在");
             if (await store.countByContent(files.url(key)))
                 throw new Error("该文件仍被消息引用，请先删除相关消息");
+            if (await groupFiles.countByKey(key))
+                throw new Error("该文件仍被群文件引用，请先删除群文件");
             await files.remove(key);
             await mediaFiles.remove(key);
             return true;

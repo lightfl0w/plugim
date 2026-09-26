@@ -10,6 +10,7 @@ import type { AppConfig } from "../src/plugins/config";
 import { filesPlugin } from "../src/plugins/files";
 import { friendsPlugin } from "../src/plugins/friends";
 import { groupPlugin } from "../src/plugins/group";
+import { groupFilesPlugin } from "../src/plugins/group-files";
 import { installPlugin } from "../src/plugins/install";
 import { pushPlugin } from "../src/plugins/push";
 import { screenPlugin } from "../src/plugins/screen";
@@ -130,6 +131,7 @@ export const createTestApp = async (
     ctx.plugin(installPlugin);
     ctx.plugin(friendsPlugin);
     ctx.plugin(groupPlugin);
+    ctx.plugin(groupFilesPlugin);
     ctx.plugin(pushPlugin);
     ctx.plugin(chatPlugin);
     ctx.plugin(screenPlugin);

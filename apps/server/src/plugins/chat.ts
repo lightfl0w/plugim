@@ -12,6 +12,8 @@ import type {
 import type {
     AccountsStore,
     AuthUser,
+    ChatSendPayload,
+    ChatService,
     ConnInfo,
     FriendsStore,
     GatewayService,
@@ -41,7 +43,7 @@ const KINDS: MessageKind[] = [
 export const chatPlugin: Plugin = {
     name: "chat",
     description: "消息收发、历史查询与回执",
-    provides: ["chat-rpc"],
+    provides: ["chat-rpc", "chat"],
     inject: [
         "gateway",
         "store",
@@ -91,15 +93,7 @@ export const chatPlugin: Plugin = {
             return { row, mine: mine.role };
         };
 
-        interface SendPayload {
-            content: string;
-            quote: { sender: string; content: string } | null;
-            mentions: string[] | null;
-            kind: MessageKind;
-            file: FileMeta | null;
-        }
-
-        const previewOf = (payload: SendPayload): string => {
+        const previewOf = (payload: ChatSendPayload): string => {
             if (payload.kind === "image") return "[图片]";
             if (payload.kind === "audio") return "[语音]";
             if (payload.kind === "video") return "[视频]";
@@ -114,7 +108,7 @@ export const chatPlugin: Plugin = {
         const sendTo = async (
             user: AuthUser,
             rawSession: string,
-            payload: SendPayload,
+            payload: ChatSendPayload,
         ): Promise<ChatMessage> => {
             if (rawSession.startsWith("p2p:")) {
                 const peer = await resolveP2p(user, rawSession);
@@ -520,6 +514,8 @@ export const chatPlugin: Plugin = {
                 at: row.at,
             }));
         });
+
+        ctx.provide<ChatService>("chat", { sendTo });
         return undefined;
     },
 };
