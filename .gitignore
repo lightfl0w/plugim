@@ -2,5 +2,7 @@ node_modules
 dist
 data
 *.tsbuildinfo
+.env
+.env.local
 
 .trae/

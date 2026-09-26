@@ -8,7 +8,11 @@ export interface AuthService {
     user(): User | null;
     restoring(): boolean;
     login(username: string, password: string): Promise<User>;
-    register(username: string, password: string): Promise<User>;
+    register(
+        username: string,
+        password: string,
+        inviteCode?: string,
+    ): Promise<User>;
     logout(): void;
     onChange(cb: () => void): () => void;
 }
@@ -98,10 +102,11 @@ export const authPlugin: Plugin = {
                 notify();
                 return success.user;
             },
-            async register(username, password) {
+            async register(username, password, inviteCode) {
                 const success = await callAuthRpc("auth.register", {
                     username,
                     password,
+                    ...(inviteCode ? { inviteCode } : {}),
                 });
                 currentToken = success.token;
                 currentUser = success.user;

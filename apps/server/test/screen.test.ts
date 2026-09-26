@@ -232,4 +232,61 @@ describe("screen signaling", () => {
         await app.call("screen.hangup", { callId }, a.user);
         await app.call("screen.invite", { to: "sb" }, a.user);
     });
+
+    it("carries video kind through invite and relay", async () => {
+        const { app, a, b } = await pair();
+        const result = (await app.call(
+            "screen.invite",
+            { to: "sb", kind: "video" },
+            a.user,
+        )) as { callId: string; kind: string };
+        expect(result.kind).toBe("video");
+        const invite = app.eventsFor(b.user.id, "screen:signal").at(-1) as {
+            payload: ScreenSignal;
+        };
+        expect(invite.payload).toMatchObject({
+            type: "invite",
+            kind: "video",
+        });
+        await app.call("screen.accept", { callId: result.callId }, b.user);
+        await app.call(
+            "screen.signal",
+            { callId: result.callId, type: "offer", sdp: "v=0 video" },
+            a.user,
+        );
+        const offer = app.eventsFor(b.user.id, "screen:signal").at(-1) as {
+            payload: ScreenSignal;
+        };
+        expect(offer.payload).toMatchObject({
+            type: "offer",
+            kind: "video",
+            sdp: "v=0 video",
+        });
+        await expect(
+            app.call("screen.invite", { to: "sb", kind: "voice" }, a.user),
+        ).rejects.toThrow("正在进行");
+    });
+
+    it("drops the call and notifies peer when a user disconnects", async () => {
+        const { app, a, b } = await pair();
+        const callId = await inviteAndAccept(app, a, b);
+        app.goOffline(b.user.id);
+        const hangup = app.eventsFor(a.user.id, "screen:signal").at(-1) as {
+            payload: ScreenSignal;
+        };
+        expect(hangup.payload).toMatchObject({
+            type: "hangup",
+            callId,
+            from: "sb",
+        });
+        await expect(
+            app.call(
+                "screen.signal",
+                { callId, type: "ice", candidate: {} },
+                a.user,
+            ),
+        ).rejects.toThrow("不存在");
+        app.setOnline(b.user);
+        await app.call("screen.invite", { to: "sb" }, a.user);
+    });
 });

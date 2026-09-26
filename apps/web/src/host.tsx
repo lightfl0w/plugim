@@ -1,5 +1,10 @@
 import type { Context, PluginInfo } from "@plugim/core";
-import { ArrowLeftIcon, CircleAlertIcon, PuzzleIcon } from "lucide-react";
+import {
+    ArrowLeftIcon,
+    CircleAlertIcon,
+    PuzzleIcon,
+    SlidersIcon,
+} from "lucide-react";
 import type { FC } from "react";
 import { useEffect, useReducer } from "react";
 import { createRoot } from "react-dom/client";
@@ -7,17 +12,17 @@ import {
     BrowserRouter,
     Link,
     Navigate,
-    NavLink,
     Route,
     Routes,
+    useLocation,
     useNavigate,
 } from "react-router-dom";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Switch } from "./components/ui/switch";
-import { cn } from "./lib/utils";
 import { saveDisabledPlugins } from "./plugins/registry";
-import type { UiService, UiSlot } from "./plugins/ui";
+import type { SettingsService } from "./plugins/settings";
+import type { UiService, UiSlot } from "./plugins/ui-types";
 
 interface SlotEntry {
     id: number;
@@ -124,6 +129,15 @@ export const mountHost = (ctx: Context): void => {
         }, []);
 
         const plugins = ctx.list();
+        let settingsService: SettingsService | null = null;
+        try {
+            settingsService = ctx.get<SettingsService>("settings");
+        } catch {
+            settingsService = null;
+        }
+        const configurable = new Set(
+            (settingsService?.groups() ?? []).map((group) => group.plugin),
+        );
 
         const toggle = (info: PluginInfo) => {
             if (info.state === "disabled" || info.state === "failed") {
@@ -148,7 +162,7 @@ export const mountHost = (ctx: Context): void => {
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto p-4">
                     <p className="px-2 pb-2 text-xs font-semibold text-muted-foreground">
-                        系统与所有会话共用 · {plugins.length} 个
+                        系统与所有会话共用，共 {plugins.length} 个
                     </p>
                     <div className="flex flex-col gap-1">
                         {plugins.map((info) => (
@@ -170,6 +184,21 @@ export const mountHost = (ctx: Context): void => {
                                         {info.description ?? "—"}
                                     </p>
                                 </div>
+                                {configurable.has(info.name) ? (
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        title="设置"
+                                        onClick={() =>
+                                            void navigate(
+                                                `/settings/${info.name}`,
+                                            )
+                                        }
+                                    >
+                                        <SlidersIcon />
+                                        设置
+                                    </Button>
+                                ) : null}
                                 <Switch
                                     checked={info.state !== "disabled"}
                                     onToggle={() => toggle(info)}
@@ -201,31 +230,23 @@ export const mountHost = (ctx: Context): void => {
     const Root = () =>
         routes.has("/chat") ? <Navigate to="/chat" replace /> : <NoRoute />;
 
+    const CHROMELESS_ROUTES = new Set(["/install"]);
+
     const HostLayout = () => {
         const [, bump] = useReducer(bumpReducer, 0);
+        const location = useLocation();
+        const chromeless = CHROMELESS_ROUTES.has(location.pathname);
         useEffect(() => subscribe(bump), []);
         return (
             <div className="flex h-dvh w-full">
-                <aside className="flex w-16 shrink-0 flex-col items-center border-r border-border bg-muted/40 py-3">
-                    <Slot
-                        slot="nav"
-                        className="flex min-h-0 flex-1 flex-col items-center gap-2"
-                    />
-                    <NavLink
-                        to="/settings/plugins"
-                        title="插件"
-                        className={({ isActive }) =>
-                            cn(
-                                "mt-2 flex size-10 items-center justify-center rounded-lg",
-                                isActive
-                                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                            )
-                        }
-                    >
-                        <PuzzleIcon className="size-5" />
-                    </NavLink>
-                </aside>
+                {!chromeless ? (
+                    <aside className="flex w-16 shrink-0 flex-col items-center border-r border-border bg-muted/40 py-3">
+                        <Slot
+                            slot="nav"
+                            className="flex min-h-0 flex-1 flex-col items-center gap-2"
+                        />
+                    </aside>
+                ) : null}
                 <main className="flex min-w-0 flex-1 flex-col">
                     <Routes>
                         <Route

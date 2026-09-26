@@ -32,6 +32,7 @@ export interface GatewayService {
     onlineUserIds(): string[];
     isUserOnline(userId: string): boolean;
     kickUser(userId: string): void;
+    onOffline(cb: (userId: string) => void): () => void;
 }
 
 export interface MessageStore {
@@ -116,6 +117,11 @@ export interface GroupsStore {
 export interface ReadsStore {
     set(userId: string, session: string, at: string): Promise<void>;
     ofSession(session: string): Promise<{ userId: string; at: string }[]>;
+}
+
+export interface SettingsStore {
+    get(key: string): Promise<string | null>;
+    set(key: string, value: string): Promise<void>;
 }
 
 export type FriendStatus = "pending" | "accepted" | "blocked";

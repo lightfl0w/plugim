@@ -1,14 +1,18 @@
 import type { Plugin } from "@plugim/core";
 import type { IceServerConfig } from "@plugim/protocol";
+import { readInstallConfig } from "../installConfig";
 
 export interface AppConfig {
     port: number;
     dbDriver: "sqlite" | "postgres";
     dbUrl: string;
     dbFile: string;
+    logDir: string;
     defaultSession: string;
     jwtSecret: string;
     bootstrapAdmins: string[];
+    allowRegister: boolean;
+    inviteCode: string;
     iceServers: IceServerConfig[];
 }
 
@@ -24,18 +28,29 @@ export const configPlugin: Plugin = {
                 "PLUGIM_JWT_SECRET not set, using insecure dev secret",
             );
         }
+        const install = readInstallConfig();
         ctx.provide<AppConfig>("config", {
             port: Number(process.env.PORT ?? 3000),
-            dbDriver: driver === "postgres" ? "postgres" : "sqlite",
+            dbDriver:
+                install.dbDriver ??
+                (driver === "postgres" ? "postgres" : "sqlite"),
             dbUrl:
-                process.env.DATABASE_URL ?? "postgres://localhost:5432/plugim",
-            dbFile: process.env.PLUGIM_DB_FILE ?? "data/plugim.db",
+                install.databaseUrl ??
+                process.env.DATABASE_URL ??
+                "postgres://localhost:5432/plugim",
+            dbFile:
+                install.dbFile ??
+                process.env.PLUGIM_DB_FILE ??
+                "data/plugim.db",
+            logDir: install.logDir ?? process.env.PLUGIM_LOG_DIR ?? "",
             defaultSession: process.env.PLUGIM_DEFAULT_SESSION ?? "general",
             jwtSecret: jwtSecret ?? "plugim-dev-secret-do-not-use-in-prod",
             bootstrapAdmins: (process.env.PLUGIM_ADMINS ?? "")
                 .split(",")
                 .map((name) => name.trim().toLowerCase())
                 .filter(Boolean),
+            allowRegister: process.env.PLUGIM_ALLOW_REGISTER !== "false",
+            inviteCode: process.env.PLUGIM_INVITE_CODE ?? "",
             iceServers: [
                 {
                     urls: (

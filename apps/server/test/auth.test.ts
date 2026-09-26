@@ -72,4 +72,34 @@ describe("auth rpc", () => {
         const row = await accounts.fullById(user.id);
         expect(row?.isAdmin).toBe(true);
     });
+
+    it("requires an invite code when configured, exempting the first user", async () => {
+        const app = await createTestApp({ inviteCode: "alpha" });
+        await app.register("ivy");
+        await expect(app.register("jack")).rejects.toThrow("邀请码");
+        await expect(
+            app.call("auth.register", {
+                username: "jack",
+                password: "Passw0rd!",
+                inviteCode: "wrong",
+            }),
+        ).rejects.toThrow("邀请码");
+    });
+
+    it("accepts the correct invite code", async () => {
+        const app = await createTestApp({ inviteCode: "alpha" });
+        await app.register("mia");
+        const result = (await app.call("auth.register", {
+            username: "nick",
+            password: "Passw0rd!",
+            inviteCode: "alpha",
+        })) as { user: { username: string } };
+        expect(result.user.username).toBe("nick");
+    });
+
+    it("blocks registration when disabled but allows the bootstrap user", async () => {
+        const app = await createTestApp({ allowRegister: false });
+        await app.register("kim");
+        await expect(app.register("lee")).rejects.toThrow("已关闭注册");
+    });
 });

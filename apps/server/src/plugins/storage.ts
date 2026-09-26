@@ -30,6 +30,7 @@ import type {
     GroupsStore,
     MessageStore,
     ReadsStore,
+    SettingsStore,
     UserWithHash,
 } from "../types";
 import type { AppConfig } from "./config";
@@ -178,6 +179,16 @@ const friendshipsPg = pgTable(
     ],
 );
 
+const settingsSqlite = sqliteTable("settings", {
+    key: sqliteText("key").primaryKey(),
+    value: sqliteText("value").notNull(),
+});
+
+const settingsPg = pgTable("settings", {
+    key: pgText("key").primaryKey(),
+    value: pgText("value").notNull(),
+});
+
 const CREATE_SQLITE = `
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -228,6 +239,10 @@ CREATE TABLE IF NOT EXISTS reads (
   session TEXT NOT NULL,
   read_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, session)
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 )`;
 
 const CREATE_PG = `
@@ -280,6 +295,10 @@ CREATE TABLE IF NOT EXISTS reads (
   session TEXT NOT NULL,
   read_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (user_id, session)
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 )`;
 
 const toIso = (value: Date | number): string =>
@@ -358,7 +377,14 @@ const messageRowToChat = (row: MessageDbRow) => ({
 export const storagePlugin: Plugin = {
     name: "storage",
     description: "存储驱动(sqlite / postgres)",
-    provides: ["store", "accounts", "friendships", "groups", "reads"],
+    provides: [
+        "store",
+        "accounts",
+        "friendships",
+        "groups",
+        "reads",
+        "settings",
+    ],
     inject: ["config"],
     async apply(ctx) {
         const config = ctx.get<AppConfig>("config");
@@ -367,6 +393,7 @@ export const storagePlugin: Plugin = {
         let friends: FriendsStore;
         let groups: GroupsStore;
         let reads: ReadsStore;
+        let settings: SettingsStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -823,6 +850,26 @@ export const storagePlugin: Plugin = {
                         userId: row.userId,
                         at: toIso(row.readAt),
                     }));
+                },
+            };
+
+            settings = {
+                async get(key) {
+                    const rows = await db
+                        .select()
+                        .from(settingsPg)
+                        .where(eq(settingsPg.key, key))
+                        .limit(1);
+                    return rows[0]?.value ?? null;
+                },
+                async set(key, value) {
+                    await db
+                        .insert(settingsPg)
+                        .values({ key, value })
+                        .onConflictDoUpdate({
+                            target: settingsPg.key,
+                            set: { value },
+                        });
                 },
             };
 
@@ -1332,6 +1379,26 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            settings = {
+                async get(key) {
+                    const rows = await db
+                        .select()
+                        .from(settingsSqlite)
+                        .where(eq(settingsSqlite.key, key))
+                        .limit(1);
+                    return rows[0]?.value ?? null;
+                },
+                async set(key, value) {
+                    await db
+                        .insert(settingsSqlite)
+                        .values({ key, value })
+                        .onConflictDoUpdate({
+                            target: settingsSqlite.key,
+                            set: { value },
+                        });
+                },
+            };
+
             ctx.log.info(`storage driver: sqlite (${file})`);
         }
 
@@ -1340,6 +1407,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<FriendsStore>("friendships", friends);
         ctx.provide<GroupsStore>("groups", groups);
         ctx.provide<ReadsStore>("reads", reads);
+        ctx.provide<SettingsStore>("settings", settings);
         return undefined;
     },
 };

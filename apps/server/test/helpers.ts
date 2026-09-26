@@ -1,6 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Context } from "@plugim/core";
 import { adminPlugin } from "../src/plugins/admin";
 import { authPlugin } from "../src/plugins/auth";
@@ -8,6 +8,7 @@ import { chatPlugin } from "../src/plugins/chat";
 import type { AppConfig } from "../src/plugins/config";
 import { friendsPlugin } from "../src/plugins/friends";
 import { groupPlugin } from "../src/plugins/group";
+import { installPlugin } from "../src/plugins/install";
 import { screenPlugin } from "../src/plugins/screen";
 import { storagePlugin } from "../src/plugins/storage";
 import type { AuthUser, RpcHandler } from "../src/types";
@@ -37,12 +38,17 @@ export interface TestApp {
     ): Promise<{ user: AuthUser; token: string }>;
     verify(token: string | null): Promise<AuthUser | null>;
     setOnline(user: AuthUser | { id: string } | null): void;
+    goOffline(userId: string): void;
 }
 
 const PASSWORD = "Passw0rd!";
 
 export const createTestApp = async (
-    options: { admins?: string[] } = {},
+    options: {
+        admins?: string[];
+        allowRegister?: boolean;
+        inviteCode?: string;
+    } = {},
 ): Promise<TestApp> => {
     const ctx = new Context();
     const handlers = new Map<string, RpcHandler>();
@@ -51,6 +57,7 @@ export const createTestApp = async (
         | ((token: string | null) => Promise<AuthUser | null>)
         | undefined;
     const onlineIds = new Set<string>();
+    const offlineListeners = new Set<(userId: string) => void>();
 
     ctx.provide("gateway", {
         rpc: (method: string, handler: RpcHandler) => {
@@ -73,22 +80,31 @@ export const createTestApp = async (
         kickUser: (userId: string) => {
             onlineIds.delete(userId);
         },
+        onOffline: (cb: (userId: string) => void) => {
+            offlineListeners.add(cb);
+            return () => offlineListeners.delete(cb);
+        },
     });
 
     const dbFile = join(mkdtempSync(join(tmpdir(), "plugim-test-")), "test.db");
+    process.env.PLUGIM_INSTALL_FILE = join(dirname(dbFile), "install.json");
     ctx.provide<AppConfig>("config", {
         port: 0,
         dbDriver: "sqlite",
         dbUrl: "",
         dbFile,
+        logDir: "",
         defaultSession: "general",
         jwtSecret: "test-secret",
         bootstrapAdmins: options.admins ?? [],
+        allowRegister: options.allowRegister ?? true,
+        inviteCode: options.inviteCode ?? "",
         iceServers: [{ urls: ["stun:stun.test:3478"] }],
     });
 
     ctx.plugin(storagePlugin);
     ctx.plugin(authPlugin);
+    ctx.plugin(installPlugin);
     ctx.plugin(friendsPlugin);
     ctx.plugin(groupPlugin);
     ctx.plugin(chatPlugin);
@@ -131,6 +147,10 @@ export const createTestApp = async (
         setOnline: (user) => {
             if (user === null) onlineIds.clear();
             else onlineIds.add(user.id);
+        },
+        goOffline: (userId) => {
+            if (!onlineIds.delete(userId)) return;
+            for (const cb of offlineListeners) cb(userId);
         },
     };
 };

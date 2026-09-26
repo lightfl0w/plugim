@@ -1,7 +1,7 @@
 {
     "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
     "files": {
-        "includes": ["**", "!**/dist", "!**/*.css"]
+        "includes": ["**", "!**/dist", "!**/data", "!**/*.css"]
     },
     "formatter": {
         "enabled": true,
@@ -28,5 +28,17 @@
                 "organizeImports": "on"
             }
         }
-    }
+    },
+    "overrides": [
+        {
+            "includes": ["**/src/components/ui/**"],
+            "linter": {
+                "rules": {
+                    "a11y": {
+                        "noLabelWithoutControl": "off"
+                    }
+                }
+            }
+        }
+    ]
 }

@@ -7,6 +7,7 @@ import type {
     AuthUser,
     ConnInfo,
     GatewayService,
+    SettingsStore,
 } from "../types";
 import type { AppConfig } from "./config";
 
@@ -19,11 +20,12 @@ export const authPlugin: Plugin = {
     name: "auth",
     description: "注册登录",
     provides: ["auth"],
-    inject: ["gateway", "store", "config"],
+    inject: ["gateway", "store", "config", "settings"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const accounts = ctx.get<AccountsStore>("accounts");
         const config = ctx.get<AppConfig>("config");
+        const settings = ctx.get<SettingsStore>("settings");
         const secret = new TextEncoder().encode(config.jwtSecret);
 
         const signToken = async (user: AuthUser): Promise<string> =>
@@ -73,10 +75,24 @@ export const authPlugin: Plugin = {
             user,
         });
 
+        const registerPolicy = async () => {
+            const rawInvite = await settings.get("invite_code");
+            const rawAllow = await settings.get("allow_register");
+            return {
+                inviteCode:
+                    rawInvite === null ? config.inviteCode : rawInvite.trim(),
+                allowRegister:
+                    rawAllow === null
+                        ? config.allowRegister
+                        : rawAllow !== "false",
+            };
+        };
+
         gateway.rpc("auth.register", async (raw) => {
             const params = raw as unknown as {
                 username: string;
                 password: string;
+                inviteCode?: unknown;
             };
             const username = String(params.username ?? "")
                 .trim()
@@ -85,6 +101,15 @@ export const authPlugin: Plugin = {
             if (!USERNAME_RE.test(username))
                 throw new Error("用户名需为 2-24 位小写字母、数字或下划线");
             if (password.length < 6) throw new Error("密码至少需要 6 位");
+            const policy = await registerPolicy();
+            if ((await accounts.count()) > 0) {
+                if (policy.inviteCode) {
+                    const invite = String(params.inviteCode ?? "").trim();
+                    if (invite !== policy.inviteCode)
+                        throw new Error("邀请码错误或未填写");
+                } else if (!policy.allowRegister)
+                    throw new Error("已关闭注册，请联系管理员");
+            }
             if (await accounts.byUsername(username))
                 throw new Error("用户名已被占用");
             const passwordHash = await hash(password);

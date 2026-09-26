@@ -92,7 +92,7 @@ export type ScreenSignalType =
     | "answer"
     | "ice";
 
-export type CallKind = "screen" | "voice";
+export type CallKind = "screen" | "voice" | "video";
 
 export interface ScreenSignal {
     type: ScreenSignalType;

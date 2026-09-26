@@ -92,7 +92,8 @@ export const screenPlugin: Plugin = {
                 to: string;
                 kind?: CallKind;
             };
-            const callKind: CallKind = kind === "voice" ? "voice" : "screen";
+            const callKind: CallKind =
+                kind === "voice" || kind === "video" ? kind : "screen";
             const peer = await accounts.byUsername(
                 String(to ?? "")
                     .trim()
@@ -186,6 +187,24 @@ export const screenPlugin: Plugin = {
             });
             return true;
         });
-        return undefined;
+        const cleanupForOffline = (userId: string) => {
+            const call = callOf(userId);
+            if (!call) return;
+            const goneName =
+                call.fromId === userId ? call.fromName : call.toName;
+            const toId = call.fromId === userId ? call.toId : call.fromId;
+            gateway.emitToUser(toId, "screen:signal", {
+                type: "hangup",
+                callId: call.id,
+                from: goneName,
+                kind: call.kind,
+            } satisfies ScreenSignal);
+            drop(call);
+        };
+
+        const offOffline = gateway.onOffline(cleanupForOffline);
+        return () => {
+            offOffline();
+        };
     },
 };

@@ -31,6 +31,7 @@ export const gatewayPlugin: Plugin = {
         const sockets = new Set<NodeWebSocket>();
         const identities = new Map<NodeWebSocket, AuthUser | null>();
         const lastSeen = new Map<string, string>();
+        const offlineListeners = new Set<(userId: string) => void>();
         let verifyToken: TokenVerifier = nullVerifier;
 
         const app = new Hono();
@@ -198,6 +199,8 @@ export const gatewayPlugin: Plugin = {
                         sockets.delete(raw);
                         identities.delete(raw);
                         if (user) refreshPresence(user.id);
+                        if (user && !isUserOnline(user.id))
+                            for (const cb of offlineListeners) cb(user.id);
                     },
                 };
             }),
@@ -249,6 +252,10 @@ export const gatewayPlugin: Plugin = {
             onlineUserIds,
             isUserOnline,
             kickUser,
+            onOffline: (cb) => {
+                offlineListeners.add(cb);
+                return () => offlineListeners.delete(cb);
+            },
         };
 
         ctx.provide<GatewayService>("gateway", gatewayApi);
