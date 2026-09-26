@@ -5,6 +5,7 @@ import type {
     HistoryParams,
     MergePayload,
     MessageKind,
+    MessageSearchParams,
     RecallParams,
     SendMessageParams,
 } from "@plugim/protocol";
@@ -349,6 +350,9 @@ export const chatPlugin: Plugin = {
                 session,
                 Math.min(Number(params.limit ?? 50), 200),
                 params.before,
+                params.after,
+                params.beforeId,
+                params.afterId,
             );
         });
 
@@ -408,6 +412,56 @@ export const chatPlugin: Plugin = {
                 });
             }
             return { id, recalledAt };
+        });
+
+        gateway.rpc("message.search", async (raw, conn) => {
+            const user = requireUser(conn);
+            const params = raw as unknown as MessageSearchParams;
+            const keyword = String(params.keyword ?? "").trim();
+            if (!keyword) throw new Error("请输入搜索关键词");
+            const offset = Math.max(0, Math.floor(Number(params.offset ?? 0)));
+            const limit = Math.min(
+                100,
+                Math.max(1, Math.floor(Number(params.limit ?? 20))),
+            );
+            const scope = String(params.session ?? "").trim();
+            let session: string | undefined;
+            let visible: string[] | undefined;
+            if (scope) {
+                session = scope;
+                if (scope.startsWith("p2p:")) {
+                    const peer = await resolveP2p(user, scope);
+                    session = p2pKey(user.username, peer.username);
+                } else if (scope.startsWith("g:")) {
+                    await resolveGroup(user, scope);
+                }
+            } else {
+                visible = [config.defaultSession];
+                const edges = await friendships.edgesOf(user.id);
+                const friendIds = [
+                    ...new Set(
+                        edges
+                            .filter((edge) => edge.status === "accepted")
+                            .map((edge) =>
+                                edge.requesterId === user.id
+                                    ? edge.addresseeId
+                                    : edge.requesterId,
+                            ),
+                    ),
+                ];
+                for (const friend of await accounts.byIds(friendIds))
+                    visible.push(p2pKey(user.username, friend.username));
+                for (const group of await groups.groupsOf(user.id))
+                    visible.push(`g:${group.id}`);
+            }
+            const result = await store.search({
+                keyword,
+                session,
+                sessions: visible,
+                offset,
+                limit,
+            });
+            return { hits: result.rows, total: result.total };
         });
 
         gateway.rpc("receipt.read", async (raw, conn) => {

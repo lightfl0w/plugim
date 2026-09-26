@@ -1,6 +1,11 @@
 import type { Context } from "@plugim/core";
 import type { FriendListResult } from "@plugim/protocol";
-import { MessageSquareIcon, UserCheckIcon, UserPlusIcon } from "lucide-react";
+import {
+    MessageSquareIcon,
+    PencilIcon,
+    UserCheckIcon,
+    UserPlusIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
@@ -8,6 +13,7 @@ import { UserAvatar } from "../components/ui/user-avatar";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
+import { displayName } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 interface CardState {
@@ -27,8 +33,17 @@ export const uiProfileCardSetup = async (ctx: Context) => {
         const [createdAt, setCreatedAt] = useState<string | null>(null);
         const [busy, setBusy] = useState(false);
         const [hint, setHint] = useState("");
+        const [remarkOpen, setRemarkOpen] = useState(false);
+        const [remarkDraft, setRemarkDraft] = useState("");
+        const [, setRemarkTick] = useState(0);
         const cardRef = useRef<HTMLDivElement>(null);
+        const remarkInputRef = useRef<HTMLInputElement>(null);
         const navigate = useNavigate();
+
+        useEffect(
+            () => friends.onUpdate(() => setRemarkTick((t) => t + 1)),
+            [],
+        );
 
         useEffect(() => {
             const dispose = ctx.on("ui:profile:open", (payload) => {
@@ -36,6 +51,8 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                 setCard(data);
                 setCreatedAt(null);
                 setHint("");
+                setRemarkOpen(false);
+                setRemarkDraft(friends.remarkOf(data.username) ?? "");
                 void rpc
                     .call("user.info", { username: data.username })
                     .then((result) => {
@@ -48,6 +65,10 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                 void dispose();
             };
         }, []);
+
+        useEffect(() => {
+            if (remarkOpen) remarkInputRef.current?.focus();
+        }, [remarkOpen]);
 
         useEffect(() => {
             if (!card) return undefined;
@@ -82,10 +103,24 @@ export const uiProfileCardSetup = async (ctx: Context) => {
         const startChat = () => {
             ctx.emit("ui:chat:open", {
                 session: `p2p:${card.username}`,
-                title: card.username,
+                title: displayName(card.username, relation?.remarks),
             });
             navigate("/chat");
             setCard(null);
+        };
+
+        const submitRemark = async () => {
+            const remark = remarkDraft.trim();
+            setBusy(true);
+            setHint("");
+            try {
+                await friends.setRemark(card.username, remark);
+                setRemarkOpen(false);
+            } catch (err) {
+                setHint(err instanceof Error ? err.message : "操作失败");
+            } finally {
+                setBusy(false);
+            }
         };
 
         const act = async (fn: () => Promise<void>) => {
@@ -100,6 +135,7 @@ export const uiProfileCardSetup = async (ctx: Context) => {
             }
         };
 
+        const remark = relation?.remarks?.[card.username] ?? "";
         const registered = createdAt ? new Date(createdAt) : null;
 
         return (
@@ -117,6 +153,44 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                         <UserAvatar name={card.username} size="lg" />
                     </span>
                     <p className="text-sm font-semibold">{card.username}</p>
+                    {isFriend && !remarkOpen ? (
+                        <button
+                            type="button"
+                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                                setRemarkDraft(remark);
+                                setRemarkOpen(true);
+                            }}
+                        >
+                            <PencilIcon className="size-3" />
+                            {remark ? `备注：${remark}` : "添加备注"}
+                        </button>
+                    ) : null}
+                    {remarkOpen ? (
+                        <div className="flex w-full items-center gap-1">
+                            <input
+                                ref={remarkInputRef}
+                                value={remarkDraft}
+                                maxLength={24}
+                                placeholder="备注名"
+                                className="h-7 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-xs outline-none focus:border-primary"
+                                onChange={(e) => setRemarkDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") void submitRemark();
+                                    if (e.key === "Escape")
+                                        setRemarkOpen(false);
+                                }}
+                            />
+                            <button
+                                type="button"
+                                disabled={busy}
+                                className="shrink-0 rounded-md px-2 py-1 text-xs text-primary hover:bg-accent disabled:opacity-50"
+                                onClick={() => void submitRemark()}
+                            >
+                                保存
+                            </button>
+                        </div>
+                    ) : null}
                     {registered ? (
                         <p className="text-xs text-muted-foreground">
                             注册于{" "}

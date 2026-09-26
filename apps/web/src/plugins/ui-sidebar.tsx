@@ -35,15 +35,20 @@ import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { PresenceService } from "./presence";
 import type { AdminService } from "./ui-admin";
-import { messageLabel } from "./ui-shared";
+import { clientSessionOf, displayName, messageLabel } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const BASE_TITLE = "plugim";
 
-const previewText = (content: string, kind?: string) =>
+const previewText = (
+    content: string,
+    kind?: string,
+    fileName?: string | null,
+) =>
     content.startsWith('{"merge":1')
         ? "[聊天记录]"
-        : (messageLabel(kind, content) ?? content.replace(/\s+/g, " "));
+        : (messageLabel(kind, content, fileName) ??
+          content.replace(/\s+/g, " "));
 
 function previewTime(at: number): string {
     const d = new Date(at);
@@ -236,6 +241,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const [pinned, setPinned] = useState<string[]>([]);
         const [dnd, setDnd] = useState<string[]>([]);
         const [mentioned, setMentioned] = useState<Record<string, boolean>>({});
+        const [query, setQuery] = useState("");
+        const [hits, setHits] = useState<ChatMessage[]>([]);
+        const [hitsTotal, setHitsTotal] = useState(0);
+        const [searching, setSearching] = useState(false);
         const [sessionMenu, setSessionMenu] = useState<{
             x: number;
             y: number;
@@ -254,6 +263,9 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const plusWrapRef = useRef<HTMLDivElement>(null);
         const createCardRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
+        const searchTimerRef = useRef<
+            ReturnType<typeof setTimeout> | undefined
+        >(undefined);
         const navigate = useNavigate();
         const me = auth.user()?.username ?? "";
         const [, setPresenceTick] = useState(0);
@@ -469,9 +481,49 @@ export const uiSidebarSetup = async (ctx: Context) => {
             if (createOpen) nameInputRef.current?.focus();
         }, [createOpen]);
 
+        useEffect(() => {
+            const keyword = query.trim();
+            clearTimeout(searchTimerRef.current);
+            if (!keyword) {
+                setHits([]);
+                setHitsTotal(0);
+                setSearching(false);
+                return undefined;
+            }
+            setSearching(true);
+            searchTimerRef.current = setTimeout(() => {
+                void rpc
+                    .call("message.search", { keyword, limit: 50 })
+                    .then((result) => {
+                        const data = result as {
+                            hits: ChatMessage[];
+                            total: number;
+                        };
+                        setHits(data.hits);
+                        setHitsTotal(data.total);
+                    })
+                    .catch(() => {
+                        setHits([]);
+                        setHitsTotal(0);
+                    })
+                    .finally(() => setSearching(false));
+            }, 250);
+            return () => clearTimeout(searchTimerRef.current);
+        }, [query]);
+
         const openSession = (session: string, label: string) => {
             ctx.emit("ui:chat:open", { session, title: label });
             navigate("/chat");
+        };
+
+        const labelOf = (session: string) => {
+            if (session === "general") return "综合频道";
+            if (session.startsWith("g:"))
+                return (
+                    groupList?.find((group) => `g:${group.id}` === session)
+                        ?.name ?? "群聊"
+                );
+            return displayName(session.slice(4), list?.remarks);
         };
 
         useEffect(() => {
@@ -494,7 +546,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
             })),
             ...(list?.friends ?? []).map((name) => ({
                 session: `p2p:${name}`,
-                label: name,
+                label: displayName(name, list?.remarks),
                 isGroup: false,
             })),
         ].sort((a, b) => {
@@ -564,7 +616,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         <GroupAvatar name={label} />
                     ) : (
                         <span className="relative shrink-0">
-                            <UserAvatar name={label} className="size-10" />
+                            <UserAvatar
+                                name={peerName ?? label}
+                                className="size-10"
+                            />
                             {peerOnline ? (
                                 <span className="absolute right-0 bottom-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-background" />
                             ) : null}
@@ -637,11 +692,27 @@ export const uiSidebarSetup = async (ctx: Context) => {
         return (
             <>
                 <div className="flex h-12 min-h-12 items-center gap-2 px-3">
-                    <input
-                        readOnly
-                        placeholder="搜索"
-                        className="h-7 w-full rounded-md bg-muted px-2.5 text-xs outline-none placeholder:text-muted-foreground"
-                    />
+                    <div className="relative w-full">
+                        <input
+                            value={query}
+                            placeholder="搜索"
+                            className="h-7 w-full rounded-md bg-muted px-2.5 pr-6 text-xs outline-none placeholder:text-muted-foreground"
+                            onChange={(e) => setQuery(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Escape") setQuery("");
+                            }}
+                        />
+                        {query ? (
+                            <button
+                                type="button"
+                                title="清空"
+                                className="absolute top-1/2 right-1 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                                onClick={() => setQuery("")}
+                            >
+                                <XIcon className="size-3" />
+                            </button>
+                        ) : null}
+                    </div>
                     <div className="relative" ref={plusWrapRef}>
                         <button
                             type="button"
@@ -672,12 +743,68 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     </div>
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2">
-                    {entries.map(sessionItem)}
-                    {entries.length === 0 ? (
-                        <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                            还没有会话，去好友页添加好友或右上角新建群聊
-                        </p>
-                    ) : null}
+                    {query.trim() ? (
+                        <>
+                            <p className="px-2.5 py-2 text-[11px] text-muted-foreground">
+                                {searching
+                                    ? "正在搜索..."
+                                    : `找到 ${hitsTotal} 条消息`}
+                            </p>
+                            {hits.map((hit) => {
+                                const client = clientSessionOf(hit.session, me);
+                                const label = labelOf(client);
+                                return (
+                                    <button
+                                        key={hit.id}
+                                        type="button"
+                                        className="flex w-full shrink-0 flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left hover:bg-muted/70"
+                                        onClick={() => {
+                                            setQuery("");
+                                            openSession(client, label);
+                                            ctx.emit("ui:chat:search:jump", {
+                                                session: client,
+                                                id: hit.id,
+                                                at: hit.createdAt,
+                                            });
+                                        }}
+                                    >
+                                        <span className="flex items-baseline justify-between gap-2">
+                                            <span className="min-w-0 truncate text-sm font-medium">
+                                                {label}
+                                            </span>
+                                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                                                {previewTime(
+                                                    Date.parse(hit.createdAt),
+                                                )}
+                                            </span>
+                                        </span>
+                                        <span className="truncate text-xs text-muted-foreground">
+                                            {hit.sender}：
+                                            {previewText(
+                                                hit.content,
+                                                hit.kind,
+                                                hit.file?.name,
+                                            )}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                            {!searching && hits.length === 0 ? (
+                                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                                    没有匹配的消息
+                                </p>
+                            ) : null}
+                        </>
+                    ) : (
+                        <>
+                            {entries.map(sessionItem)}
+                            {entries.length === 0 ? (
+                                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                                    还没有会话，去好友页添加好友或右上角新建群聊
+                                </p>
+                            ) : null}
+                        </>
+                    )}
                 </div>
                 {sessionMenu ? (
                     <div

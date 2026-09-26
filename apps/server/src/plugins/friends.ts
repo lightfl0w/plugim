@@ -1,5 +1,9 @@
 import type { Plugin } from "@plugim/core";
-import type { FriendListResult, FriendTargetParams } from "@plugim/protocol";
+import type {
+    FriendListResult,
+    FriendRemarkParams,
+    FriendTargetParams,
+} from "@plugim/protocol";
 import type {
     AccountsStore,
     AuthUser,
@@ -54,6 +58,7 @@ export const friendsPlugin: Plugin = {
                 incoming: [],
                 outgoing: [],
                 blocked: [],
+                remarks: {},
             };
             for (const edge of edges) {
                 const other =
@@ -69,8 +74,18 @@ export const friendsPlugin: Plugin = {
                     result.outgoing.push(name);
                 else result.incoming.push(name);
             }
-            for (const key of Object.keys(result) as (keyof FriendListResult)[])
-                result[key].sort();
+            for (const list of [
+                result.friends,
+                result.incoming,
+                result.outgoing,
+                result.blocked,
+            ])
+                list.sort();
+            const remarks = await friendships.remarksOf(me.id);
+            for (const [friendId, remark] of Object.entries(remarks)) {
+                const name = nameById.get(friendId);
+                if (name) result.remarks[name] = remark;
+            }
             return result;
         };
 
@@ -139,6 +154,28 @@ export const friendsPlugin: Plugin = {
             const me = requireUser(conn);
             const target = await usernameToUser(requireParams(raw).username);
             await friendships.unblock(me.id, target.id);
+            return buildList(me);
+        });
+
+        gateway.rpc("friend.remark", async (raw, conn) => {
+            const me = requireUser(conn);
+            const params = raw as unknown as FriendRemarkParams;
+            const target = await usernameToUser(String(params.username ?? ""));
+            if (target.id === me.id) throw new Error("不能给自己设置备注");
+            const edges = await friendships.edgesOf(me.id);
+            const isFriend = edges.some(
+                (edge) =>
+                    edge.status === "accepted" &&
+                    ((edge.requesterId === me.id &&
+                        edge.addresseeId === target.id) ||
+                        (edge.requesterId === target.id &&
+                            edge.addresseeId === me.id)),
+            );
+            if (!isFriend) throw new Error("只能给好友设置备注");
+            const remark =
+                typeof params.remark === "string" ? params.remark.trim() : "";
+            if (remark.length > 24) throw new Error("备注不能超过 24 个字");
+            await friendships.setRemark(me.id, target.id, remark);
             return buildList(me);
         });
 

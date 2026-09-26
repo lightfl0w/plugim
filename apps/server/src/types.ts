@@ -58,12 +58,16 @@ export interface MessageStore {
         session: string,
         limit: number,
         before?: string,
+        after?: string,
+        beforeId?: string,
+        afterId?: string,
     ): Promise<ChatMessage[]>;
     byId(id: string): Promise<ChatMessage | null>;
     markRecalled(id: string): Promise<string | null>;
     search(params: {
         keyword?: string;
         session?: string;
+        sessions?: string[];
         sender?: string;
         media?: boolean;
         offset: number;
@@ -207,4 +211,6 @@ export interface FriendsStore {
     block(blockerId: string, targetId: string): Promise<void>;
     unblock(blockerId: string, targetId: string): Promise<void>;
     edgesOf(userId: string): Promise<FriendEdge[]>;
+    setRemark(ownerId: string, friendId: string, remark: string): Promise<void>;
+    remarksOf(ownerId: string): Promise<Record<string, string>>;
 }

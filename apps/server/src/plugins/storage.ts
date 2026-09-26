@@ -5,8 +5,10 @@ import type { FileMeta, GroupRole, MessageQuote } from "@plugim/protocol";
 import Database from "better-sqlite3";
 import {
     and,
+    asc,
     desc,
     eq,
+    gt,
     gte,
     inArray,
     isNull,
@@ -200,6 +202,26 @@ const friendshipsPg = pgTable(
     ],
 );
 
+const friendRemarksSqlite = sqliteTable(
+    "friend_remarks",
+    {
+        ownerId: sqliteText("owner_id").notNull(),
+        friendId: sqliteText("friend_id").notNull(),
+        remark: sqliteText("remark").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.ownerId, table.friendId] })],
+);
+
+const friendRemarksPg = pgTable(
+    "friend_remarks",
+    {
+        ownerId: pgText("owner_id").notNull(),
+        friendId: pgText("friend_id").notNull(),
+        remark: pgText("remark").notNull(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.ownerId, table.friendId] })],
+);
+
 const settingsSqlite = sqliteTable("settings", {
     key: sqliteText("key").primaryKey(),
     value: sqliteText("value").notNull(),
@@ -277,6 +299,12 @@ CREATE TABLE IF NOT EXISTS friendships (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (requester_id, addressee_id)
 );
+CREATE TABLE IF NOT EXISTS friend_remarks (
+  owner_id TEXT NOT NULL,
+  friend_id TEXT NOT NULL,
+  remark TEXT NOT NULL,
+  PRIMARY KEY (owner_id, friend_id)
+);
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -348,6 +376,12 @@ CREATE TABLE IF NOT EXISTS friendships (
   status TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (requester_id, addressee_id)
+);
+CREATE TABLE IF NOT EXISTS friend_remarks (
+  owner_id TEXT NOT NULL,
+  friend_id TEXT NOT NULL,
+  remark TEXT NOT NULL,
+  PRIMARY KEY (owner_id, friend_id)
 );
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
@@ -585,6 +619,23 @@ export const storagePlugin: Plugin = {
             );
             const db = drizzlePg(client);
 
+            const messageCursor = async (id: string) => {
+                const rows = await db
+                    .select({
+                        id: messagesPg.id,
+                        createdAt: messagesPg.createdAt,
+                    })
+                    .from(messagesPg)
+                    .where(eq(messagesPg.id, id))
+                    .limit(1);
+                const row = rows[0];
+                return row ? { id: row.id, at: row.createdAt } : null;
+            };
+            const olderThan = (at: Date, id: string) =>
+                sql`(${messagesPg.createdAt} < ${at} OR (${messagesPg.createdAt} = ${at} AND ${messagesPg.id} <= ${id}))`;
+            const newerThan = (at: Date, id: string) =>
+                sql`(${messagesPg.createdAt} > ${at} OR (${messagesPg.createdAt} = ${at} AND ${messagesPg.id} >= ${id}))`;
+
             const userToRow = (
                 row: typeof usersPg.$inferSelect,
             ): UserWithHash => ({
@@ -643,17 +694,32 @@ export const storagePlugin: Plugin = {
                         .returning();
                     return messageRowToChat(rows[0]);
                 },
-                async list(session, limit, before) {
+                async list(session, limit, before, after, beforeId, afterId) {
                     const conds = [eq(messagesPg.session, session)];
-                    if (before)
+                    const older = beforeId
+                        ? await messageCursor(beforeId)
+                        : null;
+                    const newer = afterId ? await messageCursor(afterId) : null;
+                    if (older) conds.push(olderThan(older.at, older.id));
+                    else if (before)
                         conds.push(lt(messagesPg.createdAt, new Date(before)));
+                    if (newer) conds.push(newerThan(newer.at, newer.id));
+                    else if (after)
+                        conds.push(gt(messagesPg.createdAt, new Date(after)));
+                    const forward = Boolean(newer) || Boolean(!older && after);
                     const rows = await db
                         .select()
                         .from(messagesPg)
                         .where(and(...conds))
-                        .orderBy(desc(messagesPg.createdAt))
+                        .orderBy(
+                            forward
+                                ? asc(messagesPg.createdAt)
+                                : desc(messagesPg.createdAt),
+                            forward ? asc(messagesPg.id) : desc(messagesPg.id),
+                        )
                         .limit(limit);
-                    return rows.map(messageRowToChat).reverse();
+                    const list = rows.map(messageRowToChat);
+                    return forward ? list : list.reverse();
                 },
                 async byId(id) {
                     const rows = await db
@@ -678,6 +744,13 @@ export const storagePlugin: Plugin = {
                     const conds = [isNull(messagesPg.recalledAt)];
                     if (params.session)
                         conds.push(eq(messagesPg.session, params.session));
+                    if (params.sessions) {
+                        if (params.sessions.length === 0)
+                            return { rows: [], total: 0 };
+                        conds.push(
+                            inArray(messagesPg.session, params.sessions),
+                        );
+                    }
                     if (params.sender)
                         conds.push(eq(messagesPg.sender, params.sender));
                     if (params.media) conds.push(ne(messagesPg.kind, "text"));
@@ -921,6 +994,38 @@ export const storagePlugin: Plugin = {
                             ),
                         );
                     return rows.map(edgeToRow);
+                },
+                async setRemark(ownerId, friendId, remark) {
+                    if (!remark) {
+                        await db
+                            .delete(friendRemarksPg)
+                            .where(
+                                and(
+                                    eq(friendRemarksPg.ownerId, ownerId),
+                                    eq(friendRemarksPg.friendId, friendId),
+                                ),
+                            );
+                        return;
+                    }
+                    await db
+                        .insert(friendRemarksPg)
+                        .values({ ownerId, friendId, remark })
+                        .onConflictDoUpdate({
+                            target: [
+                                friendRemarksPg.ownerId,
+                                friendRemarksPg.friendId,
+                            ],
+                            set: { remark },
+                        });
+                },
+                async remarksOf(ownerId) {
+                    const rows = await db
+                        .select()
+                        .from(friendRemarksPg)
+                        .where(eq(friendRemarksPg.ownerId, ownerId));
+                    const result: Record<string, string> = {};
+                    for (const row of rows) result[row.friendId] = row.remark;
+                    return result;
                 },
             };
 
@@ -1286,6 +1391,23 @@ export const storagePlugin: Plugin = {
             }
             const db = drizzleSqlite(client);
 
+            const messageCursor = async (id: string) => {
+                const rows = await db
+                    .select({
+                        id: messagesSqlite.id,
+                        createdAt: messagesSqlite.createdAt,
+                    })
+                    .from(messagesSqlite)
+                    .where(eq(messagesSqlite.id, id))
+                    .limit(1);
+                const row = rows[0];
+                return row ? { id: row.id, at: row.createdAt } : null;
+            };
+            const olderThan = (at: number, id: string) =>
+                sql`(${messagesSqlite.createdAt} < ${at} OR (${messagesSqlite.createdAt} = ${at} AND ${messagesSqlite.id} <= ${id}))`;
+            const newerThan = (at: number, id: string) =>
+                sql`(${messagesSqlite.createdAt} > ${at} OR (${messagesSqlite.createdAt} = ${at} AND ${messagesSqlite.id} >= ${id}))`;
+
             const userToRow = (
                 row: typeof usersSqlite.$inferSelect,
             ): UserWithHash => ({
@@ -1351,22 +1473,44 @@ export const storagePlugin: Plugin = {
                         recalledAt: null,
                     };
                 },
-                async list(session, limit, before) {
+                async list(session, limit, before, after, beforeId, afterId) {
                     const conds = [eq(messagesSqlite.session, session)];
-                    if (before)
+                    const older = beforeId
+                        ? await messageCursor(beforeId)
+                        : null;
+                    const newer = afterId ? await messageCursor(afterId) : null;
+                    if (older) conds.push(olderThan(older.at, older.id));
+                    else if (before)
                         conds.push(
                             lt(
                                 messagesSqlite.createdAt,
                                 new Date(before).getTime(),
                             ),
                         );
+                    if (newer) conds.push(newerThan(newer.at, newer.id));
+                    else if (after)
+                        conds.push(
+                            gt(
+                                messagesSqlite.createdAt,
+                                new Date(after).getTime(),
+                            ),
+                        );
+                    const forward = Boolean(newer) || Boolean(!older && after);
                     const rows = await db
                         .select()
                         .from(messagesSqlite)
                         .where(and(...conds))
-                        .orderBy(desc(messagesSqlite.createdAt))
+                        .orderBy(
+                            forward
+                                ? asc(messagesSqlite.createdAt)
+                                : desc(messagesSqlite.createdAt),
+                            forward
+                                ? asc(messagesSqlite.id)
+                                : desc(messagesSqlite.id),
+                        )
                         .limit(limit);
-                    return rows.map(messageRowToChat).reverse();
+                    const list = rows.map(messageRowToChat);
+                    return forward ? list : list.reverse();
                 },
                 async byId(id) {
                     const rows = await db
@@ -1392,6 +1536,13 @@ export const storagePlugin: Plugin = {
                     const conds = [isNull(messagesSqlite.recalledAt)];
                     if (params.session)
                         conds.push(eq(messagesSqlite.session, params.session));
+                    if (params.sessions) {
+                        if (params.sessions.length === 0)
+                            return { rows: [], total: 0 };
+                        conds.push(
+                            inArray(messagesSqlite.session, params.sessions),
+                        );
+                    }
                     if (params.sender)
                         conds.push(eq(messagesSqlite.sender, params.sender));
                     if (params.media)
@@ -1651,6 +1802,38 @@ export const storagePlugin: Plugin = {
                             ),
                         );
                     return rows.map(edgeToRow);
+                },
+                async setRemark(ownerId, friendId, remark) {
+                    if (!remark) {
+                        await db
+                            .delete(friendRemarksSqlite)
+                            .where(
+                                and(
+                                    eq(friendRemarksSqlite.ownerId, ownerId),
+                                    eq(friendRemarksSqlite.friendId, friendId),
+                                ),
+                            );
+                        return;
+                    }
+                    await db
+                        .insert(friendRemarksSqlite)
+                        .values({ ownerId, friendId, remark })
+                        .onConflictDoUpdate({
+                            target: [
+                                friendRemarksSqlite.ownerId,
+                                friendRemarksSqlite.friendId,
+                            ],
+                            set: { remark },
+                        });
+                },
+                async remarksOf(ownerId) {
+                    const rows = await db
+                        .select()
+                        .from(friendRemarksSqlite)
+                        .where(eq(friendRemarksSqlite.ownerId, ownerId));
+                    const result: Record<string, string> = {};
+                    for (const row of rows) result[row.friendId] = row.remark;
+                    return result;
                 },
             };
 

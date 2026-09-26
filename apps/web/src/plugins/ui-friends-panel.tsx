@@ -8,6 +8,7 @@ import { Input } from "../components/ui/input";
 import { Separator } from "../components/ui/separator";
 import { UserAvatar } from "../components/ui/user-avatar";
 import type { FriendsService } from "./friends";
+import { displayName } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 type DetailView =
@@ -104,7 +105,16 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                                     }
                                 >
                                     <UserAvatar name={name} size="sm" />
-                                    <span className="truncate">{name}</span>
+                                    <span className="flex min-w-0 flex-col text-left">
+                                        <span className="truncate">
+                                            {displayName(name, list?.remarks)}
+                                        </span>
+                                        {list?.remarks?.[name] ? (
+                                            <span className="truncate text-[11px] text-muted-foreground">
+                                                {name}
+                                            </span>
+                                        ) : null}
+                                    </span>
                                 </Button>
                             ))}
                             {list?.friends.length === 0 ? (
@@ -244,6 +254,8 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
 
     const FriendDetail = ({ name }: { name: string }) => {
         const navigate = useNavigate();
+        const list = useFriendList();
+        const remark = list?.remarks?.[name] ?? "";
         return (
             <div className="flex h-full flex-col overflow-y-auto">
                 <div className="h-28 shrink-0 bg-muted" />
@@ -254,15 +266,19 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                         className="ring-4 ring-background"
                     />
                     <div className="flex-1 pb-1">
-                        <p className="text-xl font-semibold">{name}</p>
-                        <p className="text-xs text-muted-foreground">好友</p>
+                        <p className="text-xl font-semibold">
+                            {displayName(name, list?.remarks)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                            {remark ? `${name} 的好友` : "好友"}
+                        </p>
                     </div>
                     <div className="flex gap-2 pb-1">
                         <Button
                             onClick={() => {
                                 ctx.emit("ui:chat:open", {
                                     session: `p2p:${name}`,
-                                    title: name,
+                                    title: displayName(name, list?.remarks),
                                 });
                                 navigate("/chat");
                             }}

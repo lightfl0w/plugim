@@ -11,6 +11,8 @@ export interface FriendsService {
     remove(username: string): Promise<void>;
     block(username: string): Promise<void>;
     unblock(username: string): Promise<void>;
+    remarkOf(username: string): string | null;
+    setRemark(username: string, remark: string): Promise<void>;
     onUpdate(cb: () => void): () => void;
 }
 
@@ -72,6 +74,14 @@ export const friendsPlugin: Plugin = {
             remove: (u) => mutate("friend.remove", u),
             block: (u) => mutate("friend.block", u),
             unblock: (u) => mutate("friend.unblock", u),
+            remarkOf: (username) => cache?.remarks?.[username] ?? null,
+            setRemark: (username, remark) =>
+                rpc
+                    .call("friend.remark", { username, remark })
+                    .then((result) => {
+                        cache = result as FriendListResult;
+                        emit();
+                    }),
             onUpdate(cb) {
                 listeners.add(cb);
                 return () => listeners.delete(cb);

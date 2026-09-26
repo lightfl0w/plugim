@@ -64,6 +64,7 @@ export interface FriendListResult {
     incoming: string[];
     outgoing: string[];
     blocked: string[];
+    remarks: Record<string, string>;
 }
 
 export interface MessageRecalledEvent {
@@ -179,6 +180,9 @@ export interface HistoryParams {
     session: string;
     limit?: number;
     before?: string;
+    after?: string;
+    beforeId?: string;
+    afterId?: string;
 }
 
 export interface RecallParams {
@@ -189,7 +193,24 @@ export interface FriendTargetParams {
     username: string;
 }
 
+export interface FriendRemarkParams {
+    username: string;
+    remark: string;
+}
+
 export interface UserInfoResult {
     username: string;
     createdAt: string;
+}
+
+export interface MessageSearchParams {
+    keyword: string;
+    session?: string;
+    offset?: number;
+    limit?: number;
+}
+
+export interface MessageSearchResult {
+    hits: ChatMessage[];
+    total: number;
 }

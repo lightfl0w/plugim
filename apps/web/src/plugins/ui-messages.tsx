@@ -15,7 +15,7 @@ import {
     XIcon,
 } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Bubble, BubbleContent } from "../components/ui/bubble";
 import {
     Message,
@@ -165,6 +165,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [status, setStatus] = useState<ConnStatus>(rpc.status());
         const [loadingOlder, setLoadingOlder] = useState(false);
         const [hasMore, setHasMore] = useState(true);
+        const [hasNewer, setHasNewer] = useState(false);
         const [menu, setMenu] = useState<{
             x: number;
             y: number;
@@ -175,6 +176,12 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [newCount, setNewCount] = useState(0);
         const [searchQuery, setSearchQuery] = useState<string | null>(null);
         const [searchResults, setSearchResults] = useState<ChatMessage[]>([]);
+        const [searchBusy, setSearchBusy] = useState(false);
+        const [jumpTarget, setJumpTarget] = useState<{
+            session: string;
+            id: string;
+            at: string;
+        } | null>(null);
         const [highlightId, setHighlightId] = useState<string | null>(null);
         const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
         const [peerReadAt, setPeerReadAt] = useState<string | null>(null);
@@ -204,20 +211,102 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const prevCountRef = useRef(0);
         const lastScrollTopRef = useRef(0);
         const atBottomRef = useRef(true);
+        const hasNewerRef = useRef(false);
+        const userScrollAtRef = useRef(0);
+        const jumpRef = useRef<{
+            session: string;
+            id: string;
+            at: string;
+        } | null>(null);
         const user = auth.user();
         const me = user?.username ?? "";
         const isP2p = session.startsWith("p2p:");
 
+        const applyHasNewer = useCallback((next: boolean) => {
+            hasNewerRef.current = next;
+            setHasNewer(next);
+        }, []);
+
+        const scrollToHighlight = useCallback((id: string) => {
+            let attempts = 0;
+            const tryJump = () => {
+                attempts += 1;
+                const el = document.getElementById(`msg-${id}`);
+                if (!el) {
+                    if (attempts < 20) setTimeout(tryJump, 50);
+                    return;
+                }
+                atBottomRef.current = false;
+                setAtBottom(false);
+                el.scrollIntoView({ block: "center", behavior: "smooth" });
+                setHighlightId(id);
+                setTimeout(() => setHighlightId(null), 2000);
+            };
+            setTimeout(tryJump, 50);
+        }, []);
+
+        const backToLatest = useCallback(async () => {
+            if (!me || !session) return;
+            const target = session;
+            try {
+                const latest = (await rpc.call("history.list", {
+                    session: target,
+                    limit: PAGE_SIZE,
+                })) as ChatMessage[];
+                if (sessionRef.current !== target) return;
+                skipScrollRef.current = true;
+                setMessages(latest);
+                setHasMore(latest.length >= PAGE_SIZE);
+                prevCountRef.current = latest.length;
+                applyHasNewer(false);
+                setNewCount(0);
+                atBottomRef.current = true;
+                setAtBottom(true);
+                void cache
+                    .putMessages(me, target, latest)
+                    .catch(() => undefined);
+                requestAnimationFrame(() =>
+                    bottomRef.current?.scrollIntoView({ behavior: "auto" }),
+                );
+            } catch {}
+        }, [session, me, applyHasNewer]);
+
         useEffect(() => rpc.onStatus(setStatus), []);
 
         useEffect(() => {
-            const dispose = ctx.on("ui:chat:open", (payload) => {
+            const mark = () => {
+                userScrollAtRef.current = Date.now();
+            };
+            window.addEventListener("wheel", mark, { passive: true });
+            window.addEventListener("touchmove", mark, { passive: true });
+            window.addEventListener("keydown", mark);
+            return () => {
+                window.removeEventListener("wheel", mark);
+                window.removeEventListener("touchmove", mark);
+                window.removeEventListener("keydown", mark);
+            };
+        }, []);
+
+        useEffect(() => {
+            const disposeOpen = ctx.on("ui:chat:open", (payload) => {
                 setSession((payload as { session: string }).session);
                 setSelectMode(false);
                 setSelectedIds(new Set());
             });
+            const disposeJump = ctx.on("ui:chat:search:jump", (payload) => {
+                const target = payload as {
+                    session: string;
+                    id: string;
+                    at: string;
+                };
+                jumpRef.current = target;
+                setSearchQuery(null);
+                setSearchResults([]);
+                setJumpTarget(target);
+            });
             return () => {
-                void dispose();
+                void disposeOpen();
+                void disposeJump();
             };
         }, []);
 
@@ -238,21 +327,33 @@ export const uiMessagesSetup = async (ctx: Context) => {
         useEffect(() => {
             const dispose = ctx.on("ui:chat:search", (payload) => {
                 const query = (payload as { query: string }).query;
-                if (!query.trim()) {
+                const target = sessionRef.current;
+                if (!query.trim() || !target) {
                     setSearchQuery(null);
                     setSearchResults([]);
+                    setSearchBusy(false);
                     return;
                 }
                 setSearchQuery(query);
-                void cache
-                    .searchMessages(me, sessionRef.current, query)
-                    .then(setSearchResults)
-                    .catch(() => setSearchResults([]));
+                setSearchBusy(true);
+                void rpc
+                    .call("message.search", {
+                        keyword: query,
+                        session: target,
+                        limit: 50,
+                    })
+                    .then((result) => {
+                        setSearchResults(
+                            (result as { hits: ChatMessage[] }).hits,
+                        );
+                    })
+                    .catch(() => setSearchResults([]))
+                    .finally(() => setSearchBusy(false));
             });
             return () => {
                 void dispose();
             };
-        }, [me]);
+        }, []);
 
         useEffect(() => {
             void session;
@@ -319,11 +420,17 @@ export const uiMessagesSetup = async (ctx: Context) => {
             sessionRef.current = session;
             let alive = true;
             setHasMore(true);
+            applyHasNewer(false);
             prevCountRef.current = 0;
             setMessages([]);
             setNewCount(0);
+            atBottomRef.current = true;
+            setAtBottom(true);
 
             if (!me || !session) return undefined;
+
+            const pending = jumpRef.current;
+            if (pending && pending.session === session) return undefined;
 
             void cache
                 .getMessages(me, session)
@@ -360,24 +467,76 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 alive = false;
                 dispose();
             };
-        }, [session, status, me]);
+        }, [session, status, me, applyHasNewer]);
+
+        useEffect(() => {
+            const target = jumpTarget;
+            if (!target || !me || status !== "open") return;
+            if (target.session !== session) return;
+            jumpRef.current = null;
+            let alive = true;
+            const at = new Date(Date.parse(target.at) + 1).toISOString();
+            void Promise.all([
+                rpc.call("history.list", {
+                    session: target.session,
+                    limit: PAGE_SIZE,
+                    before: at,
+                    beforeId: target.id,
+                }),
+                rpc.call("history.list", {
+                    session: target.session,
+                    limit: 1,
+                }),
+            ])
+                .then(([page, head]) => {
+                    if (!alive || sessionRef.current !== target.session) return;
+                    const rows = page as ChatMessage[];
+                    const newest = (head as ChatMessage[])[0];
+                    const tail = rows[rows.length - 1];
+                    const gap = Boolean(
+                        newest && tail && newest.id !== tail.id,
+                    );
+                    skipScrollRef.current = true;
+                    setMessages(rows);
+                    setHasMore(rows.length >= PAGE_SIZE);
+                    applyHasNewer(gap);
+                    prevCountRef.current = rows.length;
+                    atBottomRef.current = !gap;
+                    setAtBottom(!gap);
+                    setNewCount(0);
+                    setJumpTarget(null);
+                    void cache
+                        .putMessages(me, target.session, rows)
+                        .catch(() => undefined);
+                    scrollToHighlight(target.id);
+                })
+                .catch(() => undefined);
+            return () => {
+                alive = false;
+            };
+        }, [jumpTarget, session, status, me, applyHasNewer, scrollToHighlight]);
 
         useEffect(() => {
             const dispose = ctx.on("server:message:new", (payload) => {
                 const message = (payload as { message: ChatMessage }).message;
                 if (message.session !== sessionRef.current) return;
-                setMessages((prev) => mergeById(prev, [message]));
                 void cache
                     .putMessages(me, message.session, [message])
                     .catch(() => undefined);
                 void rpc
                     .call("receipt.read", { session: message.session })
                     .catch(() => undefined);
+                if (hasNewerRef.current) {
+                    if (message.sender === me) void backToLatest();
+                    else setNewCount((prev) => prev + 1);
+                    return;
+                }
+                setMessages((prev) => mergeById(prev, [message]));
             });
             return () => {
                 void dispose();
             };
-        }, [me]);
+        }, [me, backToLatest]);
 
         useEffect(() => {
             const dispose = ctx.on("server:message:recalled", (payload) => {
@@ -435,7 +594,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
             }
             const delta = totalCount - prevCountRef.current;
             prevCountRef.current = totalCount;
-            if (delta <= 0) return;
+            if (delta <= 0 || hasNewerRef.current) return;
             const last =
                 messages[messages.length - 1] ??
                 sessionPending[sessionPending.length - 1];
@@ -464,6 +623,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     session,
                     limit: PAGE_SIZE,
                     before: oldest.createdAt,
+                    beforeId: oldest.id,
                 })) as ChatMessage[];
                 setHasMore(older.length >= PAGE_SIZE);
                 if (older.length > 0) {
@@ -484,6 +644,45 @@ export const uiMessagesSetup = async (ctx: Context) => {
             }
         };
 
+        const loadNewer = async () => {
+            if (loadingRef.current || !hasNewerRef.current || !me) return;
+            const newest = messages[messages.length - 1];
+            if (!newest) return;
+            loadingRef.current = true;
+            try {
+                const next = (await rpc.call("history.list", {
+                    session,
+                    limit: PAGE_SIZE,
+                    after: newest.createdAt,
+                    afterId: newest.id,
+                })) as ChatMessage[];
+                if (sessionRef.current !== session) return;
+                setHasNewer(next.length >= PAGE_SIZE);
+                hasNewerRef.current = next.length >= PAGE_SIZE;
+                if (next.length > 0) {
+                    setMessages((prev) => mergeById(prev, next));
+                    void cache
+                        .putMessages(me, session, next)
+                        .catch(() => undefined);
+                }
+                if (next.length < PAGE_SIZE) {
+                    atBottomRef.current = true;
+                    setAtBottom(true);
+                    setNewCount(0);
+                    requestAnimationFrame(() =>
+                        bottomRef.current?.scrollIntoView({
+                            behavior: "smooth",
+                        }),
+                    );
+                }
+            } catch {
+                setHasNewer(false);
+                hasNewerRef.current = false;
+            } finally {
+                loadingRef.current = false;
+            }
+        };
+
         const handleScroll = () => {
             const el = scrollRef.current;
             if (!el) return;
@@ -495,6 +694,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 if (nearBottom) setNewCount(0);
             }
             const goingUp = lastScrollTopRef.current - el.scrollTop > 0;
+            const goingDown = el.scrollTop - lastScrollTopRef.current > 0;
             lastScrollTopRef.current = el.scrollTop;
             if (
                 goingUp &&
@@ -503,6 +703,14 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 hasMore
             ) {
                 void loadOlder();
+            }
+            if (
+                goingDown &&
+                nearBottom &&
+                hasNewerRef.current &&
+                Date.now() - userScrollAtRef.current < 1500
+            ) {
+                void loadNewer();
             }
         };
 
@@ -513,24 +721,15 @@ export const uiMessagesSetup = async (ctx: Context) => {
             bottomRef.current?.scrollIntoView({ behavior: "smooth" });
         };
 
-        const jumpToMessage = (id: string) => {
+        const jumpToMessage = (id: string, at?: string) => {
             setSearchQuery(null);
             setSearchResults([]);
-            let attempts = 0;
-            const tryJump = () => {
-                attempts += 1;
-                const el = document.getElementById(`msg-${id}`);
-                if (!el) {
-                    if (attempts < 20) setTimeout(tryJump, 50);
-                    return;
-                }
-                atBottomRef.current = false;
-                setAtBottom(false);
-                el.scrollIntoView({ block: "center", behavior: "smooth" });
-                setHighlightId(id);
-                setTimeout(() => setHighlightId(null), 2000);
-            };
-            setTimeout(tryJump, 50);
+            if (!at || document.getElementById(`msg-${id}`)) {
+                scrollToHighlight(id);
+                return;
+            }
+            jumpRef.current = { session: sessionRef.current, id, at };
+            setJumpTarget({ session: sessionRef.current, id, at });
         };
 
         const recall = async (message: ChatMessage) => {
@@ -707,7 +906,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     <div className="min-h-0 flex-1 overflow-y-auto p-2">
                         {searchResults.length === 0 ? (
                             <p className="py-8 text-center text-xs text-muted-foreground">
-                                本地缓存中没有匹配的消息
+                                {searchBusy ? "正在搜索..." : "没有匹配的消息"}
                             </p>
                         ) : (
                             searchResults.map((message) => (
@@ -715,7 +914,12 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                     key={message.id}
                                     type="button"
                                     className="flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-accent/60"
-                                    onClick={() => jumpToMessage(message.id)}
+                                    onClick={() =>
+                                        jumpToMessage(
+                                            message.id,
+                                            message.createdAt,
+                                        )
+                                    }
                                 >
                                     <span className="text-xs text-muted-foreground">
                                         {message.sender}{" "}
@@ -1172,12 +1376,20 @@ export const uiMessagesSetup = async (ctx: Context) => {
                         <div ref={bottomRef} />
                     </div>
 
-                    {!atBottom ? (
+                    {!atBottom || hasNewer ? (
                         <button
                             type="button"
-                            onClick={scrollToBottom}
+                            onClick={() => {
+                                if (hasNewerRef.current) void backToLatest();
+                                else scrollToBottom();
+                            }}
                             className="absolute bottom-4 right-4 z-10 flex h-8 items-center gap-1.5 rounded-full border border-border bg-background px-3 text-xs shadow-md hover:bg-accent"
                         >
+                            {hasNewer ? (
+                                <span className="font-medium text-primary">
+                                    回到最新
+                                </span>
+                            ) : null}
                             {newCount > 0 ? (
                                 <span className="font-medium text-primary">
                                     {newCount > 99 ? "99+" : newCount} 条新消息

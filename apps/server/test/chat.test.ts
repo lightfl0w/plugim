@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { createTestApp } from "./helpers";
+import { describe, expect, it, vi } from "vitest";
+import type { AuthUser } from "../src/types";
+import { createTestApp, type TestApp } from "./helpers";
 
 const friendPair = async (a: string, b: string) => {
     const app = await createTestApp();
@@ -197,6 +198,116 @@ describe("p2p messaging", () => {
             ),
         ).rejects.toThrow("没有有效的转发目标");
     });
+
+    it("pages forward with after and backward with before", async () => {
+        const { app, ua } = await friendPair("ya", "yb");
+        const ids: string[] = [];
+        for (let i = 0; i < 45; i += 1) {
+            const row = (await app.call(
+                "message.send",
+                { session: "p2p:yb", content: `page ${i}` },
+                ua.user,
+            )) as { id: string };
+            ids.push(row.id);
+            await new Promise((done) => setTimeout(done, 2));
+        }
+        const tail = (await app.call(
+            "history.list",
+            { session: "p2p:yb", limit: 30 },
+            ua.user,
+        )) as { id: string; createdAt: string }[];
+        expect(tail.map((m) => m.id)).toEqual(ids.slice(15));
+        const older = (await app.call(
+            "history.list",
+            {
+                session: "p2p:yb",
+                limit: 10,
+                before: tail[0].createdAt,
+                beforeId: tail[0].id,
+            },
+            ua.user,
+        )) as { id: string; createdAt: string }[];
+        expect(older.map((m) => m.id)).toEqual(ids.slice(6, 16));
+        const newer = (await app.call(
+            "history.list",
+            {
+                session: "p2p:yb",
+                limit: 10,
+                after: older[older.length - 1].createdAt,
+                afterId: older[older.length - 1].id,
+            },
+            ua.user,
+        )) as { id: string }[];
+        expect(newer.map((m) => m.id)).toEqual(ids.slice(15, 25));
+        const fallback = (await app.call(
+            "history.list",
+            {
+                session: "p2p:yb",
+                limit: 10,
+                before: tail[0].createdAt,
+                beforeId: "missing-id",
+            },
+            ua.user,
+        )) as { id: string }[];
+        expect(fallback.map((m) => m.id)).toEqual(ids.slice(5, 15));
+    });
+
+    it("keeps paging exact when messages share one timestamp", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            vi.setSystemTime(new Date("2026-09-26T10:00:00.000Z"));
+            const { app, ua } = await friendPair("za", "zb");
+            for (let i = 0; i < 25; i += 1) {
+                await app.call(
+                    "message.send",
+                    { session: "p2p:zb", content: `tie ${i}` },
+                    ua.user,
+                );
+            }
+            const all = (await app.call(
+                "history.list",
+                { session: "p2p:zb", limit: 200 },
+                ua.user,
+            )) as { id: string; createdAt: string }[];
+            expect(new Set(all.map((m) => m.createdAt)).size).toBe(1);
+            const tail = (await app.call(
+                "history.list",
+                { session: "p2p:zb", limit: 10 },
+                ua.user,
+            )) as { id: string; createdAt: string }[];
+            expect(tail.map((m) => m.id)).toEqual(
+                all.slice(15).map((m) => m.id),
+            );
+            const older = (await app.call(
+                "history.list",
+                {
+                    session: "p2p:zb",
+                    limit: 10,
+                    before: all[15].createdAt,
+                    beforeId: all[15].id,
+                },
+                ua.user,
+            )) as { id: string }[];
+            expect(older.map((m) => m.id)).toEqual(
+                all.slice(6, 16).map((m) => m.id),
+            );
+            const newer = (await app.call(
+                "history.list",
+                {
+                    session: "p2p:zb",
+                    limit: 10,
+                    after: all[15].createdAt,
+                    afterId: all[15].id,
+                },
+                ua.user,
+            )) as { id: string }[];
+            expect(newer.map((m) => m.id)).toEqual(
+                all.slice(15, 25).map((m) => m.id),
+            );
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe("group messaging", () => {
@@ -336,5 +447,155 @@ describe("receipts", () => {
             ua.user,
         )) as { username: string }[];
         expect(rows.map((row) => row.username)).toContain("rb");
+    });
+});
+
+describe("message search", () => {
+    const search = (
+        app: TestApp,
+        user: AuthUser,
+        params: Record<string, unknown>,
+    ) => app.call("message.search", params, user);
+
+    it("searches own chats, groups and the default session", async () => {
+        const { app, ua } = await friendPair("sa", "sb");
+        const group = (await app.call(
+            "group.create",
+            { name: "搜索群", members: ["sb"] },
+            ua.user,
+        )) as { id: string };
+        await app.call(
+            "message.send",
+            { session: "p2p:sb", content: "关键词私聊" },
+            ua.user,
+        );
+        await app.call(
+            "message.send",
+            { session: `g:${group.id}`, content: "关键词群聊" },
+            ua.user,
+        );
+        await app.call(
+            "message.send",
+            { session: "general", content: "关键词大厅" },
+            ua.user,
+        );
+        const result = (await search(app, ua.user, { keyword: "关键词" })) as {
+            hits: { content: string; session: string }[];
+            total: number;
+        };
+        expect(result.total).toBe(3);
+        expect(result.hits.map((hit) => hit.session).sort()).toEqual([
+            `g:${group.id}`,
+            "general",
+            "p2p:sa|sb",
+        ]);
+    });
+
+    it("hides other people's private sessions", async () => {
+        const { app, ua, ub } = await friendPair("va", "vb");
+        const outsider = await app.register("vc");
+        await app.call(
+            "message.send",
+            { session: "p2p:va", content: "悄悄话关键词" },
+            ub.user,
+        );
+        const mine = (await search(app, ua.user, {
+            keyword: "悄悄话关键词",
+        })) as {
+            total: number;
+        };
+        expect(mine.total).toBe(1);
+        const theirs = (await search(app, outsider.user, {
+            keyword: "悄悄话关键词",
+        })) as { total: number };
+        expect(theirs.total).toBe(0);
+        await expect(
+            search(app, outsider.user, {
+                keyword: "悄悄话关键词",
+                session: "p2p:va",
+            }),
+        ).rejects.toThrow("只能和好友私聊");
+    });
+
+    it("scopes to a single session", async () => {
+        const { app, ua } = await friendPair("wa", "wb");
+        await app.call(
+            "message.send",
+            { session: "p2p:wb", content: "范围关键词" },
+            ua.user,
+        );
+        await app.call(
+            "message.send",
+            { session: "general", content: "范围关键词" },
+            ua.user,
+        );
+        const scoped = (await search(app, ua.user, {
+            keyword: "范围关键词",
+            session: "p2p:wb",
+        })) as { total: number; hits: { session: string }[] };
+        expect(scoped.total).toBe(1);
+        expect(scoped.hits[0].session).toBe("p2p:wa|wb");
+        const outsider = await app.register("wc");
+        const group = (await app.call(
+            "group.create",
+            { name: "别人群", members: [] },
+            ua.user,
+        )) as { id: string };
+        await expect(
+            search(app, outsider.user, {
+                keyword: "范围关键词",
+                session: `g:${group.id}`,
+            }),
+        ).rejects.toThrow("不在该群");
+    });
+
+    it("matches content, skips recalled rows and pages results", async () => {
+        const { app, ua } = await friendPair("xa", "xb");
+        const ids: string[] = [];
+        for (let i = 0; i < 5; i++)
+            ids.push(
+                (
+                    (await app.call(
+                        "message.send",
+                        { session: "general", content: `分页关键词 ${i}` },
+                        ua.user,
+                    )) as { id: string }
+                ).id,
+            );
+        await app.call("message.recall", { id: ids[0] }, ua.user);
+        const first = (await search(app, ua.user, {
+            keyword: "分页关键词",
+            limit: 2,
+        })) as { hits: { id: string }[]; total: number };
+        expect(first.total).toBe(4);
+        expect(first.hits).toHaveLength(2);
+        const second = (await search(app, ua.user, {
+            keyword: "分页关键词",
+            limit: 2,
+            offset: 2,
+        })) as { hits: { id: string }[] };
+        expect(second.hits).toHaveLength(2);
+        expect(
+            new Set([...first.hits, ...second.hits].map((hit) => hit.id)).size,
+        ).toBe(4);
+        const none = (await search(app, ua.user, {
+            keyword: "不存在的词",
+        })) as {
+            total: number;
+        };
+        expect(none.total).toBe(0);
+    });
+
+    it("rejects empty keywords and unauthenticated callers", async () => {
+        const { app, ua } = await friendPair("ya", "yb");
+        await expect(search(app, ua.user, { keyword: "   " })).rejects.toThrow(
+            "请输入搜索关键词",
+        );
+        await expect(search(app, ua.user, {})).rejects.toThrow(
+            "请输入搜索关键词",
+        );
+        await expect(
+            app.call("message.search", { keyword: "hi" }, null),
+        ).rejects.toThrow("未登录");
     });
 });

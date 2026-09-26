@@ -3,7 +3,9 @@ import type { GroupInfo } from "@plugim/protocol";
 import { SearchIcon, SettingsIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ConnStatus, RpcService } from "./connection";
+import type { FriendsService } from "./friends";
 import type { PresenceService } from "./presence";
+import { displayName } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const statusColor: Record<ConnStatus, string> = {
@@ -22,6 +24,7 @@ export const uiHeaderSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
     const rpc = ctx.get<RpcService>("rpc");
     const presence = ctx.get<PresenceService>("presence");
+    const friends = ctx.get<FriendsService>("friends");
 
     const Header = () => {
         const [status, setStatus] = useState(rpc.status());
@@ -39,6 +42,10 @@ export const uiHeaderSetup = async (ctx: Context) => {
             () => presence.onChange(() => setPresenceTick((t) => t + 1)),
             [],
         );
+        useEffect(
+            () => friends.onUpdate(() => setPresenceTick((t) => t + 1)),
+            [],
+        );
 
         useEffect(() => rpc.onStatus(setStatus), []);
 
@@ -48,8 +55,13 @@ export const uiHeaderSetup = async (ctx: Context) => {
                     title?: string;
                     session?: string;
                 };
-                setTitle(data.title ?? "会话");
-                setSession(data.session ?? "");
+                const next = data.session ?? "";
+                setTitle(
+                    next.startsWith("p2p:")
+                        ? displayName(next.slice(4), friends.cached()?.remarks)
+                        : (data.title ?? "会话"),
+                );
+                setSession(next);
                 setSearchOpen(false);
                 setQuery("");
                 ctx.emit("ui:chat:search", { query: "" });

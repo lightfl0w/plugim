@@ -31,6 +31,18 @@ export const formatBytes = (size: number): string => {
     return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`;
 };
 
+export const clientSessionOf = (session: string, me: string): string => {
+    if (!session.startsWith("p2p:")) return session;
+    const names = session.slice(4).split("|");
+    if (names.length !== 2) return session;
+    return `p2p:${names[0] === me ? names[1] : names[0]}`;
+};
+
+export const displayName = (
+    username: string,
+    remarks?: Record<string, string> | null,
+): string => remarks?.[username] || username;
+
 const soundKey = (owner: string) => `plugim_sound:${owner}`;
 
 export const isSoundEnabled = (owner: string): boolean =>
