@@ -13,6 +13,15 @@ import { groupPlugin } from "./plugins/group";
 import { installPlugin } from "./plugins/install";
 import { screenPlugin } from "./plugins/screen";
 import { storagePlugin } from "./plugins/storage";
+import { webPlugin } from "./plugins/web";
+
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+if (nodeMajor < 20) {
+    console.error(
+        `plugim requires Node >= 20, current ${process.versions.node}`,
+    );
+    process.exit(1);
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 for (const candidate of [
@@ -61,6 +70,7 @@ ctx.plugin(groupPlugin);
 ctx.plugin(chatPlugin);
 ctx.plugin(screenPlugin);
 ctx.plugin(adminPlugin);
+ctx.plugin(webPlugin);
 
 ctx.start().catch((err) => {
     ctx.log.error("failed to start:", err);

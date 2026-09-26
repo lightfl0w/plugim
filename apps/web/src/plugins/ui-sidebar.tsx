@@ -476,7 +476,19 @@ export const uiSidebarSetup = async (ctx: Context) => {
             navigate("/chat");
         };
 
+        useEffect(() => {
+            ctx.emit("ui:chat:open", {
+                session: "general",
+                title: "综合频道",
+            });
+        }, []);
+
         const entries = [
+            {
+                session: "general",
+                label: "综合频道",
+                isGroup: false,
+            },
             ...(groupList ?? []).map((group) => ({
                 session: `g:${group.id}`,
                 label: group.name,

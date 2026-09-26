@@ -69,17 +69,6 @@ pnpm dev:web
 | `pnpm lint` / `pnpm lint:fix` | Biome 检查 / 自动修复 |
 | `pnpm --filter @plugim/web build` | 前端生产构建 |
 
-## 协议
-
-单条 WebSocket 连接复用两种帧：
-
-- **事件流**（server → client）：`message:new` 等内核事件广播
-- **RPC**（client → server）：`{"kind":"rpc","id":"r1","method":"message.send","params":{...}}`，回包 `rpc:ok` / `rpc:err`
-
-HTTP：`POST /rpc/<method>`，body 为 `{"params":{...}}`，携带 `Authorization: Bearer <token>` 可鉴权。
-
-鉴权：WS 连接通过 `?token=<jwt>` 携带身份；`auth.register` / `auth.login` 无需 token，其余消息与好友 RPC 均要求登录。
-
 ## 路线图
 
 - [x] 用户身份（注册 / 登录 / JWT）

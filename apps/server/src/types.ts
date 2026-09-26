@@ -6,6 +6,7 @@ import type {
     MessageQuote,
     User,
 } from "@plugim/protocol";
+import type { Hono } from "hono";
 
 export interface AuthUser {
     id: string;
@@ -33,6 +34,7 @@ export interface GatewayService {
     isUserOnline(userId: string): boolean;
     kickUser(userId: string): void;
     onOffline(cb: (userId: string) => void): () => void;
+    hono(): Hono;
 }
 
 export interface MessageStore {

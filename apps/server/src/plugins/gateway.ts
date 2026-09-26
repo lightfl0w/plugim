@@ -256,6 +256,7 @@ export const gatewayPlugin: Plugin = {
                 offlineListeners.add(cb);
                 return () => offlineListeners.delete(cb);
             },
+            hono: () => app,
         };
 
         ctx.provide<GatewayService>("gateway", gatewayApi);

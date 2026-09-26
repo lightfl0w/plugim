@@ -5,6 +5,8 @@
     "scripts": {
         "dev": "tsx watch src/index.ts",
         "start": "tsx src/index.ts",
+        "build": "tsup",
+        "serve": "node dist/index.js",
         "typecheck": "tsc --noEmit",
         "test": "vitest run"
     },
@@ -25,6 +27,7 @@
         "@types/better-sqlite3": "^9.6.0",
         "@types/node": "^26.4.1",
         "@types/ws": "^8.18.1",
+        "tsup": "^8.5.1",
         "tsx": "^4.23.13",
         "typescript": "^7.0.2",
         "vitest": "^5.0.0"
