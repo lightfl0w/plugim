@@ -4,6 +4,7 @@ import type {
     GroupRole,
     MessageKind,
     MessageQuote,
+    MomentVisibility,
     User,
 } from "@plugim/protocol";
 import type { Hono } from "hono";
@@ -271,6 +272,56 @@ export interface PushStore {
 }
 
 export type FriendStatus = "pending" | "accepted" | "blocked";
+
+export interface MomentRow {
+    id: string;
+    authorId: string;
+    content: string;
+    images: string[];
+    visibility: MomentVisibility;
+    createdAt: string;
+}
+
+export interface MomentLikeRow {
+    postId: string;
+    userId: string;
+    at: string;
+}
+
+export interface MomentCommentRow {
+    id: string;
+    postId: string;
+    authorId: string;
+    content: string;
+    createdAt: string;
+}
+
+export interface MomentsStore {
+    create(input: {
+        authorId: string;
+        content: string;
+        images: string[];
+        visibility: MomentVisibility;
+    }): Promise<MomentRow>;
+    byId(id: string): Promise<MomentRow | null>;
+    remove(id: string): Promise<void>;
+    list(params: {
+        viewerId: string;
+        friendIds: string[];
+        author?: string;
+        before?: string;
+        beforeId?: string;
+        limit: number;
+    }): Promise<MomentRow[]>;
+    setLike(postId: string, userId: string, liked: boolean): Promise<void>;
+    likesOf(postIds: string[]): Promise<MomentLikeRow[]>;
+    addComment(input: {
+        postId: string;
+        authorId: string;
+        content: string;
+    }): Promise<MomentCommentRow>;
+    commentsOf(postIds: string[]): Promise<MomentCommentRow[]>;
+}
 
 export interface FriendEdge {
     requesterId: string;

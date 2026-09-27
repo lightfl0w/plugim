@@ -12,6 +12,7 @@ import { friendsPlugin } from "../src/plugins/friends";
 import { groupPlugin } from "../src/plugins/group";
 import { groupFilesPlugin } from "../src/plugins/group-files";
 import { installPlugin } from "../src/plugins/install";
+import { momentsPlugin } from "../src/plugins/moments";
 import { pushPlugin } from "../src/plugins/push";
 import { screenPlugin } from "../src/plugins/screen";
 import { storagePlugin } from "../src/plugins/storage";
@@ -135,6 +136,7 @@ export const createTestApp = async (
     ctx.plugin(groupFilesPlugin);
     ctx.plugin(pushPlugin);
     ctx.plugin(chatPlugin);
+    ctx.plugin(momentsPlugin);
     ctx.plugin(screenPlugin);
     ctx.plugin(adminPlugin);
     ctx.plugin(filesPlugin);

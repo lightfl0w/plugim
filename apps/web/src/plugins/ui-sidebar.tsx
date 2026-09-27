@@ -6,6 +6,7 @@ import type {
 } from "@plugim/protocol";
 import { MENTION_ALL } from "@plugim/protocol";
 import {
+    ApertureIcon,
     BellIcon,
     BellOffIcon,
     CheckIcon,
@@ -200,6 +201,11 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     icon={<UsersIcon className="size-5" />}
                     label="好友"
                     onOpen={() => setShellPane("list")}
+                />
+                <NavIcon
+                    to="/moments"
+                    icon={<ApertureIcon className="size-5" />}
+                    label="朋友圈"
                 />
                 <div className="flex items-center gap-1 md:mt-auto md:flex-col">
                     {user ? (

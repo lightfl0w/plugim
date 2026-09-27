@@ -11,6 +11,7 @@ import { uiHeaderSetup } from "./ui-header";
 import { uiInstallSetup } from "./ui-install";
 import { uiMediaViewerSetup } from "./ui-mediaviewer";
 import { uiMessagesSetup } from "./ui-messages";
+import { uiMomentsSetup } from "./ui-moments";
 import { uiProfileSetup } from "./ui-profile";
 import { uiProfileCardSetup } from "./ui-profilecard";
 import { uiPwaSetup } from "./ui-pwa";
@@ -37,6 +38,7 @@ const SECTIONS: { name: string; setup: UiSetup }[] = [
     { name: "资料卡", setup: uiProfileCardSetup },
     { name: "好友面板", setup: uiFriendsPanelSetup },
     { name: "群面板", setup: uiGroupPanelSetup },
+    { name: "朋友圈", setup: uiMomentsSetup },
     { name: "屏幕共享", setup: uiScreenSetup },
     { name: "语音视频通话", setup: uiCallSetup },
     { name: "群组通话", setup: uiGroupCallSetup },
@@ -56,6 +58,7 @@ export const uiViewsPlugin: Plugin = {
         "cache",
         "friends",
         "groups",
+        "moments",
         "presence",
     ],
     async apply(ctx) {

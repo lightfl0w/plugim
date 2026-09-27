@@ -4,6 +4,7 @@ import { cachePlugin } from "./cache";
 import { connectionPlugin } from "./connection";
 import { friendsPlugin } from "./friends";
 import { groupsPlugin } from "./groups";
+import { momentsPlugin } from "./moments";
 import { presencePlugin } from "./presence";
 import { senderPlugin } from "./sender";
 import { settingsPlugin } from "./settings";
@@ -16,6 +17,7 @@ export const globalPlugins: Plugin[] = [
     senderPlugin,
     friendsPlugin,
     groupsPlugin,
+    momentsPlugin,
     presencePlugin,
     cachePlugin,
     uiViewsPlugin,

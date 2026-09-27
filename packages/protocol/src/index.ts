@@ -203,7 +203,8 @@ export type ServerEventName =
     | "typing"
     | "screen:signal"
     | "group:call"
-    | "group:call:signal";
+    | "group:call:signal"
+    | "moment:update";
 
 export interface TypingEvent {
     session: string;
@@ -287,4 +288,69 @@ export interface MessageSearchParams {
 export interface MessageSearchResult {
     hits: ChatMessage[];
     total: number;
+}
+
+export type MomentVisibility = "public" | "friends";
+
+export interface MomentLike {
+    username: string;
+    at: string;
+}
+
+export interface MomentComment {
+    id: string;
+    author: string;
+    content: string;
+    createdAt: string;
+}
+
+export interface MomentPost {
+    id: string;
+    author: string;
+    content: string;
+    images: string[];
+    visibility: MomentVisibility;
+    createdAt: string;
+    likes: MomentLike[];
+    comments: MomentComment[];
+}
+
+export interface MomentPublishParams {
+    content: string;
+    images?: string[] | null;
+    visibility?: MomentVisibility;
+}
+
+export interface MomentTimelineParams {
+    author?: string;
+    limit?: number;
+    before?: string;
+    beforeId?: string;
+}
+
+export interface MomentTimelineResult {
+    posts: MomentPost[];
+    hasMore: boolean;
+}
+
+export interface MomentTargetParams {
+    postId: string;
+}
+
+export interface MomentLikeParams {
+    postId: string;
+    liked: boolean;
+}
+
+export interface MomentCommentParams {
+    postId: string;
+    content: string;
+}
+
+export type MomentAction = "publish" | "delete" | "like" | "comment";
+
+export interface MomentUpdateEvent {
+    action: MomentAction;
+    postId: string;
+    author: string;
 }

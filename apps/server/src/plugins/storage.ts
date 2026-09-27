@@ -50,6 +50,10 @@ import type {
     MediaFilesStore,
     MessageStore,
     MessageTrendPoint,
+    MomentCommentRow,
+    MomentLikeRow,
+    MomentRow,
+    MomentsStore,
     PushStore,
     PushSubscriptionRow,
     ReadsStore,
@@ -338,6 +342,64 @@ const groupFilesPg = pgTable(
     (table) => [pgPrimaryKey({ columns: [table.groupId, table.key] })],
 );
 
+const momentsSqlite = sqliteTable("moments", {
+    id: sqliteText("id").primaryKey(),
+    authorId: sqliteText("author_id").notNull(),
+    content: sqliteText("content").notNull(),
+    images: sqliteText("images").notNull(),
+    visibility: sqliteText("visibility").notNull(),
+    createdAt: integer("created_at").notNull(),
+});
+
+const momentsPg = pgTable("moments", {
+    id: pgText("id").primaryKey(),
+    authorId: pgText("author_id").notNull(),
+    content: pgText("content").notNull(),
+    images: pgText("images").notNull(),
+    visibility: pgText("visibility").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+});
+
+const momentLikesSqlite = sqliteTable(
+    "moment_likes",
+    {
+        postId: sqliteText("post_id").notNull(),
+        userId: sqliteText("user_id").notNull(),
+        at: integer("at").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.postId, table.userId] })],
+);
+
+const momentLikesPg = pgTable(
+    "moment_likes",
+    {
+        postId: pgText("post_id").notNull(),
+        userId: pgText("user_id").notNull(),
+        at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.postId, table.userId] })],
+);
+
+const momentCommentsSqlite = sqliteTable("moment_comments", {
+    id: sqliteText("id").primaryKey(),
+    postId: sqliteText("post_id").notNull(),
+    authorId: sqliteText("author_id").notNull(),
+    content: sqliteText("content").notNull(),
+    createdAt: integer("created_at").notNull(),
+});
+
+const momentCommentsPg = pgTable("moment_comments", {
+    id: pgText("id").primaryKey(),
+    postId: pgText("post_id").notNull(),
+    authorId: pgText("author_id").notNull(),
+    content: pgText("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+});
+
 const CREATE_SQLITE = `
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -435,7 +497,30 @@ CREATE TABLE IF NOT EXISTS group_files (
   uploader_id TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (group_id, key)
-)`;
+);
+CREATE TABLE IF NOT EXISTS moments (
+  id TEXT PRIMARY KEY,
+  author_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  images TEXT NOT NULL,
+  visibility TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS moments_created_idx ON moments (created_at);
+CREATE TABLE IF NOT EXISTS moment_likes (
+  post_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS moment_comments (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS moment_comments_post_idx ON moment_comments (post_id, created_at)`;
 
 const CREATE_PG = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -534,7 +619,30 @@ CREATE TABLE IF NOT EXISTS group_files (
   uploader_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (group_id, key)
-)`;
+);
+CREATE TABLE IF NOT EXISTS moments (
+  id TEXT PRIMARY KEY,
+  author_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  images TEXT NOT NULL,
+  visibility TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS moments_created_idx ON moments (created_at);
+CREATE TABLE IF NOT EXISTS moment_likes (
+  post_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS moment_comments (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS moment_comments_post_idx ON moment_comments (post_id, created_at)`;
 
 const toIso = (value: Date | number): string =>
     value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -588,6 +696,57 @@ const parseFile = (raw: unknown): FileMeta | null => {
     } catch {}
     return null;
 };
+
+const parseImages = (raw: string): string[] => {
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed))
+            return parsed.filter(
+                (item): item is string => typeof item === "string",
+            );
+    } catch {}
+    return [];
+};
+
+const momentToRow = (row: {
+    id: string;
+    authorId: string;
+    content: string;
+    images: string;
+    visibility: string;
+    createdAt: Date | number;
+}): MomentRow => ({
+    id: row.id,
+    authorId: row.authorId,
+    content: row.content,
+    images: parseImages(row.images),
+    visibility: row.visibility === "friends" ? "friends" : "public",
+    createdAt: toIso(row.createdAt),
+});
+
+const momentLikeToRow = (row: {
+    postId: string;
+    userId: string;
+    at: Date | number;
+}): MomentLikeRow => ({
+    postId: row.postId,
+    userId: row.userId,
+    at: toIso(row.at),
+});
+
+const momentCommentToRow = (row: {
+    id: string;
+    postId: string;
+    authorId: string;
+    content: string;
+    createdAt: Date | number;
+}): MomentCommentRow => ({
+    id: row.id,
+    postId: row.postId,
+    authorId: row.authorId,
+    content: row.content,
+    createdAt: toIso(row.createdAt),
+});
 
 const mediaFileToRow = (row: {
     key: string;
@@ -707,6 +866,7 @@ export const storagePlugin: Plugin = {
         "mediaFiles",
         "groupFiles",
         "join-requests",
+        "moments",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -721,6 +881,7 @@ export const storagePlugin: Plugin = {
         let mediaFiles: MediaFilesStore;
         let groupFiles: GroupFilesStore;
         let joinRequests: JoinRequestsStore;
+        let moments: MomentsStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -1648,6 +1809,123 @@ export const storagePlugin: Plugin = {
                                 eq(joinRequestsPg.userId, userId),
                             ),
                         );
+                },
+            };
+
+            moments = {
+                async create(input) {
+                    const id = crypto.randomUUID();
+                    const rows = await db
+                        .insert(momentsPg)
+                        .values({
+                            id,
+                            authorId: input.authorId,
+                            content: input.content,
+                            images: JSON.stringify(input.images),
+                            visibility: input.visibility,
+                        })
+                        .returning();
+                    return momentToRow(rows[0]);
+                },
+                async byId(id) {
+                    const rows = await db
+                        .select()
+                        .from(momentsPg)
+                        .where(eq(momentsPg.id, id))
+                        .limit(1);
+                    return rows[0] ? momentToRow(rows[0]) : null;
+                },
+                async remove(id) {
+                    await db
+                        .delete(momentLikesPg)
+                        .where(eq(momentLikesPg.postId, id));
+                    await db
+                        .delete(momentCommentsPg)
+                        .where(eq(momentCommentsPg.postId, id));
+                    await db.delete(momentsPg).where(eq(momentsPg.id, id));
+                },
+                async list({
+                    viewerId,
+                    friendIds,
+                    author,
+                    before,
+                    beforeId,
+                    limit,
+                }) {
+                    const at = before ? new Date(before) : null;
+                    const rows = await db
+                        .select()
+                        .from(momentsPg)
+                        .where(
+                            and(
+                                or(
+                                    eq(momentsPg.visibility, "public"),
+                                    eq(momentsPg.authorId, viewerId),
+                                    friendIds.length > 0
+                                        ? inArray(momentsPg.authorId, friendIds)
+                                        : undefined,
+                                ),
+                                author
+                                    ? eq(momentsPg.authorId, author)
+                                    : undefined,
+                                at
+                                    ? beforeId
+                                        ? sql`(${momentsPg.createdAt} < ${at} OR (${momentsPg.createdAt} = ${at} AND ${momentsPg.id} < ${beforeId}))`
+                                        : lt(momentsPg.createdAt, at)
+                                    : undefined,
+                            ),
+                        )
+                        .orderBy(desc(momentsPg.createdAt), desc(momentsPg.id))
+                        .limit(limit);
+                    return rows.map(momentToRow);
+                },
+                async setLike(postId, userId, liked) {
+                    if (!liked) {
+                        await db
+                            .delete(momentLikesPg)
+                            .where(
+                                and(
+                                    eq(momentLikesPg.postId, postId),
+                                    eq(momentLikesPg.userId, userId),
+                                ),
+                            );
+                        return;
+                    }
+                    await db
+                        .insert(momentLikesPg)
+                        .values({ postId, userId, at: new Date() })
+                        .onConflictDoNothing();
+                },
+                async likesOf(postIds) {
+                    if (postIds.length === 0) return [];
+                    const rows = await db
+                        .select()
+                        .from(momentLikesPg)
+                        .where(inArray(momentLikesPg.postId, postIds))
+                        .orderBy(asc(momentLikesPg.at));
+                    return rows.map(momentLikeToRow);
+                },
+                async addComment(input) {
+                    const rows = await db
+                        .insert(momentCommentsPg)
+                        .values({
+                            id: crypto.randomUUID(),
+                            postId: input.postId,
+                            authorId: input.authorId,
+                            content: input.content,
+                            createdAt: new Date(),
+                        })
+                        .returning();
+                    return momentCommentToRow(rows[0]);
+                },
+                async commentsOf(postIds) {
+                    if (postIds.length === 0) return [];
+                    const rows = await db
+                        .select()
+                        .from(momentCommentsPg)
+                        .where(inArray(momentCommentsPg.postId, postIds))
+                        .orderBy(asc(momentCommentsPg.createdAt));
+                    return rows.map(momentCommentToRow);
                 },
             };
 
@@ -2663,6 +2941,142 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            moments = {
+                async create(input) {
+                    const id = crypto.randomUUID();
+                    const createdAt = Date.now();
+                    await db.insert(momentsSqlite).values({
+                        id,
+                        authorId: input.authorId,
+                        content: input.content,
+                        images: JSON.stringify(input.images),
+                        visibility: input.visibility,
+                        createdAt,
+                    });
+                    return {
+                        id,
+                        authorId: input.authorId,
+                        content: input.content,
+                        images: input.images,
+                        visibility: input.visibility,
+                        createdAt: new Date(createdAt).toISOString(),
+                    };
+                },
+                async byId(id) {
+                    const rows = await db
+                        .select()
+                        .from(momentsSqlite)
+                        .where(eq(momentsSqlite.id, id))
+                        .limit(1);
+                    return rows[0] ? momentToRow(rows[0]) : null;
+                },
+                async remove(id) {
+                    await db
+                        .delete(momentLikesSqlite)
+                        .where(eq(momentLikesSqlite.postId, id));
+                    await db
+                        .delete(momentCommentsSqlite)
+                        .where(eq(momentCommentsSqlite.postId, id));
+                    await db
+                        .delete(momentsSqlite)
+                        .where(eq(momentsSqlite.id, id));
+                },
+                async list({
+                    viewerId,
+                    friendIds,
+                    author,
+                    before,
+                    beforeId,
+                    limit,
+                }) {
+                    const at = before ? new Date(before).getTime() : null;
+                    const rows = await db
+                        .select()
+                        .from(momentsSqlite)
+                        .where(
+                            and(
+                                or(
+                                    eq(momentsSqlite.visibility, "public"),
+                                    eq(momentsSqlite.authorId, viewerId),
+                                    friendIds.length > 0
+                                        ? inArray(
+                                              momentsSqlite.authorId,
+                                              friendIds,
+                                          )
+                                        : undefined,
+                                ),
+                                author
+                                    ? eq(momentsSqlite.authorId, author)
+                                    : undefined,
+                                at === null
+                                    ? undefined
+                                    : beforeId
+                                      ? sql`(${momentsSqlite.createdAt} < ${at} OR (${momentsSqlite.createdAt} = ${at} AND ${momentsSqlite.id} < ${beforeId}))`
+                                      : lt(momentsSqlite.createdAt, at),
+                            ),
+                        )
+                        .orderBy(
+                            desc(momentsSqlite.createdAt),
+                            desc(momentsSqlite.id),
+                        )
+                        .limit(limit);
+                    return rows.map(momentToRow);
+                },
+                async setLike(postId, userId, liked) {
+                    if (!liked) {
+                        await db
+                            .delete(momentLikesSqlite)
+                            .where(
+                                and(
+                                    eq(momentLikesSqlite.postId, postId),
+                                    eq(momentLikesSqlite.userId, userId),
+                                ),
+                            );
+                        return;
+                    }
+                    await db
+                        .insert(momentLikesSqlite)
+                        .values({ postId, userId, at: Date.now() })
+                        .onConflictDoNothing();
+                },
+                async likesOf(postIds) {
+                    if (postIds.length === 0) return [];
+                    const rows = await db
+                        .select()
+                        .from(momentLikesSqlite)
+                        .where(inArray(momentLikesSqlite.postId, postIds))
+                        .orderBy(asc(momentLikesSqlite.at));
+                    return rows.map(momentLikeToRow);
+                },
+                async addComment(input) {
+                    const id = crypto.randomUUID();
+                    const createdAt = Date.now();
+                    await db.insert(momentCommentsSqlite).values({
+                        id,
+                        postId: input.postId,
+                        authorId: input.authorId,
+                        content: input.content,
+                        createdAt,
+                    });
+                    return {
+                        id,
+                        postId: input.postId,
+                        authorId: input.authorId,
+                        content: input.content,
+                        createdAt: new Date(createdAt).toISOString(),
+                    };
+                },
+                async commentsOf(postIds) {
+                    if (postIds.length === 0) return [];
+                    const rows = await db
+                        .select()
+                        .from(momentCommentsSqlite)
+                        .where(inArray(momentCommentsSqlite.postId, postIds))
+                        .orderBy(asc(momentCommentsSqlite.createdAt));
+                    return rows.map(momentCommentToRow);
+                },
+            };
+
             ctx.log.info(`storage driver: sqlite (${file})`);
         }
 
@@ -2676,6 +3090,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<MediaFilesStore>("mediaFiles", mediaFiles);
         ctx.provide<GroupFilesStore>("groupFiles", groupFiles);
         ctx.provide<JoinRequestsStore>("join-requests", joinRequests);
+        ctx.provide<MomentsStore>("moments", moments);
         return undefined;
     },
 };

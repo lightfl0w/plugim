@@ -51,7 +51,7 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
         const isPdf = mime === "application/pdf";
 
         return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6">
+            <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6">
                 <div
                     ref={cardRef}
                     role="dialog"
