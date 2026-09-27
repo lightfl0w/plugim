@@ -1,5 +1,7 @@
-import type { GroupInfo, GroupMember } from "@plugim/protocol";
+import type { ChatMessage, GroupInfo, GroupMember } from "@plugim/protocol";
 import { describe, expect, it } from "vitest";
+import type { AuthUser } from "../src/types";
+import type { TestApp } from "./helpers";
 import { createTestApp } from "./helpers";
 
 const setup = async () => {
@@ -155,5 +157,153 @@ describe("friends vs groups", () => {
         await expect(
             app.call("friend.request", { username: "gb2" }, a.user),
         ).resolves.toBeTruthy();
+    });
+});
+
+describe("mute notices", () => {
+    const history = async (app: TestApp, user: AuthUser, groupId: string) =>
+        (await app.call(
+            "history.list",
+            { session: `g:${groupId}` },
+            user,
+        )) as ChatMessage[];
+
+    it("posts system messages for mute, unmute and mute-all", async () => {
+        const { app, owner, member, group } = await setup();
+        await app.call(
+            "group.member.mute",
+            { groupId: group.id, username: "mem", muted: true },
+            owner.user,
+        );
+        await app.call(
+            "group.member.mute",
+            { groupId: group.id, username: "mem", muted: false },
+            owner.user,
+        );
+        await app.call(
+            "group.muteAll",
+            { groupId: group.id, on: true },
+            owner.user,
+        );
+        await app.call(
+            "group.muteAll",
+            { groupId: group.id, on: false },
+            owner.user,
+        );
+        const rows = await history(app, member.user, group.id);
+        expect(rows.map((row) => [row.kind, row.content])).toEqual([
+            ["system", "own 禁言了 mem"],
+            ["system", "own 解除了 mem 的禁言"],
+            ["system", "own 开启了全员禁言"],
+            ["system", "own 解除了全员禁言"],
+        ]);
+        expect(rows.every((row) => row.sender === "own")).toBe(true);
+    });
+
+    it("mirrors the member row in group.info myMuted", async () => {
+        const { app, owner, member, group } = await setup();
+        const before = (await app.call(
+            "group.info",
+            { groupId: group.id },
+            member.user,
+        )) as GroupInfo;
+        expect(before.myMuted).toBe(false);
+        await app.call(
+            "group.member.mute",
+            { groupId: group.id, username: "mem", muted: true },
+            owner.user,
+        );
+        const after = (await app.call(
+            "group.info",
+            { groupId: group.id },
+            member.user,
+        )) as GroupInfo;
+        expect(after.myMuted).toBe(true);
+        const ownInfo = (await app.call(
+            "group.info",
+            { groupId: group.id },
+            owner.user,
+        )) as GroupInfo;
+        expect(ownInfo.myMuted).toBe(false);
+    });
+
+    it("refuses to forge a system message from a client", async () => {
+        const { app, owner, group } = await setup();
+        const sent = (await app.call(
+            "message.send",
+            {
+                session: `g:${group.id}`,
+                content: "假系统消息",
+                kind: "system",
+            },
+            owner.user,
+        )) as ChatMessage;
+        expect(sent.kind).toBe("text");
+        const forged = (await app.call(
+            "message.send",
+            {
+                session: `g:${group.id}`,
+                content: "假公告",
+                kind: "notice",
+            },
+            owner.user,
+        )) as ChatMessage;
+        expect(forged.kind).toBe("text");
+        const rows = await history(app, owner.user, group.id);
+        expect(rows.every((row) => row.kind === "text")).toBe(true);
+    });
+});
+
+describe("group announcements", () => {
+    const history = async (app: TestApp, user: AuthUser, groupId: string) =>
+        (await app.call(
+            "history.list",
+            { session: `g:${groupId}` },
+            user,
+        )) as ChatMessage[];
+
+    it("publishes the announcement as a notice message for members", async () => {
+        const { app, owner, member, group } = await setup();
+        await app.call(
+            "group.notice.set",
+            { groupId: group.id, notice: "  周五 10 点开会  " },
+            owner.user,
+        );
+        const rows = await history(app, member.user, group.id);
+        expect(rows.map((row) => [row.kind, row.content])).toEqual([
+            ["notice", "周五 10 点开会"],
+        ]);
+        expect(rows[0].sender).toBe("own");
+        const info = (await app.call(
+            "group.info",
+            { groupId: group.id },
+            member.user,
+        )) as GroupInfo;
+        expect(info.notice).toBe("周五 10 点开会");
+    });
+
+    it("notes a withdrawal and stays silent on an empty no-op", async () => {
+        const { app, owner, group } = await setup();
+        await app.call(
+            "group.notice.set",
+            { groupId: group.id, notice: "" },
+            owner.user,
+        );
+        expect(await history(app, owner.user, group.id)).toHaveLength(0);
+        await app.call(
+            "group.notice.set",
+            { groupId: group.id, notice: "停水通知" },
+            owner.user,
+        );
+        await app.call(
+            "group.notice.set",
+            { groupId: group.id, notice: "" },
+            owner.user,
+        );
+        const rows = await history(app, owner.user, group.id);
+        expect(rows.map((row) => [row.kind, row.content])).toEqual([
+            ["notice", "停水通知"],
+            ["system", "own 撤销了群公告"],
+        ]);
     });
 });

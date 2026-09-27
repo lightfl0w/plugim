@@ -18,6 +18,7 @@ const group = (id: string, name: string): GroupInfo => ({
     createdAt: new Date().toISOString(),
     memberCount: 2,
     myRole: "owner",
+    myMuted: false,
 });
 
 const makeGroups = (list: GroupInfo[]) => {

@@ -1,5 +1,7 @@
-import type { ScreenSignal } from "@plugim/protocol";
+import type { ChatMessage, ScreenSignal } from "@plugim/protocol";
 import { describe, expect, it, vi } from "vitest";
+import type { AuthUser } from "../src/types";
+import type { TestApp } from "./helpers";
 import { createTestApp } from "./helpers";
 
 const pair = async () => {
@@ -377,5 +379,132 @@ describe("call lifecycle", () => {
         await expect(
             app.call("screen.state", {}, a.user),
         ).resolves.toMatchObject({ callId, active: true });
+    });
+});
+
+describe("call chat records", () => {
+    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    const history = async (app: TestApp, user: AuthUser, peer: string) =>
+        (await app.call(
+            "history.list",
+            { session: `p2p:${peer}` },
+            user,
+        )) as ChatMessage[];
+
+    it("records a cancelled call before it is answered", async () => {
+        const { app, a, b } = await pair();
+        const { callId } = (await app.call(
+            "screen.invite",
+            { to: "sb", kind: "voice" },
+            a.user,
+        )) as { callId: string };
+        await app.call("screen.hangup", { callId }, a.user);
+        for (const [user, peer] of [
+            [a.user, "sb"],
+            [b.user, "sa"],
+        ] as const) {
+            const rows = await history(app, user, peer);
+            expect(rows.at(-1)).toMatchObject({
+                kind: "system",
+                sender: "sa",
+                content: "语音通话已取消",
+            });
+        }
+    });
+
+    it("records a declined screen share", async () => {
+        const { app, a, b } = await pair();
+        const { callId } = (await app.call(
+            "screen.invite",
+            { to: "sb" },
+            a.user,
+        )) as { callId: string };
+        await app.call("screen.decline", { callId }, b.user);
+        for (const [user, peer] of [
+            [a.user, "sb"],
+            [b.user, "sa"],
+        ] as const) {
+            const rows = await history(app, user, peer);
+            expect(rows.at(-1)).toMatchObject({
+                kind: "system",
+                sender: "sb",
+                content: "屏幕共享已拒绝",
+            });
+        }
+    });
+
+    it("records an unanswered call on ring timeout", async () => {
+        const { app, a, b } = await pair();
+        vi.useFakeTimers();
+        try {
+            await app.call(
+                "screen.invite",
+                { to: "sb", kind: "video" },
+                a.user,
+            );
+            vi.advanceTimersByTime(RING_MS);
+            await expect(
+                app.call("screen.state", {}, a.user),
+            ).resolves.toBeNull();
+            for (const [user, peer] of [
+                [a.user, "sb"],
+                [b.user, "sa"],
+            ] as const) {
+                const rows = await history(app, user, peer);
+                expect(rows.at(-1)).toMatchObject({
+                    kind: "system",
+                    sender: "sa",
+                    content: "视频通话无人接听",
+                });
+            }
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("records the duration of an answered call", async () => {
+        const { app, a, b } = await pair();
+        const { callId } = (await app.call(
+            "screen.invite",
+            { to: "sb", kind: "voice" },
+            a.user,
+        )) as { callId: string };
+        await app.call("screen.accept", { callId }, b.user);
+        await app.call("screen.hangup", { callId }, a.user);
+        for (const [user, peer] of [
+            [a.user, "sb"],
+            [b.user, "sa"],
+        ] as const) {
+            const rows = await history(app, user, peer);
+            expect(rows.at(-1)?.content).toMatch(/^语音通话时长 \d{2}:\d{2}$/);
+            expect(rows.at(-1)).toMatchObject({ kind: "system", sender: "sa" });
+        }
+    });
+
+    it("records a call cut off by a disconnect", async () => {
+        const { app, a, b } = await pair();
+        await inviteAndAccept(app, a, b);
+        app.goOffline(b.user.id);
+        await flush();
+        const rows = await history(app, a.user, "sb");
+        expect(rows.at(-1)).toMatchObject({
+            kind: "system",
+            sender: "sa",
+            content: "屏幕共享时长 00:00",
+        });
+    });
+
+    it("records a cancelled call when a ringing caller disconnects", async () => {
+        const { app, a, b } = await pair();
+        await app.call("screen.invite", { to: "sb", kind: "voice" }, a.user);
+        app.goOffline(a.user.id);
+        await flush();
+        const rows = await history(app, b.user, "sa");
+        expect(rows.at(-1)).toMatchObject({
+            kind: "system",
+            sender: "sb",
+            content: "语音通话已取消",
+        });
     });
 });

@@ -7,6 +7,7 @@ import {
     currentChatTarget,
     currentShellPane,
     longPressMenu,
+    messageLabel,
     onChatTarget,
     onShellPane,
     openChat,
@@ -111,5 +112,24 @@ describe("long press menu", () => {
         handlers.onClickCapture(event);
         expect(event.preventDefault).not.toHaveBeenCalled();
         vi.useRealTimers();
+    });
+});
+
+describe("message label", () => {
+    it("maps non-text kinds to bracket labels", () => {
+        expect(messageLabel("notice", "周五开会")).toBe("[群公告]");
+        expect(messageLabel("system", "own 禁言了 mem")).toBeNull();
+        expect(messageLabel("moment", "{}")).toBe("[动态]");
+        expect(messageLabel("merge", "{}")).toBe("[聊天记录]");
+        expect(messageLabel("file", "/files/a", "报告.pdf")).toBe(
+            "[文件] 报告.pdf",
+        );
+    });
+
+    it("keeps plain text and legacy data urls readable", () => {
+        expect(messageLabel("text", "你好")).toBeNull();
+        expect(messageLabel(undefined, "data:image/png;base64,AA")).toBe(
+            "[图片]",
+        );
     });
 });

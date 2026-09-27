@@ -9,6 +9,7 @@ import type {
 import type {
     AccountsStore,
     AuthUser,
+    ChatService,
     ConnInfo,
     GatewayService,
     GroupAclService,
@@ -48,12 +49,13 @@ export const groupPlugin: Plugin = {
     name: "group",
     description: "群组管理 RPC",
     provides: ["group-rpc", "group-acl"],
-    inject: ["gateway", "groups", "accounts", "join-requests"],
+    inject: ["gateway", "groups", "accounts", "join-requests", "chat"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const groups = ctx.get<GroupsStore>("groups");
         const accounts = ctx.get<AccountsStore>("accounts");
         const joinRequests = ctx.get<JoinRequestsStore>("join-requests");
+        const chat = ctx.get<ChatService>("chat");
 
         const memberNames = async (
             memberIds: string[],
@@ -67,7 +69,8 @@ export const groupPlugin: Plugin = {
             meId: string,
         ): Promise<GroupInfo> => {
             const members = await groups.membersOf(row.id);
-            const myRole = members.find((m) => m.userId === meId)?.role ?? null;
+            const mine = members.find((m) => m.userId === meId);
+            const myRole = mine?.role ?? null;
             const manager = myRole === "owner" || myRole === "admin";
             return {
                 id: row.id,
@@ -85,6 +88,7 @@ export const groupPlugin: Plugin = {
                 createdAt: row.createdAt,
                 memberCount: members.length,
                 myRole,
+                myMuted: mine?.muted ?? false,
             };
         };
 
@@ -108,6 +112,23 @@ export const groupPlugin: Plugin = {
             const ids = await groups.memberIdsOf(groupId);
             for (const id of ids)
                 gateway.emitToUser(id, "group:update", { groupId });
+        };
+
+        const say = async (
+            groupId: string,
+            me: AuthUser,
+            kind: "system" | "notice",
+            text: string,
+        ) => {
+            await chat
+                .sendTo(me, `g:${groupId}`, {
+                    content: text,
+                    quote: null,
+                    mentions: null,
+                    kind,
+                    file: null,
+                })
+                .catch(() => undefined);
         };
 
         const notifyAdmins = async (groupId: string, username: string) => {
@@ -213,6 +234,9 @@ export const groupPlugin: Plugin = {
                 .slice(0, 500);
             await groups.setNotice(groupId, clean);
             await notifyMembers(groupId);
+            if (clean) await say(groupId, me, "notice", clean);
+            else if (row.notice)
+                await say(groupId, me, "system", `${me.username} 撤销了群公告`);
             return infoOf({ ...row, notice: clean }, me.id);
         });
 
@@ -225,6 +249,14 @@ export const groupPlugin: Plugin = {
             const { row } = await requireManage(groupId, me);
             await groups.setMuteAll(groupId, !!on);
             await notifyMembers(groupId);
+            await say(
+                groupId,
+                me,
+                "system",
+                on
+                    ? `${me.username} 开启了全员禁言`
+                    : `${me.username} 解除了全员禁言`,
+            );
             return infoOf({ ...row, muteAll: !!on }, me.id);
         });
 
@@ -452,6 +484,14 @@ export const groupPlugin: Plugin = {
                 throw new Error("不能禁言管理员或群主");
             await groups.setMuted(groupId, target.id, !!muted);
             await notifyMembers(groupId);
+            await say(
+                groupId,
+                me,
+                "system",
+                muted
+                    ? `${me.username} 禁言了 ${target.username}`
+                    : `${me.username} 解除了 ${target.username} 的禁言`,
+            );
             return true;
         });
 

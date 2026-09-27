@@ -153,6 +153,7 @@ export const messageLabel = (
     if (type === "file") return fileName ? `[文件] ${fileName}` : "[文件]";
     if (type === "merge") return "[聊天记录]";
     if (type === "moment") return "[动态]";
+    if (type === "notice") return "[群公告]";
     return null;
 };
 

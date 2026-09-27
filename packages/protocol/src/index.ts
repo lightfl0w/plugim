@@ -10,7 +10,9 @@ export type MessageKind =
     | "video"
     | "file"
     | "merge"
-    | "moment";
+    | "moment"
+    | "system"
+    | "notice";
 
 export interface MergedChat {
     sender: string;
@@ -95,6 +97,7 @@ export interface GroupInfo {
     createdAt: string;
     memberCount: number;
     myRole: GroupRole | null;
+    myMuted: boolean;
 }
 
 export interface GroupJoinRequest {

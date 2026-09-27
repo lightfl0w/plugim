@@ -136,6 +136,14 @@ interface Group {
 
 type Row =
     | { kind: "stamp"; key: string; label: string }
+    | { kind: "notice"; key: string; text: string }
+    | {
+          kind: "announce";
+          key: string;
+          text: string;
+          sender: string;
+          at: string;
+      }
     | { kind: "group"; key: string; group: Group };
 
 function toRows(messages: ChatMessage[], me: string): Row[] {
@@ -144,6 +152,27 @@ function toRows(messages: ChatMessage[], me: string): Row[] {
     let lastTs = 0;
     for (const message of messages) {
         const ts = Date.parse(message.createdAt);
+        if (message.kind === "system" || message.kind === "notice") {
+            const announce = message.kind === "notice";
+            current = null;
+            lastTs = ts;
+            rows.push(
+                announce
+                    ? {
+                          kind: "announce",
+                          key: `a-${message.id}`,
+                          text: message.content,
+                          sender: message.sender,
+                          at: message.createdAt,
+                      }
+                    : {
+                          kind: "notice",
+                          key: `n-${message.id}`,
+                          text: message.content,
+                      },
+            );
+            continue;
+        }
         if (
             !current ||
             current.sender !== message.sender ||
@@ -886,7 +915,10 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const lastOwnId = [...messages]
             .reverse()
             .find(
-                (message) => message.sender === me && !message.recalledAt,
+                (message) =>
+                    message.sender === me &&
+                    !message.recalledAt &&
+                    message.kind !== "system",
             )?.id;
 
         const menuItem = (
@@ -1006,6 +1038,36 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                 >
                                     {row.label}
                                 </p>
+                            ) : row.kind === "notice" ? (
+                                <p
+                                    key={row.key}
+                                    className="py-1.5 text-center text-xs text-muted-foreground/80"
+                                >
+                                    {row.text}
+                                </p>
+                            ) : row.kind === "announce" ? (
+                                <button
+                                    key={row.key}
+                                    type="button"
+                                    onClick={() =>
+                                        groupInfo &&
+                                        ctx.emit("ui:group:manage", {
+                                            groupId: groupInfo.id,
+                                        })
+                                    }
+                                    className="mx-auto my-1 flex w-full max-w-md flex-col gap-1 rounded-xl border border-border bg-card px-3 py-2 text-left shadow-sm transition-colors hover:bg-accent/40"
+                                >
+                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                                        <MegaphoneIcon className="size-3.5" />
+                                        群公告
+                                        <span className="ml-auto truncate font-normal text-muted-foreground">
+                                            {row.sender} · {formatStamp(row.at)}
+                                        </span>
+                                    </span>
+                                    <span className="whitespace-pre-wrap break-words text-sm">
+                                        {row.text}
+                                    </span>
+                                </button>
                             ) : (
                                 <MessageGroup key={row.key}>
                                     {row.group.items.map((message) => {

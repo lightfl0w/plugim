@@ -12,6 +12,7 @@ import type {
 import type {
     AccountsStore,
     AuthUser,
+    ChatService,
     ConnInfo,
     FriendsStore,
     GatewayService,
@@ -27,8 +28,11 @@ interface Call {
     toName: string;
     kind: CallKind;
     active: boolean;
+    startedAt?: number;
     timer?: ReturnType<typeof setTimeout>;
 }
+
+type CallOutcome = "cancel" | "decline" | "missed" | "done";
 
 interface Room {
     id: string;
@@ -53,16 +57,32 @@ const GROUP_SIGNAL_TYPES: GroupCallSignal["type"][] = [
 const ROOM_LIMIT = 6;
 const RING_TIMEOUT_MS = 60_000;
 
+const KIND_LABEL: Record<CallKind, string> = {
+    screen: "屏幕共享",
+    voice: "语音通话",
+    video: "视频通话",
+};
+
+const fmtDuration = (ms: number) => {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+};
+
 export const screenPlugin: Plugin = {
     name: "screen",
     description: "通话信令中继(1v1 屏幕共享/语音视频、群组通话)",
     provides: ["screen-rpc"],
-    inject: ["gateway", "accounts", "friendships", "groups", "config"],
+    inject: ["gateway", "accounts", "friendships", "groups", "chat", "config"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const accounts = ctx.get<AccountsStore>("accounts");
         const friendships = ctx.get<FriendsStore>("friendships");
         const groups = ctx.get<GroupsStore>("groups");
+        const chat = ctx.get<ChatService>("chat");
         const config = ctx.get<AppConfig>("config");
 
         const calls = new Map<string, Call>();
@@ -74,6 +94,59 @@ export const screenPlugin: Plugin = {
         const drop = (call: Call) => {
             if (call.timer) clearTimeout(call.timer);
             calls.delete(call.id);
+        };
+
+        const recordP2p = async (
+            call: Call,
+            speaker: AuthUser,
+            text: string,
+        ) => {
+            const other =
+                speaker.id === call.fromId ? call.toName : call.fromName;
+            await chat
+                .sendTo(speaker, `p2p:${other}`, {
+                    content: text,
+                    quote: null,
+                    mentions: null,
+                    kind: "system",
+                    file: null,
+                })
+                .catch(() => undefined);
+        };
+
+        const recordGroup = async (
+            speaker: AuthUser,
+            groupId: string,
+            text: string,
+        ) => {
+            await chat
+                .sendTo(speaker, `g:${groupId}`, {
+                    content: text,
+                    quote: null,
+                    mentions: null,
+                    kind: "system",
+                    file: null,
+                })
+                .catch(() => undefined);
+        };
+
+        const finishCall = async (
+            call: Call,
+            speaker: AuthUser,
+            outcome: CallOutcome,
+        ) => {
+            const label = KIND_LABEL[call.kind];
+            const text =
+                outcome === "cancel"
+                    ? `${label}已取消`
+                    : outcome === "decline"
+                      ? `${label}已拒绝`
+                      : outcome === "missed"
+                        ? `${label}无人接听`
+                        : `${label}时长 ${fmtDuration(
+                              Date.now() - (call.startedAt ?? Date.now()),
+                          )}`;
+            await recordP2p(call, speaker, text);
         };
 
         const forward = (
@@ -160,6 +233,7 @@ export const screenPlugin: Plugin = {
                         from,
                         kind: call.kind,
                     } satisfies ScreenSignal);
+                void finishCall(call, me, "missed");
                 drop(call);
             }, RING_TIMEOUT_MS);
             call.timer.unref?.();
@@ -189,6 +263,7 @@ export const screenPlugin: Plugin = {
                 throw new Error("通话不存在或已结束");
             if (call.timer) clearTimeout(call.timer);
             call.active = true;
+            call.startedAt = Date.now();
             forward(call, me, "accept");
             return true;
         });
@@ -198,6 +273,7 @@ export const screenPlugin: Plugin = {
             const { callId } = raw as unknown as { callId: string };
             const call = calls.get(callId);
             if (!call) return true;
+            if (!call.active) await finishCall(call, me, "decline");
             forward(call, me, "decline");
             drop(call);
             return true;
@@ -210,6 +286,9 @@ export const screenPlugin: Plugin = {
             if (!call) return true;
             if (call.fromId !== me.id && call.toId !== me.id)
                 throw new Error("无权结束该通话");
+            if (call.active) await finishCall(call, me, "done");
+            else if (call.fromId === me.id)
+                await finishCall(call, me, "cancel");
             forward(call, me, "hangup");
             drop(call);
             return true;
@@ -326,6 +405,11 @@ export const screenPlugin: Plugin = {
                     .map((member) => member.userId)
                     .filter((id) => id !== me.id),
             );
+            await recordGroup(
+                me,
+                row.id,
+                `${me.username} 发起了群${KIND_LABEL[callKind]}`,
+            );
             return roomInfo(room);
         });
 
@@ -368,6 +452,11 @@ export const screenPlugin: Plugin = {
             if (room.hostId === me.id || room.members.size === 0) {
                 emitRoom(room, "end", me.username);
                 rooms.delete(room.id);
+                await recordGroup(
+                    me,
+                    room.groupId,
+                    `${me.username} 结束了群通话`,
+                );
                 return true;
             }
             emitRoom(room, "leave", me.username);
@@ -383,6 +472,7 @@ export const screenPlugin: Plugin = {
                 throw new Error("只有发起人可以结束通话");
             emitRoom(room, "end", me.username);
             rooms.delete(room.id);
+            await recordGroup(me, room.groupId, `${me.username} 结束了群通话`);
             return true;
         });
 
@@ -423,9 +513,10 @@ export const screenPlugin: Plugin = {
             return true;
         });
 
-        const cleanupForOffline = (userId: string) => {
+        const cleanupForOffline = async (userId: string) => {
             const call = callOf(userId);
             if (call) {
+                const active = call.active;
                 const goneName =
                     call.fromId === userId ? call.fromName : call.toName;
                 const toId = call.fromId === userId ? call.toId : call.fromId;
@@ -436,6 +527,9 @@ export const screenPlugin: Plugin = {
                     kind: call.kind,
                 } satisfies ScreenSignal);
                 drop(call);
+                const speaker = await accounts.byId(toId);
+                if (speaker)
+                    await finishCall(call, speaker, active ? "done" : "cancel");
             }
             const room = roomOf(userId);
             if (!room) return;
@@ -444,6 +538,13 @@ export const screenPlugin: Plugin = {
             if (room.hostId === userId || room.members.size === 0) {
                 emitRoom(room, "end", goneName);
                 rooms.delete(room.id);
+                const speaker = await accounts.byId(userId);
+                if (speaker)
+                    await recordGroup(
+                        speaker,
+                        room.groupId,
+                        `${goneName} 结束了群通话`,
+                    );
                 return;
             }
             emitRoom(room, "leave", goneName);

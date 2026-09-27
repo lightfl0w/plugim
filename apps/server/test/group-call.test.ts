@@ -1,4 +1,8 @@
-import type { GroupCallEvent, GroupCallSignal } from "@plugim/protocol";
+import type {
+    ChatMessage,
+    GroupCallEvent,
+    GroupCallSignal,
+} from "@plugim/protocol";
 import { describe, expect, it } from "vitest";
 import { createTestApp } from "./helpers";
 
@@ -425,5 +429,81 @@ describe("group call signaling", () => {
         await expect(
             app.call("call.group.start", { groupId: "nope" }, owner.user),
         ).rejects.toThrow("群组不存在");
+    });
+});
+
+describe("group call chat records", () => {
+    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    const history = async (
+        app: App,
+        user: { user: { id: string } },
+        groupId: string,
+    ) =>
+        (await app.call(
+            "history.list",
+            { session: `g:${groupId}` },
+            user.user,
+        )) as ChatMessage[];
+
+    it("posts chat records when a group call starts and ends", async () => {
+        const { app, owner, group } = await setup();
+        const room = await start(app, owner, group.id);
+        expect(await history(app, owner, group.id)).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    kind: "system",
+                    sender: "own",
+                    content: "own 发起了群语音通话",
+                }),
+            ]),
+        );
+        await app.call("call.group.end", { roomId: room.roomId }, owner.user);
+        const rows = await history(app, owner, group.id);
+        expect(rows.at(-1)).toMatchObject({
+            kind: "system",
+            sender: "own",
+            content: "own 结束了群通话",
+        });
+    });
+
+    it("posts a chat record when the host leaves and when a host drops offline", async () => {
+        const { app, owner, invited, group } = await setup();
+        const room = await start(app, owner, group.id, "video");
+        expect(await history(app, invited[0], group.id)).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    content: "own 发起了群视频通话",
+                }),
+            ]),
+        );
+        await app.call(
+            "call.group.join",
+            { roomId: room.roomId },
+            invited[0].user,
+        );
+        await app.call("call.group.leave", { roomId: room.roomId }, owner.user);
+        let rows = await history(app, invited[0], group.id);
+        expect(rows.at(-1)).toMatchObject({
+            kind: "system",
+            sender: "own",
+            content: "own 结束了群通话",
+        });
+
+        const second = await start(app, owner, group.id, "voice");
+        app.setOnline(owner.user);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        app.goOffline(owner.user.id);
+        await flush();
+        rows = await history(app, invited[0], group.id);
+        expect(rows.at(-1)).toMatchObject({
+            kind: "system",
+            sender: "own",
+            content: "own 结束了群通话",
+        });
+        await expect(
+            app.call("call.group.info", { groupId: group.id }, invited[0].user),
+        ).resolves.toBeNull();
+        expect(second.kind).toBe("voice");
     });
 });

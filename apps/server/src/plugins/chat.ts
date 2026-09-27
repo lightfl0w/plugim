@@ -109,6 +109,7 @@ export const chatPlugin: Plugin = {
             if (payload.kind === "video") return "[视频]";
             if (payload.kind === "merge") return "[合并转发]";
             if (payload.kind === "moment") return "[动态分享]";
+            if (payload.kind === "notice") return "[群公告]";
             if (payload.kind === "file")
                 return payload.file?.name
                     ? `[文件] ${payload.file.name}`

@@ -1,5 +1,10 @@
 import type { Context } from "@plugim/core";
-import type { GroupRole, MessageQuote, TypingEvent } from "@plugim/protocol";
+import type {
+    GroupInfo,
+    GroupRole,
+    MessageQuote,
+    TypingEvent,
+} from "@plugim/protocol";
 import { MENTION_ALL, MENTION_ALL_LABEL } from "@plugim/protocol";
 import {
     ImageIcon,
@@ -83,6 +88,7 @@ export const uiComposerSetup = async (ctx: Context) => {
         const [recording, setRecording] = useState(false);
         const [groupMembers, setGroupMembers] = useState<string[]>([]);
         const [canMentionAll, setCanMentionAll] = useState(false);
+        const [muteReason, setMuteReason] = useState<string | null>(null);
         const [typers, setTypers] = useState<Record<string, number>>({});
         const textareaRef = useRef<HTMLTextAreaElement>(null);
         const fileRef = useRef<HTMLInputElement>(null);
@@ -137,26 +143,40 @@ export const uiComposerSetup = async (ctx: Context) => {
             const load = () => {
                 if (!currentSession.startsWith("g:")) {
                     setGroupMembers([]);
+                    setCanMentionAll(false);
+                    setMuteReason(null);
                     return;
                 }
-                void rpc
-                    .call("group.members", {
-                        groupId: currentSession.slice(2),
-                    })
-                    .then((result) => {
-                        const { members } = result as {
+                const groupId = currentSession.slice(2);
+                void Promise.all([
+                    rpc.call("group.members", { groupId }),
+                    rpc.call("group.info", { groupId }),
+                ])
+                    .then(([memberResult, infoResult]) => {
+                        const { members } = memberResult as {
                             members: { username: string; role: GroupRole }[];
                         };
+                        const info = infoResult as GroupInfo;
                         setGroupMembers(members.map((m) => m.username));
                         const me = auth.user()?.username ?? "";
                         const mine = members.find((m) => m.username === me);
-                        setCanMentionAll(
-                            mine?.role === "owner" || mine?.role === "admin",
+                        const privileged =
+                            mine?.role === "owner" || mine?.role === "admin";
+                        setCanMentionAll(privileged);
+                        setMuteReason(
+                            privileged
+                                ? null
+                                : info.myMuted
+                                  ? "你已被禁言，暂时无法发言"
+                                  : info.muteAll
+                                    ? "全员禁言中，仅群主和管理员可发言"
+                                    : null,
                         );
                     })
                     .catch(() => {
                         setGroupMembers([]);
                         setCanMentionAll(false);
+                        setMuteReason(null);
                     });
             };
             load();
@@ -177,6 +197,7 @@ export const uiComposerSetup = async (ctx: Context) => {
 
         const notifyTyping = (value: string) => {
             if (!value.trim() || !currentSession || status !== "open") return;
+            if (muteReason !== null) return;
             const now = Date.now();
             if (now - typingAtRef.current < 2500) return;
             typingAtRef.current = now;
@@ -190,6 +211,7 @@ export const uiComposerSetup = async (ctx: Context) => {
             .map((key) => key.slice(currentSession.length + 1));
 
         const isGroup = currentSession.startsWith("g:");
+        const muted = muteReason !== null;
         const mentionMatch = isGroup ? MENTION_TOKEN_RE.exec(draft) : null;
         const mentionQuery = mentionMatch?.[2]?.toLowerCase() ?? null;
         const mentionPool = isGroup ? groupMembers : [];
@@ -235,7 +257,7 @@ export const uiComposerSetup = async (ctx: Context) => {
 
         const submit = async () => {
             const content = draft.trim();
-            if (!content || sending || !currentSession) return;
+            if (!content || sending || !currentSession || muted) return;
             setSending(true);
             try {
                 await sender.send(
@@ -333,13 +355,15 @@ export const uiComposerSetup = async (ctx: Context) => {
             icon: ReactNode,
             onClick: () => void,
             active = false,
+            disabled = false,
         ) => (
             <button
                 type="button"
                 title={title}
                 onClick={onClick}
+                disabled={disabled}
                 className={cn(
-                    "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+                    "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
                     active && "bg-red-50 text-red-500 hover:bg-red-100",
                 )}
             >
@@ -423,6 +447,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                         <SmileIcon className="size-5" />,
                         () => setEmojiOpen((v) => !v),
                         emojiOpen,
+                        muted,
                     )}
                     {toolButton(
                         "图片",
@@ -432,6 +457,8 @@ export const uiComposerSetup = async (ctx: Context) => {
                                 fileRef.current.accept = "image/*";
                             fileRef.current?.click();
                         },
+                        false,
+                        muted,
                     )}
                     {toolButton(
                         "文件",
@@ -442,6 +469,8 @@ export const uiComposerSetup = async (ctx: Context) => {
                                     "audio/*,video/*,.pdf,.zip,.rar,.7z,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
                             fileRef.current?.click();
                         },
+                        false,
+                        muted,
                     )}
                     {toolButton(
                         recording ? "停止录音并发送" : "语音消息",
@@ -452,6 +481,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                         ),
                         () => void toggleRecording(),
                         recording,
+                        muted && !recording,
                     )}
                     {recording ? (
                         <span className="ml-1 animate-pulse text-xs text-red-500">
@@ -474,11 +504,12 @@ export const uiComposerSetup = async (ctx: Context) => {
                     ref={textareaRef}
                     value={draft}
                     placeholder={
-                        status === "open"
+                        muteReason ??
+                        (status === "open"
                             ? "输入消息，Enter 发送，Shift+Enter 换行"
-                            : "等待连接..."
+                            : "等待连接...")
                     }
-                    disabled={status !== "open"}
+                    disabled={status !== "open" || muted}
                     rows={2}
                     className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground"
                     onChange={(e) => {
@@ -529,14 +560,23 @@ export const uiComposerSetup = async (ctx: Context) => {
                                 ? `${typingNames.slice(0, 2).join("、")}${typingNames.length > 2 ? " 等" : ""} 正在输入...`
                                 : "对方正在输入..."}
                         </span>
+                    ) : muteReason ? (
+                        <span className="mr-auto text-xs text-red-500">
+                            {muteReason}
+                        </span>
                     ) : null}
                     <span className="text-xs text-muted-foreground/70">
-                        Enter 发送 / Shift+Enter 换行
+                        {muteReason ? "" : "Enter 发送 / Shift+Enter 换行"}
                     </span>
                     <Button
                         size="sm"
                         className="rounded-md px-4"
-                        disabled={status !== "open" || sending || !draft.trim()}
+                        disabled={
+                            status !== "open" ||
+                            sending ||
+                            muted ||
+                            !draft.trim()
+                        }
                         onClick={() => void submit()}
                     >
                         {sending ? "发送中" : "发送(S)"}
