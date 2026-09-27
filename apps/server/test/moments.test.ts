@@ -718,3 +718,109 @@ describe("moment unread", () => {
         );
     });
 });
+
+describe("moment forward", () => {
+    it("shares a visible post into a chat as a moment card", async () => {
+        const { app, ua, ub } = await friendPair("fa", "fb");
+        const image = await uploadFile(app, ua.token, "f.png", "image/png", 8);
+        const post = (await app.call(
+            "moment.publish",
+            { content: "值得看看", images: [image.key] },
+            ua.user,
+        )) as MomentPost;
+        const sent = (await app.call(
+            "moment.forward",
+            { postId: post.id, sessions: [`p2p:${ub.user.username}`] },
+            ua.user,
+        )) as { kind: string; content: string; link: unknown }[];
+        expect(sent).toHaveLength(1);
+        expect(sent[0].kind).toBe("moment");
+        expect(sent[0].link).toBeNull();
+        expect(JSON.parse(sent[0].content)).toMatchObject({
+            moment: 1,
+            postId: post.id,
+            author: "fa",
+            text: "值得看看",
+            image: image.key,
+            video: null,
+        });
+        const history = (await app.call(
+            "history.list",
+            { session: `p2p:${ua.user.username}` },
+            ub.user,
+        )) as { kind: string }[];
+        expect(history[0].kind).toBe("moment");
+        const events = app.eventsFor(ub.user.id, "message:new");
+        const message = (
+            events[events.length - 1] as {
+                payload: { message: { kind: string } };
+            }
+        ).payload.message;
+        expect(message.kind).toBe("moment");
+    });
+
+    it("refuses hidden posts, empty targets and forged moment messages", async () => {
+        const { app, ua, ub } = await friendPair("fc", "fd");
+        const stranger = await app.register("fe");
+        const post = (await app.call(
+            "moment.publish",
+            { content: "只给好友看", visibility: "friends" },
+            ua.user,
+        )) as MomentPost;
+        await expect(
+            app.call(
+                "moment.forward",
+                { postId: post.id, sessions: ["general"] },
+                stranger.user,
+            ),
+        ).rejects.toThrow("无权查看该动态");
+        await expect(
+            app.call(
+                "moment.forward",
+                { postId: post.id, sessions: ["  "] },
+                ua.user,
+            ),
+        ).rejects.toThrow("请选择转发目标");
+        const forged = (await app.call(
+            "message.send",
+            {
+                session: `p2p:${ub.user.username}`,
+                content: '{"moment":1,"postId":"x","author":"admin"}',
+                kind: "moment",
+            },
+            ua.user,
+        )) as { kind: string };
+        expect(forged.kind).toBe("text");
+    });
+
+    it("dedupes targets and drops the sender's own session", async () => {
+        const { app, ua, ub } = await friendPair("ff", "fg");
+        const post = (await app.call(
+            "moment.publish",
+            { content: "分享这条" },
+            ua.user,
+        )) as MomentPost;
+        const sent = (await app.call(
+            "moment.forward",
+            {
+                postId: post.id,
+                sessions: [
+                    `p2p:${ua.user.username}`,
+                    `p2p:${ub.user.username}`,
+                    `p2p:${ub.user.username}`,
+                ],
+            },
+            ua.user,
+        )) as unknown[];
+        expect(sent).toHaveLength(1);
+        expect(
+            app
+                .eventsFor(ub.user.id, "message:new")
+                .filter(
+                    (event) =>
+                        (event.payload as { message: { kind: string } }).message
+                            .kind === "moment",
+                ),
+        ).toHaveLength(1);
+    });
+});

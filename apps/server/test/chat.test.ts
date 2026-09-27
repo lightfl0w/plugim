@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthUser } from "../src/types";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -597,5 +597,98 @@ describe("message search", () => {
         await expect(
             app.call("message.search", { keyword: "hi" }, null),
         ).rejects.toThrow("未登录");
+    });
+});
+
+const HOST = "93.184.216.34";
+
+const stubPage = () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: URL) => {
+        calls.push(input.href);
+        return new Response(
+            '<html><head><meta property="og:title" content="链接标题"><meta property="og:site_name" content="链接站点"></head></html>',
+            { headers: { "content-type": "text/html; charset=utf-8" } },
+        );
+    });
+    return calls;
+};
+
+describe("chat link cards", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("attaches the preview to the stored and delivered message", async () => {
+        const { app, ua, ub } = await friendPair("la", "lb");
+        const calls = stubPage();
+        const sent = (await app.call(
+            "message.send",
+            { session: "p2p:lb", content: `看看 http://${HOST}/post` },
+            ua.user,
+        )) as { link: { title: string; site: string; url: string } | null };
+        expect(calls).toEqual([`http://${HOST}/post`]);
+        expect(sent.link).toMatchObject({
+            title: "链接标题",
+            site: "链接站点",
+            url: `http://${HOST}/post`,
+        });
+        const event = app.eventsFor(ub.user.id, "message:new")[0] as {
+            payload: { message: { link: { title: string } | null } };
+        };
+        expect(event.payload.message.link?.title).toBe("链接标题");
+        const history = (await app.call(
+            "history.list",
+            { session: "p2p:la" },
+            ub.user,
+        )) as { link: { title: string } | null }[];
+        expect(history[0].link?.title).toBe("链接标题");
+    });
+
+    it("sends the message unchanged when the preview fails", async () => {
+        const { app, ua } = await friendPair("lc", "ld");
+        vi.stubGlobal("fetch", async () => {
+            throw new Error("boom");
+        });
+        const sent = (await app.call(
+            "message.send",
+            { session: "p2p:ld", content: `挂了 http://${HOST}/x` },
+            ua.user,
+        )) as { content: string; link: unknown };
+        expect(sent.content).toBe(`挂了 http://${HOST}/x`);
+        expect(sent.link).toBeNull();
+    });
+
+    it("never fetches for plain text or media messages", async () => {
+        const { app, ua } = await friendPair("le", "lf");
+        const calls = stubPage();
+        await app.call(
+            "message.send",
+            { session: "p2p:lf", content: "普通消息 https:// 不算链接" },
+            ua.user,
+        );
+        await app.call(
+            "message.send",
+            {
+                session: "p2p:lf",
+                content: `http://${HOST}/file`,
+                kind: "file",
+                file: { name: "a.txt", size: 3 },
+            },
+            ua.user,
+        );
+        expect(calls).toEqual([]);
+    });
+
+    it("refuses to preview an internal address without failing the send", async () => {
+        const { app, ua } = await friendPair("lg", "lh");
+        const calls = stubPage();
+        const sent = (await app.call(
+            "message.send",
+            { session: "p2p:lh", content: "看 http://127.0.0.1/admin" },
+            ua.user,
+        )) as { link: unknown };
+        expect(sent.link).toBeNull();
+        expect(calls).toEqual([]);
     });
 });

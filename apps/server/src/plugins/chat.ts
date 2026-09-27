@@ -3,6 +3,7 @@ import type {
     ChatMessage,
     FileMeta,
     HistoryParams,
+    LinkPreview,
     MergePayload,
     MessageKind,
     MessageSearchParams,
@@ -21,6 +22,7 @@ import type {
     FriendsStore,
     GatewayService,
     GroupsStore,
+    LinkPreviewService,
     MessageStore,
     ReadsStore,
 } from "../types";
@@ -43,6 +45,8 @@ const KINDS: MessageKind[] = [
     "merge",
 ];
 
+const LINK_BUDGET_MS = 2000;
+
 export const chatPlugin: Plugin = {
     name: "chat",
     description: "消息收发、历史查询与回执",
@@ -56,6 +60,7 @@ export const chatPlugin: Plugin = {
         "groups",
         "reads",
         "push",
+        "link-preview",
     ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
@@ -66,6 +71,7 @@ export const chatPlugin: Plugin = {
         const groups = ctx.get<GroupsStore>("groups");
         const reads = ctx.get<ReadsStore>("reads");
         const push = ctx.get<PushService>("push");
+        const linkPreview = ctx.get<LinkPreviewService>("link-preview");
 
         const resolveP2p = async (me: AuthUser, rawSession: string) => {
             const peerName = rawSession.slice(4).trim();
@@ -101,6 +107,7 @@ export const chatPlugin: Plugin = {
             if (payload.kind === "audio") return "[语音]";
             if (payload.kind === "video") return "[视频]";
             if (payload.kind === "merge") return "[合并转发]";
+            if (payload.kind === "moment") return "[动态分享]";
             if (payload.kind === "file")
                 return payload.file?.name
                     ? `[文件] ${payload.file.name}`
@@ -108,17 +115,40 @@ export const chatPlugin: Plugin = {
             return payload.content.slice(0, 80);
         };
 
+        const linkOf = async (
+            payload: ChatSendPayload,
+        ): Promise<LinkPreview | null> => {
+            if (payload.kind !== "text" || !payload.content.includes("://"))
+                return null;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const budget = new Promise<LinkPreview | null>((resolve) => {
+                timer = setTimeout(() => resolve(null), LINK_BUDGET_MS);
+            });
+            try {
+                return await Promise.race([
+                    linkPreview.previewOfText(payload.content),
+                    budget,
+                ]);
+            } catch {
+                return null;
+            } finally {
+                clearTimeout(timer);
+            }
+        };
+
         const sendTo = async (
             user: AuthUser,
             rawSession: string,
             payload: ChatSendPayload,
         ): Promise<ChatMessage> => {
+            const link = await linkOf(payload);
             if (rawSession.startsWith("p2p:")) {
                 const peer = await resolveP2p(user, rawSession);
                 const saved = await store.save({
                     session: p2pKey(user.username, peer.username),
                     sender: user.username,
                     ...payload,
+                    link,
                 });
                 const mine: ChatMessage = {
                     ...saved,
@@ -154,6 +184,7 @@ export const chatPlugin: Plugin = {
                     session: rawSession,
                     sender: user.username,
                     ...payload,
+                    link,
                 });
                 const ids = await groups.memberIdsOf(row.id);
                 for (const id of ids)
@@ -175,6 +206,7 @@ export const chatPlugin: Plugin = {
                 session: rawSession,
                 sender: user.username,
                 ...payload,
+                link,
             });
             gateway.broadcast("message:new", { message: saved });
             push.deliverAll(
@@ -331,7 +363,9 @@ export const chatPlugin: Plugin = {
                                   sender: m.sender,
                                   content:
                                       m.kind && m.kind !== "text"
-                                          ? `[${m.kind}]`
+                                          ? m.kind === "moment"
+                                              ? "[动态]"
+                                              : `[${m.kind}]`
                                           : m.content.slice(0, 500),
                                   kind: m.kind ?? "text",
                                   createdAt: m.createdAt,

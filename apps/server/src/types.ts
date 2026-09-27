@@ -2,9 +2,9 @@ import type {
     ChatMessage,
     FileMeta,
     GroupRole,
+    LinkPreview,
     MessageKind,
     MessageQuote,
-    MomentLink,
     MomentVisibility,
     User,
 } from "@plugim/protocol";
@@ -55,6 +55,7 @@ export interface MessageStore {
         mentions?: string[] | null;
         kind?: MessageKind;
         file?: FileMeta | null;
+        link?: LinkPreview | null;
     }): Promise<ChatMessage>;
     list(
         session: string,
@@ -280,7 +281,7 @@ export interface MomentRow {
     content: string;
     images: string[];
     video: string | null;
-    link: MomentLink | null;
+    link: LinkPreview | null;
     visibility: MomentVisibility;
     audience: string[];
     createdAt: string;
@@ -311,7 +312,7 @@ export interface MomentsStore {
         content: string;
         images: string[];
         video: string | null;
-        link: MomentLink | null;
+        link: LinkPreview | null;
         visibility: MomentVisibility;
         audience: string[];
     }): Promise<MomentRow>;
@@ -336,6 +337,12 @@ export interface MomentsStore {
         content: string;
     }): Promise<MomentCommentRow>;
     commentsOf(postIds: string[]): Promise<MomentCommentRow[]>;
+}
+
+export interface LinkPreviewService {
+    preview(rawUrl: unknown): Promise<LinkPreview>;
+    previewOfText(content: string): Promise<LinkPreview | null>;
+    clear(): void;
 }
 
 export interface FriendEdge {

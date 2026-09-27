@@ -27,7 +27,15 @@ export interface AppConfig {
     s3SecretKey: string;
     s3PathStyle: string;
     s3PublicBase: string;
+    linkAllowHosts: string[];
+    linkDenyHosts: string[];
 }
+
+const listHosts = (raw: string | undefined): string[] =>
+    (raw ?? "")
+        .split(",")
+        .map((host) => host.trim().toLowerCase().replace(/^\.+/, ""))
+        .filter(Boolean);
 
 export const configPlugin: Plugin = {
     name: "config",
@@ -98,6 +106,8 @@ export const configPlugin: Plugin = {
             s3SecretKey: process.env.PLUGIM_S3_SECRET_KEY ?? "",
             s3PathStyle: process.env.PLUGIM_S3_PATH_STYLE ?? "",
             s3PublicBase: process.env.PLUGIM_S3_PUBLIC_BASE ?? "",
+            linkAllowHosts: listHosts(process.env.PLUGIM_LINK_ALLOW_HOSTS),
+            linkDenyHosts: listHosts(process.env.PLUGIM_LINK_DENY_HOSTS),
         });
         return undefined;
     },

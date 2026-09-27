@@ -1,5 +1,10 @@
 import type { Context } from "@plugim/core";
-import type { ChatMessage, GroupInfo, MergePayload } from "@plugim/protocol";
+import type {
+    ChatMessage,
+    GroupInfo,
+    MergePayload,
+    MomentShare,
+} from "@plugim/protocol";
 import { MENTION_ALL, MENTION_ALL_LABEL } from "@plugim/protocol";
 import {
     AlertCircleIcon,
@@ -71,6 +76,18 @@ const parseMerge = (message: ChatMessage): MergePayload | null => {
     try {
         const parsed = JSON.parse(message.content) as MergePayload;
         return parsed?.merge === 1 && Array.isArray(parsed.list)
+            ? parsed
+            : null;
+    } catch {
+        return null;
+    }
+};
+
+const parseMomentShare = (message: ChatMessage): MomentShare | null => {
+    if (message.kind !== "moment") return null;
+    try {
+        const parsed = JSON.parse(message.content) as MomentShare;
+        return parsed?.moment === 1 && typeof parsed.postId === "string"
             ? parsed
             : null;
     } catch {
@@ -1005,6 +1022,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                             );
                                         }
                                         const media = mediaKind(message);
+                                        const share = parseMomentShare(message);
                                         const bare =
                                             media === "image" ||
                                             media === "video" ||
@@ -1240,6 +1258,57 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                                     </audio>
                                                                 </div>
                                                             ) : media ===
+                                                              "moment" ? (
+                                                                share ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        title="查看这条动态"
+                                                                        className={cn(
+                                                                            "flex w-60 flex-col gap-1.5 rounded-lg p-2 text-left",
+                                                                            mine
+                                                                                ? "bg-white/15"
+                                                                                : "bg-black/5 dark:bg-white/10",
+                                                                        )}
+                                                                        onClick={() =>
+                                                                            ctx.emit(
+                                                                                "ui:moments:open",
+                                                                                {
+                                                                                    author: share.author,
+                                                                                },
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <span className="text-xs opacity-70">
+                                                                            朋友圈
+                                                                            ·{" "}
+                                                                            {
+                                                                                share.author
+                                                                            }
+                                                                        </span>
+                                                                        {share.text ? (
+                                                                            <span className="line-clamp-2 text-sm">
+                                                                                {
+                                                                                    share.text
+                                                                                }
+                                                                            </span>
+                                                                        ) : null}
+                                                                        {share.image ? (
+                                                                            <img
+                                                                                src={`/files/${share.image}`}
+                                                                                alt=""
+                                                                                loading="lazy"
+                                                                                className="max-h-40 w-full rounded object-cover"
+                                                                            />
+                                                                        ) : null}
+                                                                    </button>
+                                                                ) : (
+                                                                    <p className="whitespace-pre-wrap">
+                                                                        {
+                                                                            message.content
+                                                                        }
+                                                                    </p>
+                                                                )
+                                                            ) : media ===
                                                               "file" ? (
                                                                 <button
                                                                     type="button"
@@ -1295,6 +1364,68 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                                     )}
                                                                 </p>
                                                             )}
+                                                            {message.link ? (
+                                                                <a
+                                                                    href={
+                                                                        message
+                                                                            .link
+                                                                            .url
+                                                                    }
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    onClick={(
+                                                                        event,
+                                                                    ) =>
+                                                                        event.stopPropagation()
+                                                                    }
+                                                                    className={cn(
+                                                                        "mt-1.5 flex w-60 items-center gap-2.5 overflow-hidden rounded-lg p-2 text-left",
+                                                                        mine
+                                                                            ? "bg-white/15"
+                                                                            : "bg-black/5 dark:bg-white/10",
+                                                                    )}
+                                                                >
+                                                                    {message
+                                                                        .link
+                                                                        .image ? (
+                                                                        <img
+                                                                            src={
+                                                                                message
+                                                                                    .link
+                                                                                    .image
+                                                                            }
+                                                                            alt=""
+                                                                            loading="lazy"
+                                                                            referrerPolicy="no-referrer"
+                                                                            className="size-12 shrink-0 rounded object-cover"
+                                                                        />
+                                                                    ) : null}
+                                                                    <span className="min-w-0 flex-1">
+                                                                        <span className="block truncate text-sm">
+                                                                            {
+                                                                                message
+                                                                                    .link
+                                                                                    .title
+                                                                            }
+                                                                        </span>
+                                                                        <span
+                                                                            className={cn(
+                                                                                "mt-0.5 block truncate text-xs",
+                                                                                mine
+                                                                                    ? "text-white/70"
+                                                                                    : "text-muted-foreground",
+                                                                            )}
+                                                                        >
+                                                                            {message
+                                                                                .link
+                                                                                .description ||
+                                                                                message
+                                                                                    .link
+                                                                                    .site}
+                                                                        </span>
+                                                                    </span>
+                                                                </a>
+                                                            ) : null}
                                                             {message.quote ? (
                                                                 <div
                                                                     className={

@@ -12,6 +12,7 @@ import { friendsPlugin } from "../src/plugins/friends";
 import { groupPlugin } from "../src/plugins/group";
 import { groupFilesPlugin } from "../src/plugins/group-files";
 import { installPlugin } from "../src/plugins/install";
+import { linkPreviewPlugin } from "../src/plugins/link-preview";
 import { momentsPlugin } from "../src/plugins/moments";
 import { pushPlugin } from "../src/plugins/push";
 import { screenPlugin } from "../src/plugins/screen";
@@ -125,6 +126,8 @@ export const createTestApp = async (
         s3SecretKey: "",
         s3PathStyle: "",
         s3PublicBase: "",
+        linkAllowHosts: [],
+        linkDenyHosts: [],
     });
 
     ctx.plugin(storagePlugin);
@@ -136,6 +139,7 @@ export const createTestApp = async (
     ctx.plugin(groupFilesPlugin);
     ctx.plugin(pushPlugin);
     ctx.plugin(chatPlugin);
+    ctx.plugin(linkPreviewPlugin);
     ctx.plugin(momentsPlugin);
     ctx.plugin(screenPlugin);
     ctx.plugin(adminPlugin);

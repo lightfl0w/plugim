@@ -152,6 +152,7 @@ export const messageLabel = (
     if (type === "video") return "[视频]";
     if (type === "file") return fileName ? `[文件] ${fileName}` : "[文件]";
     if (type === "merge") return "[聊天记录]";
+    if (type === "moment") return "[动态]";
     return null;
 };
 

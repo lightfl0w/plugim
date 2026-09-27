@@ -4,8 +4,8 @@ import type { Plugin } from "@plugim/core";
 import type {
     FileMeta,
     GroupRole,
+    LinkPreview,
     MessageQuote,
-    MomentLink,
     MomentVisibility,
 } from "@plugim/protocol";
 import Database from "better-sqlite3";
@@ -81,6 +81,7 @@ const messagesSqlite = sqliteTable("messages", {
     mentions: sqliteText("mentions"),
     kind: sqliteText("kind"),
     file: sqliteText("file"),
+    link: sqliteText("link"),
 });
 
 const messagesPg = pgTable("messages", {
@@ -96,6 +97,7 @@ const messagesPg = pgTable("messages", {
     mentions: pgText("mentions"),
     kind: pgText("kind"),
     file: pgText("file"),
+    link: pgText("link"),
 });
 
 const usersSqlite = sqliteTable("users", {
@@ -451,7 +453,8 @@ CREATE TABLE IF NOT EXISTS messages (
   quote TEXT,
   mentions TEXT,
   kind TEXT,
-  file TEXT
+  file TEXT,
+  link TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -585,7 +588,8 @@ CREATE TABLE IF NOT EXISTS messages (
   quote TEXT,
   mentions TEXT,
   kind TEXT,
-  file TEXT
+  file TEXT,
+  link TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -777,10 +781,10 @@ const toVisibility = (value: string): MomentVisibility =>
         ? value
         : "public";
 
-const parseLink = (raw: unknown): MomentLink | null => {
+const parseLink = (raw: unknown): LinkPreview | null => {
     if (typeof raw !== "string" || !raw) return null;
     try {
-        const parsed = JSON.parse(raw) as Partial<MomentLink>;
+        const parsed = JSON.parse(raw) as Partial<LinkPreview>;
         if (
             typeof parsed?.url === "string" &&
             typeof parsed?.title === "string"
@@ -933,6 +937,7 @@ interface MessageDbRow {
     mentions: string | null;
     kind: string | null;
     file: string | null;
+    link: string | null;
 }
 
 const messageRowToChat = (row: MessageDbRow) => ({
@@ -946,6 +951,7 @@ const messageRowToChat = (row: MessageDbRow) => ({
     mentions: parseMentions(row.mentions),
     kind: (row.kind ?? "text") as "text",
     file: parseFile(row.file),
+    link: parseLink(row.link),
 });
 
 export const storagePlugin: Plugin = {
@@ -996,6 +1002,9 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS file TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS link TEXT",
             );
             await client.unsafe(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE",
@@ -1094,7 +1103,7 @@ export const storagePlugin: Plugin = {
             store = {
                 async save(input) {
                     const id = crypto.randomUUID();
-                    const { quote, mentions, file, ...rest } = input;
+                    const { quote, mentions, file, link, ...rest } = input;
                     const rows = await db
                         .insert(messagesPg)
                         .values({
@@ -1103,6 +1112,7 @@ export const storagePlugin: Plugin = {
                             quote: serializeQuote(quote),
                             mentions: serializeMentions(mentions),
                             file: file ? JSON.stringify(file) : null,
+                            link: link ? JSON.stringify(link) : null,
                         })
                         .returning();
                     return messageRowToChat(rows[0]);
@@ -2215,6 +2225,7 @@ export const storagePlugin: Plugin = {
                 "mentions",
                 "kind",
                 "file",
+                "link",
             ]) {
                 if (!messageColumns.some((item) => item.name === col)) {
                     const type = col === "recalled_at" ? "INTEGER" : "TEXT";
@@ -2325,13 +2336,20 @@ export const storagePlugin: Plugin = {
                 async save(input) {
                     const id = crypto.randomUUID();
                     const now = Date.now();
-                    const { quote, mentions, file: meta, ...rest } = input;
+                    const {
+                        quote,
+                        mentions,
+                        file: meta,
+                        link,
+                        ...rest
+                    } = input;
                     await db.insert(messagesSqlite).values({
                         id,
                         ...rest,
                         quote: serializeQuote(quote),
                         mentions: serializeMentions(mentions),
                         file: meta ? JSON.stringify(meta) : null,
+                        link: link ? JSON.stringify(link) : null,
                         createdAt: now,
                     });
                     return {
@@ -2340,6 +2358,7 @@ export const storagePlugin: Plugin = {
                         quote: quote ?? null,
                         mentions: mentions ?? null,
                         file: meta ?? null,
+                        link: link ?? null,
                         createdAt: new Date(now).toISOString(),
                         recalledAt: null,
                     };

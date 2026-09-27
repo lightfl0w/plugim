@@ -9,7 +9,8 @@ export type MessageKind =
     | "audio"
     | "video"
     | "file"
-    | "merge";
+    | "merge"
+    | "moment";
 
 export interface MergedChat {
     sender: string;
@@ -44,6 +45,7 @@ export interface ChatMessage {
     mentions?: string[] | null;
     kind?: MessageKind;
     file?: FileMeta | null;
+    link?: LinkPreview | null;
 }
 
 export interface User {
@@ -304,7 +306,7 @@ export interface MomentComment {
     createdAt: string;
 }
 
-export interface MomentLink {
+export interface LinkPreview {
     url: string;
     title: string;
     description: string;
@@ -318,7 +320,7 @@ export interface MomentPost {
     content: string;
     images: string[];
     video: string | null;
-    link: MomentLink | null;
+    link: LinkPreview | null;
     visibility: MomentVisibility;
     audience: string[];
     createdAt: string;
@@ -326,7 +328,7 @@ export interface MomentPost {
     comments: MomentComment[];
 }
 
-export interface MomentLinkParams {
+export interface LinkPreviewParams {
     url: string;
 }
 
@@ -353,6 +355,20 @@ export interface MomentTimelineResult {
 
 export interface MomentTargetParams {
     postId: string;
+}
+
+export interface MomentShare {
+    moment: 1;
+    postId: string;
+    author: string;
+    text: string;
+    image: string | null;
+    video: string | null;
+}
+
+export interface MomentForwardParams {
+    postId: string;
+    sessions: string[];
 }
 
 export interface MomentLikeParams {

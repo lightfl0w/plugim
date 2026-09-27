@@ -1,7 +1,7 @@
 import type { Context } from "@plugim/core";
 import type {
     ChatMessage,
-    MomentLink,
+    LinkPreview,
     MomentPost,
     MomentVisibility,
 } from "@plugim/protocol";
@@ -13,6 +13,7 @@ import {
     ImagePlusIcon,
     MessageCircleIcon,
     RefreshCwIcon,
+    ShareIcon,
     Trash2Icon,
     XIcon,
 } from "lucide-react";
@@ -25,6 +26,7 @@ import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { FriendsService } from "./friends";
+import type { GroupsService } from "./groups";
 import type { MomentsService } from "./moments";
 import type { SenderService } from "./sender";
 import { displayName } from "./ui-shared";
@@ -112,6 +114,7 @@ export const uiMomentsSetup = async (ctx: Context) => {
     const sender = ctx.get<SenderService>("sender");
     const auth = ctx.get<AuthService>("auth");
     const friendService = ctx.get<FriendsService>("friends");
+    const groupService = ctx.get<GroupsService>("groups");
 
     const useMomentsState = () =>
         useSyncExternalStore(
@@ -137,6 +140,13 @@ export const uiMomentsSetup = async (ctx: Context) => {
             (cb) => friendService.onUpdate(cb),
             () => friendService.cached()?.friends ?? EMPTY_NAMES,
             () => friendService.cached()?.friends ?? EMPTY_NAMES,
+        );
+
+    const useGroups = () =>
+        useSyncExternalStore(
+            (cb) => groupService.onUpdate(cb),
+            () => groupService.cached(),
+            () => groupService.cached(),
         );
 
     const AudienceDialog = ({
@@ -222,6 +232,159 @@ export const uiMomentsSetup = async (ctx: Context) => {
         );
     };
 
+    const ShareDialog = ({
+        post,
+        onClose,
+    }: {
+        post: MomentPost;
+        onClose: () => void;
+    }) => {
+        const names = useFriendNames();
+        const groups = useGroups();
+        const [picked, setPicked] = useState<string[]>([]);
+        const [busy, setBusy] = useState(false);
+        const [error, setError] = useState("");
+        const remarks = friendService.cached()?.remarks ?? {};
+        const targets = [
+            ...names.map((username) => ({
+                key: `p2p:${username}`,
+                label: displayName(username, remarks),
+                group: "好友" as const,
+            })),
+            ...(groups ?? []).map((group) => ({
+                key: `g:${group.id}`,
+                label: group.name,
+                group: "群组" as const,
+            })),
+        ];
+
+        useEffect(() => {
+            void friendService.refresh().catch(() => undefined);
+            void groupService.refresh().catch(() => undefined);
+        }, []);
+
+        const toggle = (key: string) =>
+            setPicked((prev) =>
+                prev.includes(key)
+                    ? prev.filter((item) => item !== key)
+                    : [...prev, key],
+            );
+
+        const submit = async () => {
+            setBusy(true);
+            setError("");
+            try {
+                await moments.forward(post.id, picked);
+                onClose();
+            } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+            } finally {
+                setBusy(false);
+            }
+        };
+
+        const summary =
+            post.content ||
+            (post.images.length
+                ? `[图片 ${post.images.length} 张]`
+                : post.video
+                  ? "[视频动态]"
+                  : "[动态]");
+
+        return (
+            <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                role="dialog"
+                aria-modal="true"
+                aria-label="分享动态"
+                onClick={(event) => {
+                    if (event.target === event.currentTarget) onClose();
+                }}
+                onKeyDown={(event) => {
+                    if (event.key === "Escape") onClose();
+                }}
+            >
+                <div className="flex max-h-[70vh] w-full max-w-sm flex-col rounded-xl border border-border bg-card shadow-xl">
+                    <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                        <p className="flex-1 text-sm font-semibold">分享动态</p>
+                        <button
+                            type="button"
+                            aria-label="关闭"
+                            className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+                            onClick={onClose}
+                        >
+                            <XIcon className="size-4" />
+                        </button>
+                    </div>
+                    <p className="truncate border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+                        {post.author}: {summary}
+                    </p>
+                    <div className="min-h-0 flex-1 overflow-y-auto py-1">
+                        {targets.length === 0 ? (
+                            <p className="py-8 text-center text-xs text-muted-foreground">
+                                还没有可分享的会话
+                            </p>
+                        ) : null}
+                        {(["好友", "群组"] as const).map((label) => {
+                            const items = targets.filter(
+                                (target) => target.group === label,
+                            );
+                            if (items.length === 0) return null;
+                            return (
+                                <div key={label}>
+                                    <p className="px-4 pt-2 pb-1 text-xs font-semibold text-muted-foreground">
+                                        {label}
+                                    </p>
+                                    {items.map((target) => (
+                                        <button
+                                            key={target.key}
+                                            type="button"
+                                            className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-accent/60"
+                                            onClick={() => toggle(target.key)}
+                                        >
+                                            <span
+                                                className={cn(
+                                                    "flex size-4 items-center justify-center rounded border",
+                                                    picked.includes(target.key)
+                                                        ? "border-primary bg-primary text-primary-foreground"
+                                                        : "border-border",
+                                                )}
+                                            >
+                                                {picked.includes(target.key) ? (
+                                                    <CheckIcon className="size-3" />
+                                                ) : null}
+                                            </span>
+                                            <span className="truncate">
+                                                {target.label}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            );
+                        })}
+                    </div>
+                    {error ? (
+                        <p className="mx-4 mt-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                            {error}
+                        </p>
+                    ) : null}
+                    <div className="flex items-center gap-2 border-t border-border px-4 py-3">
+                        <p className="flex-1 text-xs text-muted-foreground">
+                            已选 {picked.length} 个会话
+                        </p>
+                        <Button
+                            size="sm"
+                            disabled={picked.length === 0 || busy}
+                            onClick={() => void submit()}
+                        >
+                            {busy ? "分享中" : "分享"}
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     const Composer = () => {
         const [content, setContent] = useState("");
         const [images, setImages] = useState<string[]>([]);
@@ -233,7 +396,7 @@ export const uiMomentsSetup = async (ctx: Context) => {
         const [busy, setBusy] = useState(false);
         const [uploading, setUploading] = useState(false);
         const [error, setError] = useState("");
-        const [link, setLink] = useState<MomentLink | null>(null);
+        const [link, setLink] = useState<LinkPreview | null>(null);
         const [linkState, setLinkState] = useState<
             "idle" | "loading" | "ready" | "error"
         >("idle");
@@ -601,6 +764,7 @@ export const uiMomentsSetup = async (ctx: Context) => {
     const MomentCard = ({ post }: { post: MomentPost }) => {
         const me = useMe();
         const [commentOpen, setCommentOpen] = useState(false);
+        const [sharing, setSharing] = useState(false);
         const [draft, setDraft] = useState("");
         const [busy, setBusy] = useState(false);
         const [error, setError] = useState("");
@@ -796,6 +960,15 @@ export const uiMomentsSetup = async (ctx: Context) => {
                             ? post.comments.length
                             : "评论"}
                     </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => setSharing(true)}
+                    >
+                        <ShareIcon />
+                        分享
+                    </Button>
                 </div>
                 {post.likes.length > 0 ? (
                     <p className="mt-1.5 flex items-start gap-1 text-xs text-muted-foreground">
@@ -844,6 +1017,12 @@ export const uiMomentsSetup = async (ctx: Context) => {
                 ) : null}
                 {error ? (
                     <p className="mt-1.5 text-xs text-red-500">{error}</p>
+                ) : null}
+                {sharing ? (
+                    <ShareDialog
+                        post={post}
+                        onClose={() => setSharing(false)}
+                    />
                 ) : null}
             </section>
         );
@@ -940,7 +1119,9 @@ export const uiMomentsSetup = async (ctx: Context) => {
     const MomentsAlerts = () => {
         const navigate = useNavigate();
         useEffect(() => {
-            const disposeOpen = ctx.on("ui:moments:open", () => {
+            const disposeOpen = ctx.on("ui:moments:open", (payload) => {
+                const author = (payload as { author?: string } | null)?.author;
+                if (author) moments.setAuthor(author);
                 void navigate("/moments");
             });
             return () => {
