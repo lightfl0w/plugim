@@ -290,7 +290,7 @@ export interface MessageSearchResult {
     total: number;
 }
 
-export type MomentVisibility = "public" | "friends";
+export type MomentVisibility = "public" | "friends" | "partial" | "exclude";
 
 export interface MomentLike {
     username: string;
@@ -309,7 +309,9 @@ export interface MomentPost {
     author: string;
     content: string;
     images: string[];
+    video: string | null;
     visibility: MomentVisibility;
+    audience: string[];
     createdAt: string;
     likes: MomentLike[];
     comments: MomentComment[];
@@ -318,7 +320,9 @@ export interface MomentPost {
 export interface MomentPublishParams {
     content: string;
     images?: string[] | null;
+    video?: string | null;
     visibility?: MomentVisibility;
+    audience?: string[] | null;
 }
 
 export interface MomentTimelineParams {
@@ -353,4 +357,11 @@ export interface MomentUpdateEvent {
     action: MomentAction;
     postId: string;
     author: string;
+    owner: string;
+}
+
+export interface MomentUnreadResult {
+    posts: number;
+    interactions: number;
+    total: number;
 }

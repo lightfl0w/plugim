@@ -2,8 +2,11 @@ import type { Plugin } from "@plugim/core";
 import type {
     MomentPost,
     MomentTimelineResult,
+    MomentUnreadResult,
+    MomentUpdateEvent,
     MomentVisibility,
 } from "@plugim/protocol";
+import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 
 export interface MomentsState {
@@ -12,17 +15,21 @@ export interface MomentsState {
     loading: boolean;
     error: string | null;
     author: string | null;
+    unread: MomentUnreadResult;
 }
 
 export interface MomentsService {
     state(): MomentsState;
     setAuthor(author: string | null): void;
+    setViewing(viewing: boolean): void;
     refresh(): Promise<void>;
     loadMore(): Promise<void>;
     publish(input: {
         content: string;
         images: string[];
+        video: string | null;
         visibility: MomentVisibility;
+        audience: string[];
     }): Promise<void>;
     like(postId: string, liked: boolean): Promise<void>;
     comment(postId: string, content: string): Promise<void>;
@@ -32,13 +39,20 @@ export interface MomentsService {
 
 const PAGE = 10;
 
+const EMPTY_UNREAD: MomentUnreadResult = {
+    posts: 0,
+    interactions: 0,
+    total: 0,
+};
+
 export const momentsPlugin: Plugin = {
     name: "moments",
     description: "朋友圈动态状态",
     provides: ["moments"],
-    inject: ["rpc"],
+    inject: ["rpc", "auth"],
     async apply(ctx) {
         const rpc = ctx.get<RpcService>("rpc");
+        const auth = ctx.get<AuthService>("auth");
         const listeners = new Set<() => void>();
         let state: MomentsState = {
             posts: [],
@@ -46,13 +60,34 @@ export const momentsPlugin: Plugin = {
             loading: false,
             error: null,
             author: null,
+            unread: EMPTY_UNREAD,
         };
         let inflight: Promise<void> | null = null;
+        let viewing = false;
 
         const set = (patch: Partial<MomentsState>) => {
             state = { ...state, ...patch };
             for (const cb of listeners) cb();
         };
+
+        const pullUnread = async () => {
+            const result = (await rpc.call(
+                "moment.unread",
+                {},
+            )) as MomentUnreadResult;
+            set({ unread: result });
+        };
+
+        const markSeen = async () => {
+            const result = (await rpc.call(
+                "moment.seen",
+                {},
+            )) as MomentUnreadResult;
+            set({ unread: result });
+        };
+
+        const syncUnread = () =>
+            void (viewing ? markSeen() : pullUnread()).catch(() => undefined);
 
         const fetchPage = async (append: boolean) => {
             const params: Record<string, unknown> = {
@@ -123,13 +158,19 @@ export const momentsPlugin: Plugin = {
                 });
                 void run(false);
             },
+            setViewing(next) {
+                viewing = next;
+                syncUnread();
+            },
             refresh: () => run(false),
             loadMore: () => run(true),
             async publish(input) {
                 const post = (await rpc.call("moment.publish", {
                     content: input.content,
                     images: input.images,
+                    video: input.video,
                     visibility: input.visibility,
+                    audience: input.audience,
                 })) as MomentPost;
                 upsert(post);
             },
@@ -159,18 +200,62 @@ export const momentsPlugin: Plugin = {
             },
         });
 
-        const disposeEvent = ctx.on("server:moment:update", () => {
-            void run(false);
-        });
-        const onStatus = (status: string) => {
-            if (status === "open") void run(false);
+        const alert = (payload: unknown) => {
+            const event = payload as MomentUpdateEvent;
+            if (event.action !== "like" && event.action !== "comment") return;
+            const me = auth.user()?.username ?? "";
+            if (!me || event.owner !== me || event.author === me) return;
+            if (
+                typeof document === "undefined" ||
+                document.visibilityState !== "hidden"
+            )
+                return;
+            if (
+                typeof Notification === "undefined" ||
+                Notification.permission !== "granted"
+            )
+                return;
+            try {
+                const notification = new Notification("朋友圈", {
+                    body: `${event.author} ${event.action === "like" ? "赞了" : "评论了"}你的动态`,
+                    tag: `moment-${event.postId}`,
+                });
+                notification.onclick = () => {
+                    window.focus();
+                    ctx.emit("ui:moments:open");
+                };
+            } catch {
+                void 0;
+            }
         };
-        if (rpc.status() === "open") void run(false);
+
+        const disposeEvent = ctx.on("server:moment:update", (payload) => {
+            alert(payload);
+            void run(false);
+            syncUnread();
+        });
+        const onVisibility = () => {
+            if (document.visibilityState === "visible") syncUnread();
+        };
+        const hasDocument = typeof document !== "undefined";
+        if (hasDocument)
+            document.addEventListener("visibilitychange", onVisibility);
+        const onStatus = (status: string) => {
+            if (status !== "open") return;
+            void run(false);
+            syncUnread();
+        };
+        if (rpc.status() === "open") {
+            void run(false);
+            syncUnread();
+        }
         const unstatus = rpc.onStatus(onStatus);
 
         return () => {
             disposeEvent();
             unstatus();
+            if (hasDocument)
+                document.removeEventListener("visibilitychange", onVisibility);
         };
     },
 };

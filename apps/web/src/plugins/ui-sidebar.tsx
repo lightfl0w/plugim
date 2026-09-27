@@ -36,6 +36,7 @@ import type { CacheService, SessionPreview } from "./cache";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
+import type { MomentsService } from "./moments";
 import type { PresenceService } from "./presence";
 import type { AdminService } from "./ui-admin";
 import {
@@ -144,11 +145,13 @@ function NavIcon({
     icon,
     label,
     onOpen,
+    badge = 0,
 }: {
     to: string;
     icon: ReactNode;
     label: string;
     onOpen?: () => void;
+    badge?: number;
 }) {
     return (
         <NavLink
@@ -157,7 +160,7 @@ function NavIcon({
             onClick={onOpen}
             className={({ isActive }) =>
                 cn(
-                    "flex size-10 items-center justify-center rounded-lg",
+                    "relative flex size-10 items-center justify-center rounded-lg",
                     isActive
                         ? "bg-primary text-primary-foreground hover:bg-primary/90"
                         : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -165,6 +168,14 @@ function NavIcon({
             }
         >
             {icon}
+            {badge > 0 ? (
+                <span
+                    title={`${badge} 条未读动态`}
+                    className="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-red-500 px-1 text-center text-[10px] leading-4 font-medium text-white"
+                >
+                    {badge > 99 ? "99+" : badge}
+                </span>
+            ) : null}
         </NavLink>
     );
 }
@@ -178,6 +189,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
     const presence = ctx.get<PresenceService>("presence");
     const rpc = ctx.get<RpcService>("rpc");
     const adminService = ctx.get<AdminService>("admin");
+    const moments = ctx.get<MomentsService>("moments");
 
     const Nav = () => {
         const user = useSyncExternalStore(
@@ -187,6 +199,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const admin = useSyncExternalStore(
             (cb) => adminService.onChange(cb),
             () => adminService.is(),
+        );
+        const momentsUnread = useSyncExternalStore(
+            (cb) => moments.onUpdate(cb),
+            () => moments.state().unread.total,
         );
         return (
             <>
@@ -206,6 +222,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     to="/moments"
                     icon={<ApertureIcon className="size-5" />}
                     label="朋友圈"
+                    badge={momentsUnread}
                 />
                 <div className="flex items-center gap-1 md:mt-auto md:flex-col">
                     {user ? (

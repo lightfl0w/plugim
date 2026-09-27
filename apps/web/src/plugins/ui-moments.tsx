@@ -6,6 +6,8 @@ import type {
 } from "@plugim/protocol";
 import {
     ArrowLeftIcon,
+    CheckIcon,
+    FilmIcon,
     HeartIcon,
     ImagePlusIcon,
     MessageCircleIcon,
@@ -13,7 +15,7 @@ import {
     Trash2Icon,
     XIcon,
 } from "lucide-react";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -21,16 +23,37 @@ import { Textarea } from "../components/ui/textarea";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
+import type { FriendsService } from "./friends";
 import type { MomentsService } from "./moments";
 import type { SenderService } from "./sender";
+import { displayName } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const MAX_IMAGES = 9;
+const EMPTY_NAMES: string[] = [];
 
 const VISIBILITY_OPTIONS: { value: MomentVisibility; label: string }[] = [
     { value: "public", label: "公开" },
     { value: "friends", label: "仅好友" },
+    { value: "partial", label: "部分可见" },
+    { value: "exclude", label: "不给谁看" },
 ];
+
+const needsAudience = (visibility: MomentVisibility) =>
+    visibility === "partial" || visibility === "exclude";
+
+const visibilityLabel = (post: MomentPost): string => {
+    if (post.visibility === "friends") return "仅好友";
+    if (post.visibility === "partial")
+        return post.audience.length
+            ? `部分可见：${post.audience.join("、")}`
+            : "部分可见";
+    if (post.visibility === "exclude")
+        return post.audience.length
+            ? `不给 ${post.audience.join("、")} 看`
+            : "不给谁看";
+    return "";
+};
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -54,11 +77,21 @@ const gridClass = (count: number) =>
           ? "grid-cols-2"
           : "grid-cols-3";
 
+const requestNotifyPermission = () => {
+    if (
+        typeof Notification !== "undefined" &&
+        Notification.permission === "default"
+    ) {
+        void Notification.requestPermission();
+    }
+};
+
 export const uiMomentsSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
     const moments = ctx.get<MomentsService>("moments");
     const sender = ctx.get<SenderService>("sender");
     const auth = ctx.get<AuthService>("auth");
+    const friendService = ctx.get<FriendsService>("friends");
 
     const useMomentsState = () =>
         useSyncExternalStore(
@@ -79,17 +112,115 @@ export const uiMomentsSetup = async (ctx: Context) => {
             () => auth.restoring(),
         );
 
+    const useFriendNames = () =>
+        useSyncExternalStore(
+            (cb) => friendService.onUpdate(cb),
+            () => friendService.cached()?.friends ?? EMPTY_NAMES,
+            () => friendService.cached()?.friends ?? EMPTY_NAMES,
+        );
+
+    const AudienceDialog = ({
+        title,
+        picked,
+        onToggle,
+        onClose,
+    }: {
+        title: string;
+        picked: string[];
+        onToggle: (name: string) => void;
+        onClose: () => void;
+    }) => {
+        const names = useFriendNames();
+        const remarks = friendService.cached()?.remarks ?? {};
+        const loaded = friendService.cached() !== null;
+
+        return (
+            <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                role="dialog"
+                aria-modal="true"
+                aria-label={title}
+                onClick={(event) => {
+                    if (event.target === event.currentTarget) onClose();
+                }}
+                onKeyDown={(event) => {
+                    if (event.key === "Escape") onClose();
+                }}
+            >
+                <div className="flex max-h-[70vh] w-full max-w-sm flex-col rounded-xl border border-border bg-card shadow-xl">
+                    <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                        <p className="flex-1 text-sm font-semibold">{title}</p>
+                        <button
+                            type="button"
+                            aria-label="关闭"
+                            className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+                            onClick={onClose}
+                        >
+                            <XIcon className="size-4" />
+                        </button>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-y-auto py-1">
+                        {names.length === 0 ? (
+                            <p className="py-8 text-center text-xs text-muted-foreground">
+                                {loaded
+                                    ? "还没有好友，先去添加好友吧"
+                                    : "正在加载好友…"}
+                            </p>
+                        ) : null}
+                        {names.map((name) => (
+                            <button
+                                key={name}
+                                type="button"
+                                className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-accent/60"
+                                onClick={() => onToggle(name)}
+                            >
+                                <UserAvatar name={name} size="sm" />
+                                <span className="min-w-0 flex-1 truncate">
+                                    {displayName(name, remarks)}
+                                </span>
+                                {picked.includes(name) ? (
+                                    <CheckIcon className="size-4 text-primary" />
+                                ) : null}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="flex items-center gap-2 border-t border-border px-4 py-3">
+                        <span className="text-xs text-muted-foreground">
+                            已选 {picked.length} 人
+                        </span>
+                        <Button
+                            size="sm"
+                            className="ml-auto"
+                            disabled={picked.length === 0}
+                            onClick={onClose}
+                        >
+                            确定
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     const Composer = () => {
         const [content, setContent] = useState("");
         const [images, setImages] = useState<string[]>([]);
+        const [video, setVideo] = useState<string | null>(null);
         const [visibility, setVisibility] =
             useState<MomentVisibility>("public");
+        const [audience, setAudience] = useState<string[]>([]);
+        const [picking, setPicking] = useState(false);
         const [busy, setBusy] = useState(false);
         const [uploading, setUploading] = useState(false);
         const [error, setError] = useState("");
         const fileRef = useRef<HTMLInputElement>(null);
+        const videoRef = useRef<HTMLInputElement>(null);
 
-        const pick = async (files: FileList) => {
+        useEffect(() => {
+            void friendService.refresh().catch(() => undefined);
+        }, []);
+
+        const pickImages = async (files: FileList) => {
             const room = MAX_IMAGES - images.length;
             if (room <= 0) return;
             setUploading(true);
@@ -101,6 +232,21 @@ export const uiMomentsSetup = async (ctx: Context) => {
                     next.push(key);
                 }
                 setImages(next);
+                setVideo(null);
+            } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+            } finally {
+                setUploading(false);
+            }
+        };
+
+        const pickVideo = async (file: File) => {
+            setUploading(true);
+            setError("");
+            try {
+                const { key } = await sender.upload(file, file.name);
+                setVideo(key);
+                setImages([]);
             } catch (err) {
                 setError(err instanceof Error ? err.message : String(err));
             } finally {
@@ -110,20 +256,31 @@ export const uiMomentsSetup = async (ctx: Context) => {
 
         const publish = async () => {
             const text = content.trim();
-            if (!text && images.length === 0) return;
+            if (!text && images.length === 0 && !video) return;
             setBusy(true);
             setError("");
+            requestNotifyPermission();
             try {
-                await moments.publish({ content: text, images, visibility });
+                await moments.publish({
+                    content: text,
+                    images,
+                    video,
+                    visibility,
+                    audience: needsAudience(visibility) ? audience : [],
+                });
                 setContent("");
                 setImages([]);
+                setVideo(null);
                 setVisibility("public");
+                setAudience([]);
             } catch (err) {
                 setError(err instanceof Error ? err.message : String(err));
             } finally {
                 setBusy(false);
             }
         };
+
+        const waiting = needsAudience(visibility) && audience.length === 0;
 
         return (
             <section className="rounded-xl border border-border bg-card p-3">
@@ -167,7 +324,27 @@ export const uiMomentsSetup = async (ctx: Context) => {
                         ))}
                     </div>
                 ) : null}
-                <div className="mt-2 flex items-center gap-2 border-t border-border pt-2">
+                {video ? (
+                    <div className="relative mt-2 overflow-hidden rounded-lg bg-black">
+                        <video
+                            src={`/files/${video}`}
+                            controls
+                            playsInline
+                            className="max-h-72 w-full"
+                        >
+                            <track kind="captions" label="字幕" />
+                        </video>
+                        <button
+                            type="button"
+                            title="移除"
+                            className="absolute top-1 right-1 rounded-md bg-black/60 p-0.5 text-white"
+                            onClick={() => setVideo(null)}
+                        >
+                            <XIcon className="size-3.5" />
+                        </button>
+                    </div>
+                ) : null}
+                <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
                     <input
                         ref={fileRef}
                         type="file"
@@ -176,23 +353,55 @@ export const uiMomentsSetup = async (ctx: Context) => {
                         className="hidden"
                         onChange={(event) => {
                             const files = event.target.files;
-                            if (files?.length) void pick(files);
+                            if (files?.length) void pickImages(files);
+                            event.target.value = "";
+                        }}
+                    />
+                    <input
+                        ref={videoRef}
+                        type="file"
+                        accept="video/*"
+                        className="hidden"
+                        onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void pickVideo(file);
                             event.target.value = "";
                         }}
                     />
                     <Button
                         variant="ghost"
                         size="icon-sm"
-                        title={`添加图片，最多 ${MAX_IMAGES} 张`}
-                        disabled={uploading || images.length >= MAX_IMAGES}
+                        title={
+                            video
+                                ? "视频动态不能再选图片"
+                                : `添加图片，最多 ${MAX_IMAGES} 张`
+                        }
+                        disabled={
+                            uploading || !!video || images.length >= MAX_IMAGES
+                        }
                         onClick={() => fileRef.current?.click()}
                     >
                         <ImagePlusIcon />
                     </Button>
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title={
+                            images.length > 0
+                                ? "图片动态不能再选视频"
+                                : "添加视频"
+                        }
+                        disabled={uploading || !!video || images.length > 0}
+                        onClick={() => videoRef.current?.click()}
+                    >
+                        <FilmIcon />
+                    </Button>
                     <span className="text-xs text-muted-foreground">
                         {uploading
                             ? "上传中"
-                            : `${images.length}/${MAX_IMAGES}`}
+                            : video
+                              ? "1 个视频"
+                              : `${images.length}/${MAX_IMAGES}`}
                     </span>
                     <div className="ml-auto flex items-center gap-1">
                         {VISIBILITY_OPTIONS.map((option) => (
@@ -216,15 +425,60 @@ export const uiMomentsSetup = async (ctx: Context) => {
                         disabled={
                             busy ||
                             uploading ||
-                            (!content.trim() && images.length === 0)
+                            waiting ||
+                            (!content.trim() && images.length === 0 && !video)
                         }
                         onClick={() => void publish()}
                     >
                         {busy ? "发布中" : "发布"}
                     </Button>
                 </div>
+                {needsAudience(visibility) ? (
+                    <div className="mt-2 flex items-center gap-2 text-xs">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 shrink-0"
+                            onClick={() => setPicking(true)}
+                        >
+                            选择好友
+                        </Button>
+                        <span
+                            className={cn(
+                                "min-w-0 flex-1 truncate",
+                                audience.length === 0
+                                    ? "text-amber-600"
+                                    : "text-muted-foreground",
+                            )}
+                        >
+                            {audience.length === 0
+                                ? visibility === "partial"
+                                    ? "还没有选择可见的好友"
+                                    : "还没有选择不可见的好友"
+                                : audience.join("、")}
+                        </span>
+                    </div>
+                ) : null}
                 {error ? (
                     <p className="pt-2 text-xs text-red-500">{error}</p>
+                ) : null}
+                {picking ? (
+                    <AudienceDialog
+                        title={
+                            visibility === "partial"
+                                ? "选择可见的好友"
+                                : "选择不给谁看"
+                        }
+                        picked={audience}
+                        onToggle={(name) =>
+                            setAudience((prev) =>
+                                prev.includes(name)
+                                    ? prev.filter((item) => item !== name)
+                                    : [...prev, name],
+                            )
+                        }
+                        onClose={() => setPicking(false)}
+                    />
                 ) : null}
             </section>
         );
@@ -259,14 +513,18 @@ export const uiMomentsSetup = async (ctx: Context) => {
                 setCommentOpen(false);
             });
 
-        const openImage = (key: string, index: number) => {
+        const openMedia = (
+            key: string,
+            index: number,
+            kind: "image" | "video",
+        ) => {
             const message: ChatMessage = {
                 id: `${post.id}:${index}`,
                 session: "moment",
                 sender: post.author,
                 content: `/files/${key}`,
                 createdAt: post.createdAt,
-                kind: "image",
+                kind,
             };
             ctx.emit("ui:media:preview", { message });
         };
@@ -275,6 +533,9 @@ export const uiMomentsSetup = async (ctx: Context) => {
             if (!window.confirm("删除这条动态？")) return;
             void run(() => moments.remove(post.id));
         };
+
+        const tag = post.author === me ? visibilityLabel(post) : "";
+        const video = post.video;
 
         return (
             <section className="rounded-xl border border-border bg-card p-3">
@@ -289,10 +550,9 @@ export const uiMomentsSetup = async (ctx: Context) => {
                     <div className="min-w-0 flex-1">
                         <p className="flex items-center gap-2 text-sm font-medium">
                             <span className="truncate">{post.author}</span>
-                            {post.visibility === "friends" &&
-                            post.author === me ? (
+                            {tag ? (
                                 <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground">
-                                    仅好友
+                                    {tag}
                                 </span>
                             ) : null}
                         </p>
@@ -334,7 +594,7 @@ export const uiMomentsSetup = async (ctx: Context) => {
                                         ? "max-w-64"
                                         : "aspect-square",
                                 )}
-                                onClick={() => openImage(key, index)}
+                                onClick={() => openMedia(key, index, "image")}
                             >
                                 <img
                                     src={`/files/${key}`}
@@ -350,6 +610,22 @@ export const uiMomentsSetup = async (ctx: Context) => {
                             </button>
                         ))}
                     </div>
+                ) : null}
+                {video ? (
+                    <button
+                        type="button"
+                        title="播放视频"
+                        className="mt-2 block w-full max-w-72 overflow-hidden rounded-lg bg-black"
+                        onClick={() => openMedia(video, 0, "video")}
+                    >
+                        <video
+                            src={`/files/${video}`}
+                            preload="metadata"
+                            muted
+                            playsInline
+                            className="max-h-72 w-full"
+                        />
+                    </button>
                 ) : null}
                 <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
                     <Button
@@ -434,6 +710,11 @@ export const uiMomentsSetup = async (ctx: Context) => {
         const restoring = useRestoring();
         const navigate = useNavigate();
 
+        useEffect(() => {
+            moments.setViewing(true);
+            return () => moments.setViewing(false);
+        }, []);
+
         if (restoring && !me) return null;
         if (!me) return <Navigate to="/login" replace />;
 
@@ -511,5 +792,23 @@ export const uiMomentsSetup = async (ctx: Context) => {
         );
     };
 
-    return ui.registerRoute("/moments", MomentsPage);
+    const MomentsAlerts = () => {
+        const navigate = useNavigate();
+        useEffect(() => {
+            const disposeOpen = ctx.on("ui:moments:open", () => {
+                void navigate("/moments");
+            });
+            return () => {
+                void disposeOpen();
+            };
+        }, [navigate]);
+        return null;
+    };
+
+    const unregisterRoute = ui.registerRoute("/moments", MomentsPage);
+    const unregisterAlerts = ui.register("overlay", MomentsAlerts, 15);
+    return () => {
+        unregisterRoute();
+        unregisterAlerts();
+    };
 };

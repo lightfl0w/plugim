@@ -199,3 +199,79 @@ describe("group delivery", () => {
         expect(payload.body).toBe("pg1: 群消息");
     });
 });
+
+describe("moments delivery", () => {
+    beforeEach(() => {
+        sendNotification.mockReset();
+        sendNotification.mockResolvedValue({ statusCode: 201 });
+    });
+
+    it("pushes likes and comments on my moments to my offline devices", async () => {
+        const { app, ua, ub } = await friendPair("ma3", "mb3");
+        await app.call(
+            "push.subscribe",
+            subscription("https://push.test/ma3"),
+            ua.user,
+        );
+        const post = (await app.call(
+            "moment.publish",
+            { content: "新动态" },
+            ua.user,
+        )) as { id: string };
+        await app.call(
+            "moment.like",
+            { postId: post.id, liked: true },
+            ub.user,
+        );
+        await vi.waitFor(() =>
+            expect(sendNotification).toHaveBeenCalledTimes(1),
+        );
+        const liked = JSON.parse(String(sendNotification.mock.calls[0][1])) as {
+            title: string;
+            body: string;
+            session: string;
+        };
+        expect(liked.title).toBe("朋友圈");
+        expect(liked.body).toBe("mb3 赞了你的动态");
+        expect(liked.session).toBe("moments");
+        await app.call(
+            "moment.comment",
+            { postId: post.id, content: "沙发" },
+            ub.user,
+        );
+        await vi.waitFor(() =>
+            expect(sendNotification).toHaveBeenCalledTimes(2),
+        );
+        const commented = JSON.parse(
+            String(sendNotification.mock.calls[1][1]),
+        ) as { body: string };
+        expect(commented.body).toBe("mb3 评论了你的动态");
+    });
+
+    it("stays quiet when the author is online or reacts to themselves", async () => {
+        const { app, ua, ub } = await friendPair("mc3", "md3");
+        await app.call(
+            "push.subscribe",
+            subscription("https://push.test/mc3"),
+            ua.user,
+        );
+        const post = (await app.call(
+            "moment.publish",
+            { content: "自己点赞" },
+            ua.user,
+        )) as { id: string };
+        app.setOnline(ua.user);
+        await app.call(
+            "moment.like",
+            { postId: post.id, liked: true },
+            ub.user,
+        );
+        await app.call(
+            "moment.like",
+            { postId: post.id, liked: false },
+            ua.user,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(sendNotification).not.toHaveBeenCalled();
+    });
+});

@@ -1,19 +1,26 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Plugin } from "@plugim/core";
-import type { FileMeta, GroupRole, MessageQuote } from "@plugim/protocol";
+import type {
+    FileMeta,
+    GroupRole,
+    MessageQuote,
+    MomentVisibility,
+} from "@plugim/protocol";
 import Database from "better-sqlite3";
 import {
     and,
     asc,
     desc,
     eq,
+    exists,
     gt,
     gte,
     inArray,
     isNull,
     lt,
     ne,
+    notExists,
     or,
     sql,
 } from "drizzle-orm";
@@ -347,6 +354,7 @@ const momentsSqlite = sqliteTable("moments", {
     authorId: sqliteText("author_id").notNull(),
     content: sqliteText("content").notNull(),
     images: sqliteText("images").notNull(),
+    video: sqliteText("video"),
     visibility: sqliteText("visibility").notNull(),
     createdAt: integer("created_at").notNull(),
 });
@@ -356,10 +364,39 @@ const momentsPg = pgTable("moments", {
     authorId: pgText("author_id").notNull(),
     content: pgText("content").notNull(),
     images: pgText("images").notNull(),
+    video: pgText("video"),
     visibility: pgText("visibility").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
         .notNull()
         .defaultNow(),
+});
+
+const momentAudienceSqlite = sqliteTable(
+    "moment_audience",
+    {
+        postId: sqliteText("post_id").notNull(),
+        userId: sqliteText("user_id").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.postId, table.userId] })],
+);
+
+const momentAudiencePg = pgTable(
+    "moment_audience",
+    {
+        postId: pgText("post_id").notNull(),
+        userId: pgText("user_id").notNull(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.postId, table.userId] })],
+);
+
+const momentReadsSqlite = sqliteTable("moment_reads", {
+    userId: sqliteText("user_id").primaryKey(),
+    seenAt: integer("seen_at").notNull(),
+});
+
+const momentReadsPg = pgTable("moment_reads", {
+    userId: pgText("user_id").primaryKey(),
+    seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 const momentLikesSqlite = sqliteTable(
@@ -503,6 +540,7 @@ CREATE TABLE IF NOT EXISTS moments (
   author_id TEXT NOT NULL,
   content TEXT NOT NULL,
   images TEXT NOT NULL,
+  video TEXT,
   visibility TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
@@ -520,7 +558,17 @@ CREATE TABLE IF NOT EXISTS moment_comments (
   content TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS moment_comments_post_idx ON moment_comments (post_id, created_at)`;
+CREATE INDEX IF NOT EXISTS moment_comments_post_idx ON moment_comments (post_id, created_at);
+CREATE TABLE IF NOT EXISTS moment_audience (
+  post_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS moment_audience_user_idx ON moment_audience (user_id);
+CREATE TABLE IF NOT EXISTS moment_reads (
+  user_id TEXT PRIMARY KEY,
+  seen_at INTEGER NOT NULL
+)`;
 
 const CREATE_PG = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -625,6 +673,7 @@ CREATE TABLE IF NOT EXISTS moments (
   author_id TEXT NOT NULL,
   content TEXT NOT NULL,
   images TEXT NOT NULL,
+  video TEXT,
   visibility TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -642,7 +691,17 @@ CREATE TABLE IF NOT EXISTS moment_comments (
   content TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS moment_comments_post_idx ON moment_comments (post_id, created_at)`;
+CREATE INDEX IF NOT EXISTS moment_comments_post_idx ON moment_comments (post_id, created_at);
+CREATE TABLE IF NOT EXISTS moment_audience (
+  post_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS moment_audience_user_idx ON moment_audience (user_id);
+CREATE TABLE IF NOT EXISTS moment_reads (
+  user_id TEXT PRIMARY KEY,
+  seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`;
 
 const toIso = (value: Date | number): string =>
     value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -708,11 +767,17 @@ const parseImages = (raw: string): string[] => {
     return [];
 };
 
+const toVisibility = (value: string): MomentVisibility =>
+    value === "friends" || value === "partial" || value === "exclude"
+        ? value
+        : "public";
+
 const momentToRow = (row: {
     id: string;
     authorId: string;
     content: string;
     images: string;
+    video: string | null;
     visibility: string;
     createdAt: Date | number;
 }): MomentRow => ({
@@ -720,7 +785,9 @@ const momentToRow = (row: {
     authorId: row.authorId,
     content: row.content,
     images: parseImages(row.images),
-    visibility: row.visibility === "friends" ? "friends" : "public",
+    video: row.video ?? null,
+    visibility: toVisibility(row.visibility),
+    audience: [],
     createdAt: toIso(row.createdAt),
 });
 
@@ -921,6 +988,9 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0",
+            );
+            await client.unsafe(
+                "ALTER TABLE moments ADD COLUMN IF NOT EXISTS video TEXT",
             );
             const db = drizzlePg(client);
 
@@ -1812,6 +1882,83 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            const momentVisibleFor = (viewerId: string, friendIds: string[]) =>
+                or(
+                    eq(momentsPg.authorId, viewerId),
+                    and(
+                        inArray(momentsPg.visibility, ["public", "exclude"]),
+                        notExists(
+                            db
+                                .select()
+                                .from(momentAudiencePg)
+                                .where(
+                                    and(
+                                        eq(
+                                            momentAudiencePg.postId,
+                                            momentsPg.id,
+                                        ),
+                                        eq(momentAudiencePg.userId, viewerId),
+                                    ),
+                                ),
+                        ),
+                    ),
+                    and(
+                        eq(momentsPg.visibility, "partial"),
+                        exists(
+                            db
+                                .select()
+                                .from(momentAudiencePg)
+                                .where(
+                                    and(
+                                        eq(
+                                            momentAudiencePg.postId,
+                                            momentsPg.id,
+                                        ),
+                                        eq(momentAudiencePg.userId, viewerId),
+                                    ),
+                                ),
+                        ),
+                    ),
+                    ...(friendIds.length > 0
+                        ? [
+                              and(
+                                  eq(momentsPg.visibility, "friends"),
+                                  inArray(momentsPg.authorId, friendIds),
+                              ),
+                          ]
+                        : []),
+                );
+
+            const withMomentAudience = async (
+                rows: MomentRow[],
+            ): Promise<MomentRow[]> => {
+                const targets = rows.filter(
+                    (row) =>
+                        row.visibility === "partial" ||
+                        row.visibility === "exclude",
+                );
+                if (targets.length === 0) return rows;
+                const links = await db
+                    .select()
+                    .from(momentAudiencePg)
+                    .where(
+                        inArray(
+                            momentAudiencePg.postId,
+                            targets.map((row) => row.id),
+                        ),
+                    );
+                const byPost = new Map<string, string[]>();
+                for (const link of links) {
+                    const list = byPost.get(link.postId) ?? [];
+                    list.push(link.userId);
+                    byPost.set(link.postId, list);
+                }
+                return rows.map((row) => ({
+                    ...row,
+                    audience: byPost.get(row.id) ?? [],
+                }));
+            };
+
             moments = {
                 async create(input) {
                     const id = crypto.randomUUID();
@@ -1822,10 +1969,24 @@ export const storagePlugin: Plugin = {
                             authorId: input.authorId,
                             content: input.content,
                             images: JSON.stringify(input.images),
+                            video: input.video,
                             visibility: input.visibility,
                         })
                         .returning();
-                    return momentToRow(rows[0]);
+                    if (input.audience.length > 0)
+                        await db
+                            .insert(momentAudiencePg)
+                            .values(
+                                input.audience.map((userId) => ({
+                                    postId: id,
+                                    userId,
+                                })),
+                            )
+                            .onConflictDoNothing();
+                    return {
+                        ...momentToRow(rows[0]),
+                        audience: input.audience,
+                    };
                 },
                 async byId(id) {
                     const rows = await db
@@ -1833,9 +1994,16 @@ export const storagePlugin: Plugin = {
                         .from(momentsPg)
                         .where(eq(momentsPg.id, id))
                         .limit(1);
-                    return rows[0] ? momentToRow(rows[0]) : null;
+                    if (!rows[0]) return null;
+                    const [row] = await withMomentAudience([
+                        momentToRow(rows[0]),
+                    ]);
+                    return row;
                 },
                 async remove(id) {
+                    await db
+                        .delete(momentAudiencePg)
+                        .where(eq(momentAudiencePg.postId, id));
                     await db
                         .delete(momentLikesPg)
                         .where(eq(momentLikesPg.postId, id));
@@ -1858,13 +2026,7 @@ export const storagePlugin: Plugin = {
                         .from(momentsPg)
                         .where(
                             and(
-                                or(
-                                    eq(momentsPg.visibility, "public"),
-                                    eq(momentsPg.authorId, viewerId),
-                                    friendIds.length > 0
-                                        ? inArray(momentsPg.authorId, friendIds)
-                                        : undefined,
-                                ),
+                                momentVisibleFor(viewerId, friendIds),
                                 author
                                     ? eq(momentsPg.authorId, author)
                                     : undefined,
@@ -1877,7 +2039,79 @@ export const storagePlugin: Plugin = {
                         )
                         .orderBy(desc(momentsPg.createdAt), desc(momentsPg.id))
                         .limit(limit);
-                    return rows.map(momentToRow);
+                    return withMomentAudience(rows.map(momentToRow));
+                },
+                async audienceOf(postId) {
+                    const rows = await db
+                        .select()
+                        .from(momentAudiencePg)
+                        .where(eq(momentAudiencePg.postId, postId));
+                    return rows.map((row) => row.userId);
+                },
+                async unread(userId, friendIds) {
+                    const seenRows = await db
+                        .select()
+                        .from(momentReadsPg)
+                        .where(eq(momentReadsPg.userId, userId))
+                        .limit(1);
+                    const seen = seenRows[0]?.seenAt ?? new Date(0);
+                    const postRows = await db
+                        .select({ n: sql<number>`count(*)` })
+                        .from(momentsPg)
+                        .where(
+                            and(
+                                gt(momentsPg.createdAt, seen),
+                                ne(momentsPg.authorId, userId),
+                                friendIds.length > 0
+                                    ? inArray(momentsPg.authorId, friendIds)
+                                    : sql`1 = 0`,
+                                momentVisibleFor(userId, friendIds),
+                            ),
+                        );
+                    const likeRows = await db
+                        .select({ n: sql<number>`count(*)` })
+                        .from(momentLikesPg)
+                        .innerJoin(
+                            momentsPg,
+                            eq(momentLikesPg.postId, momentsPg.id),
+                        )
+                        .where(
+                            and(
+                                eq(momentsPg.authorId, userId),
+                                ne(momentLikesPg.userId, userId),
+                                gt(momentLikesPg.at, seen),
+                            ),
+                        );
+                    const commentRows = await db
+                        .select({ n: sql<number>`count(*)` })
+                        .from(momentCommentsPg)
+                        .innerJoin(
+                            momentsPg,
+                            eq(momentCommentsPg.postId, momentsPg.id),
+                        )
+                        .where(
+                            and(
+                                eq(momentsPg.authorId, userId),
+                                ne(momentCommentsPg.authorId, userId),
+                                gt(momentCommentsPg.createdAt, seen),
+                            ),
+                        );
+                    return {
+                        posts: Number(postRows[0]?.n ?? 0),
+                        interactions:
+                            Number(likeRows[0]?.n ?? 0) +
+                            Number(commentRows[0]?.n ?? 0),
+                    };
+                },
+                async markSeen(userId, at) {
+                    const seenAt = new Date(at);
+                    await db
+                        .insert(momentReadsPg)
+                        .values({ userId, seenAt })
+                        .onConflictDoUpdate({
+                            target: momentReadsPg.userId,
+                            set: { seenAt },
+                        });
                 },
                 async setLike(postId, userId, liked) {
                     if (!liked) {
@@ -1977,6 +2211,11 @@ export const storagePlugin: Plugin = {
                     client.exec(`ALTER TABLE groups ADD COLUMN ${col} ${type}`);
                 }
             }
+            const momentColumns = client.pragma(
+                "table_info(moments)",
+            ) as Array<{ name: string }>;
+            if (!momentColumns.some((item) => item.name === "video"))
+                client.exec("ALTER TABLE moments ADD COLUMN video TEXT");
             const db = drizzleSqlite(client);
 
             const messageCursor = async (id: string) => {
@@ -2941,6 +3180,92 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            const momentVisibleFor = (viewerId: string, friendIds: string[]) =>
+                or(
+                    eq(momentsSqlite.authorId, viewerId),
+                    and(
+                        inArray(momentsSqlite.visibility, [
+                            "public",
+                            "exclude",
+                        ]),
+                        notExists(
+                            db
+                                .select()
+                                .from(momentAudienceSqlite)
+                                .where(
+                                    and(
+                                        eq(
+                                            momentAudienceSqlite.postId,
+                                            momentsSqlite.id,
+                                        ),
+                                        eq(
+                                            momentAudienceSqlite.userId,
+                                            viewerId,
+                                        ),
+                                    ),
+                                ),
+                        ),
+                    ),
+                    and(
+                        eq(momentsSqlite.visibility, "partial"),
+                        exists(
+                            db
+                                .select()
+                                .from(momentAudienceSqlite)
+                                .where(
+                                    and(
+                                        eq(
+                                            momentAudienceSqlite.postId,
+                                            momentsSqlite.id,
+                                        ),
+                                        eq(
+                                            momentAudienceSqlite.userId,
+                                            viewerId,
+                                        ),
+                                    ),
+                                ),
+                        ),
+                    ),
+                    ...(friendIds.length > 0
+                        ? [
+                              and(
+                                  eq(momentsSqlite.visibility, "friends"),
+                                  inArray(momentsSqlite.authorId, friendIds),
+                              ),
+                          ]
+                        : []),
+                );
+
+            const withMomentAudience = async (
+                rows: MomentRow[],
+            ): Promise<MomentRow[]> => {
+                const targets = rows.filter(
+                    (row) =>
+                        row.visibility === "partial" ||
+                        row.visibility === "exclude",
+                );
+                if (targets.length === 0) return rows;
+                const links = await db
+                    .select()
+                    .from(momentAudienceSqlite)
+                    .where(
+                        inArray(
+                            momentAudienceSqlite.postId,
+                            targets.map((row) => row.id),
+                        ),
+                    );
+                const byPost = new Map<string, string[]>();
+                for (const link of links) {
+                    const list = byPost.get(link.postId) ?? [];
+                    list.push(link.userId);
+                    byPost.set(link.postId, list);
+                }
+                return rows.map((row) => ({
+                    ...row,
+                    audience: byPost.get(row.id) ?? [],
+                }));
+            };
+
             moments = {
                 async create(input) {
                     const id = crypto.randomUUID();
@@ -2950,15 +3275,28 @@ export const storagePlugin: Plugin = {
                         authorId: input.authorId,
                         content: input.content,
                         images: JSON.stringify(input.images),
+                        video: input.video,
                         visibility: input.visibility,
                         createdAt,
                     });
+                    if (input.audience.length > 0)
+                        await db
+                            .insert(momentAudienceSqlite)
+                            .values(
+                                input.audience.map((userId) => ({
+                                    postId: id,
+                                    userId,
+                                })),
+                            )
+                            .onConflictDoNothing();
                     return {
                         id,
                         authorId: input.authorId,
                         content: input.content,
                         images: input.images,
+                        video: input.video,
                         visibility: input.visibility,
+                        audience: input.audience,
                         createdAt: new Date(createdAt).toISOString(),
                     };
                 },
@@ -2968,9 +3306,16 @@ export const storagePlugin: Plugin = {
                         .from(momentsSqlite)
                         .where(eq(momentsSqlite.id, id))
                         .limit(1);
-                    return rows[0] ? momentToRow(rows[0]) : null;
+                    if (!rows[0]) return null;
+                    const [row] = await withMomentAudience([
+                        momentToRow(rows[0]),
+                    ]);
+                    return row;
                 },
                 async remove(id) {
+                    await db
+                        .delete(momentAudienceSqlite)
+                        .where(eq(momentAudienceSqlite.postId, id));
                     await db
                         .delete(momentLikesSqlite)
                         .where(eq(momentLikesSqlite.postId, id));
@@ -2995,16 +3340,7 @@ export const storagePlugin: Plugin = {
                         .from(momentsSqlite)
                         .where(
                             and(
-                                or(
-                                    eq(momentsSqlite.visibility, "public"),
-                                    eq(momentsSqlite.authorId, viewerId),
-                                    friendIds.length > 0
-                                        ? inArray(
-                                              momentsSqlite.authorId,
-                                              friendIds,
-                                          )
-                                        : undefined,
-                                ),
+                                momentVisibleFor(viewerId, friendIds),
                                 author
                                     ? eq(momentsSqlite.authorId, author)
                                     : undefined,
@@ -3020,7 +3356,79 @@ export const storagePlugin: Plugin = {
                             desc(momentsSqlite.id),
                         )
                         .limit(limit);
-                    return rows.map(momentToRow);
+                    return withMomentAudience(rows.map(momentToRow));
+                },
+                async audienceOf(postId) {
+                    const rows = await db
+                        .select()
+                        .from(momentAudienceSqlite)
+                        .where(eq(momentAudienceSqlite.postId, postId));
+                    return rows.map((row) => row.userId);
+                },
+                async unread(userId, friendIds) {
+                    const seenRows = await db
+                        .select()
+                        .from(momentReadsSqlite)
+                        .where(eq(momentReadsSqlite.userId, userId))
+                        .limit(1);
+                    const seen = seenRows[0]?.seenAt ?? 0;
+                    const postRows = await db
+                        .select({ n: sql<number>`count(*)` })
+                        .from(momentsSqlite)
+                        .where(
+                            and(
+                                gt(momentsSqlite.createdAt, seen),
+                                ne(momentsSqlite.authorId, userId),
+                                friendIds.length > 0
+                                    ? inArray(momentsSqlite.authorId, friendIds)
+                                    : sql`1 = 0`,
+                                momentVisibleFor(userId, friendIds),
+                            ),
+                        );
+                    const likeRows = await db
+                        .select({ n: sql<number>`count(*)` })
+                        .from(momentLikesSqlite)
+                        .innerJoin(
+                            momentsSqlite,
+                            eq(momentLikesSqlite.postId, momentsSqlite.id),
+                        )
+                        .where(
+                            and(
+                                eq(momentsSqlite.authorId, userId),
+                                ne(momentLikesSqlite.userId, userId),
+                                gt(momentLikesSqlite.at, seen),
+                            ),
+                        );
+                    const commentRows = await db
+                        .select({ n: sql<number>`count(*)` })
+                        .from(momentCommentsSqlite)
+                        .innerJoin(
+                            momentsSqlite,
+                            eq(momentCommentsSqlite.postId, momentsSqlite.id),
+                        )
+                        .where(
+                            and(
+                                eq(momentsSqlite.authorId, userId),
+                                ne(momentCommentsSqlite.authorId, userId),
+                                gt(momentCommentsSqlite.createdAt, seen),
+                            ),
+                        );
+                    return {
+                        posts: Number(postRows[0]?.n ?? 0),
+                        interactions:
+                            Number(likeRows[0]?.n ?? 0) +
+                            Number(commentRows[0]?.n ?? 0),
+                    };
+                },
+                async markSeen(userId, at) {
+                    const seenAt = new Date(at).getTime();
+                    await db
+                        .insert(momentReadsSqlite)
+                        .values({ userId, seenAt })
+                        .onConflictDoUpdate({
+                            target: momentReadsSqlite.userId,
+                            set: { seenAt },
+                        });
                 },
                 async setLike(postId, userId, liked) {
                     if (!liked) {

@@ -278,7 +278,9 @@ export interface MomentRow {
     authorId: string;
     content: string;
     images: string[];
+    video: string | null;
     visibility: MomentVisibility;
+    audience: string[];
     createdAt: string;
 }
 
@@ -296,12 +298,19 @@ export interface MomentCommentRow {
     createdAt: string;
 }
 
+export interface MomentUnreadRow {
+    posts: number;
+    interactions: number;
+}
+
 export interface MomentsStore {
     create(input: {
         authorId: string;
         content: string;
         images: string[];
+        video: string | null;
         visibility: MomentVisibility;
+        audience: string[];
     }): Promise<MomentRow>;
     byId(id: string): Promise<MomentRow | null>;
     remove(id: string): Promise<void>;
@@ -313,6 +322,9 @@ export interface MomentsStore {
         beforeId?: string;
         limit: number;
     }): Promise<MomentRow[]>;
+    audienceOf(postId: string): Promise<string[]>;
+    unread(userId: string, friendIds: string[]): Promise<MomentUnreadRow>;
+    markSeen(userId: string, at: string): Promise<void>;
     setLike(postId: string, userId: string, liked: boolean): Promise<void>;
     likesOf(postIds: string[]): Promise<MomentLikeRow[]>;
     addComment(input: {

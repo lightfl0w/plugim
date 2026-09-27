@@ -97,13 +97,13 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
                             autoPlay
                             className="max-h-[80vh] w-full max-w-3xl rounded-lg bg-black"
                         >
-                            <track kind="captions" src="" label="字幕" />
+                            <track kind="captions" label="字幕" />
                         </video>
                     ) : isAudio ? (
                         <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-2xl bg-white/10 p-8">
                             <FileIcon className="size-12 text-white/80" />
                             <audio src={message.content} controls autoPlay>
-                                <track kind="captions" src="" label="字幕" />
+                                <track kind="captions" label="字幕" />
                             </audio>
                         </div>
                     ) : isPdf ? (
