@@ -3,6 +3,8 @@ import type {
     MomentAction,
     MomentCommentParams,
     MomentLikeParams,
+    MomentLink,
+    MomentLinkParams,
     MomentPost,
     MomentPublishParams,
     MomentTargetParams,
@@ -47,6 +49,230 @@ const clampLimit = (value: unknown): number => {
     const num = Math.floor(Number(value));
     if (!Number.isFinite(num) || num <= 0) return TIMELINE_DEFAULT;
     return Math.min(num, TIMELINE_MAX);
+};
+
+const LINK_URL_MAX = 500;
+const LINK_TEXT_MAX = 200;
+const LINK_DESC_MAX = 300;
+const LINK_TIMEOUT_MS = 5000;
+const LINK_BYTES_MAX = 512 * 1024;
+const LINK_REDIRECT_MAX = 3;
+const LINK_UA = "Mozilla/5.0 (compatible; plugim/1.0; +link-preview)";
+
+const decodeHtml = (raw: string): string => {
+    const named: Record<string, string> = {
+        amp: "&",
+        apos: "'",
+        gt: ">",
+        lt: "<",
+        nbsp: " ",
+        quot: '"',
+    };
+    return raw.replace(
+        /&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi,
+        (match, code: string) => {
+            const lower = code.toLowerCase();
+            if (lower.startsWith("#")) {
+                const hex = lower.startsWith("#x");
+                const value = Number.parseInt(
+                    lower.slice(hex ? 2 : 1),
+                    hex ? 16 : 10,
+                );
+                if (!Number.isFinite(value) || value <= 0 || value > 0x10ffff)
+                    return match;
+                return String.fromCodePoint(value);
+            }
+            return named[lower] ?? match;
+        },
+    );
+};
+
+const metaContent = (html: string): Map<string, string> => {
+    const map = new Map<string, string>();
+    for (const tag of html.match(/<meta\b[^>]*>/gi) ?? []) {
+        let key = "";
+        let content: string | null = null;
+        for (const attr of tag.matchAll(
+            /([a-z][a-z0-9:_-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi,
+        )) {
+            const name = attr[1].toLowerCase();
+            const value = attr[2] ?? attr[3] ?? attr[4] ?? "";
+            if (name === "property" || name === "name")
+                key = value.toLowerCase();
+            else if (name === "content") content = value;
+        }
+        if (key && content !== null && !map.has(key))
+            map.set(key, decodeHtml(content).trim());
+    }
+    return map;
+};
+
+const isPrivateV4 = (host: string): boolean => {
+    const parts = host.split(".").map((part) => Number(part));
+    if (parts.length !== 4) return false;
+    if (parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255))
+        return false;
+    const [a, b] = parts;
+    return (
+        a === 0 ||
+        a === 10 ||
+        a === 127 ||
+        (a === 100 && b >= 64 && b <= 127) ||
+        (a === 169 && b === 254) ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168)
+    );
+};
+
+const isPrivateHost = (hostname: string): boolean => {
+    const host = hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+    if (!host) return true;
+    if (host === "localhost" || host.endsWith(".localhost")) return true;
+    if (
+        host.endsWith(".local") ||
+        host.endsWith(".internal") ||
+        host.endsWith(".home.arpa")
+    )
+        return true;
+    if (host.includes(":")) {
+        if (host === "::" || host === "::1") return true;
+        const mapped = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+        if (mapped) return isPrivateV4(mapped[1]);
+        const mappedHex = host.match(
+            /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/,
+        );
+        if (mappedHex) {
+            const high = Number.parseInt(mappedHex[1], 16);
+            const low = Number.parseInt(mappedHex[2], 16);
+            return isPrivateV4(
+                `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`,
+            );
+        }
+        const head = host.split(":")[0];
+        if (/^fe[89ab]/.test(head)) return true;
+        if (head.startsWith("fc") || head.startsWith("fd")) return true;
+        if (head.startsWith("ff")) return true;
+        return false;
+    }
+    if (isPrivateV4(host)) return true;
+    return !host.includes(".");
+};
+
+const toPublicUrl = (value: string): URL => {
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error("链接地址无效");
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:")
+        throw new Error("仅支持 http/https 链接");
+    if (url.username || url.password) throw new Error("链接不能包含账号密码");
+    if (isPrivateHost(url.hostname)) throw new Error("不支持访问内网地址");
+    return url;
+};
+
+const readHtml = async (response: Response): Promise<string> => {
+    const body = response.body;
+    if (!body) return "";
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value) continue;
+            size += value.byteLength;
+            if (size > LINK_BYTES_MAX) break;
+            chunks.push(value);
+        }
+    } finally {
+        await reader.cancel().catch(() => undefined);
+    }
+    let total = 0;
+    for (const chunk of chunks) total += chunk.byteLength;
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(merged);
+};
+
+const resolveImage = (value: string, base: string): string | null => {
+    if (!value) return null;
+    try {
+        const url = new URL(value, base);
+        if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+        return url.href;
+    } catch {
+        return null;
+    }
+};
+
+const fetchLinkMeta = async (rawUrl: unknown): Promise<MomentLink> => {
+    const candidate = typeof rawUrl === "string" ? rawUrl.trim() : "";
+    if (!candidate) throw new Error("请输入链接地址");
+    if (candidate.length > LINK_URL_MAX)
+        throw new Error(`链接不能超过 ${LINK_URL_MAX} 个字符`);
+    let current = candidate.includes("://")
+        ? candidate
+        : `https://${candidate}`;
+    let response: Response | null = null;
+    for (let hop = 0; hop <= LINK_REDIRECT_MAX; hop += 1) {
+        const target = toPublicUrl(current);
+        try {
+            response = await fetch(target, {
+                redirect: "manual",
+                headers: {
+                    accept: "text/html,application/xhtml+xml",
+                    "user-agent": LINK_UA,
+                },
+                signal: AbortSignal.timeout(LINK_TIMEOUT_MS),
+            });
+        } catch {
+            throw new Error("链接无法访问");
+        }
+        if (response.status < 300 || response.status >= 400) break;
+        const location = response.headers.get("location");
+        if (!location) throw new Error("链接无法访问");
+        if (hop === LINK_REDIRECT_MAX) throw new Error("链接重定向次数过多");
+        current = new URL(location, target).href;
+    }
+    if (!response) throw new Error("链接无法访问");
+    if (!response.ok) throw new Error(`链接无法访问（${response.status}）`);
+    const type = (response.headers.get("content-type") ?? "").toLowerCase();
+    if (!type.includes("text/html")) throw new Error("链接不是网页");
+    const html = await readHtml(response);
+    const meta = metaContent(html);
+    const host = new URL(current).hostname.replace(/^www\./i, "");
+    const titleTag = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+    const title = (
+        meta.get("og:title") ||
+        meta.get("twitter:title") ||
+        (titleTag ? decodeHtml(titleTag[1]).trim() : "")
+    ).slice(0, LINK_TEXT_MAX);
+    const description = (
+        meta.get("og:description") ||
+        meta.get("description") ||
+        meta.get("twitter:description") ||
+        ""
+    ).slice(0, LINK_DESC_MAX);
+    return {
+        url: current,
+        title: title || host,
+        description,
+        image: resolveImage(
+            meta.get("og:image") ||
+                meta.get("og:image:url") ||
+                meta.get("twitter:image") ||
+                "",
+            current,
+        ),
+        site: (meta.get("og:site_name") || "").slice(0, LINK_TEXT_MAX) || host,
+    };
 };
 
 export const momentsPlugin: Plugin = {
@@ -111,6 +337,7 @@ export const momentsPlugin: Plugin = {
                 content: row.content,
                 images: row.images,
                 video: row.video,
+                link: row.link,
                 visibility: row.visibility,
                 audience:
                     row.authorId === viewerId
@@ -219,7 +446,12 @@ export const momentsPlugin: Plugin = {
                 rawVideo && rawVideo.length <= KEY_MAX ? rawVideo : null;
             if (video && keys.length > 0)
                 throw new Error("视频动态不能同时包含图片");
-            if (!content && !video && keys.length === 0)
+            const rawLink =
+                typeof params.link === "string" ? params.link.trim() : "";
+            if (rawLink && keys.length > 0)
+                throw new Error("链接动态不能同时包含图片");
+            if (rawLink && video) throw new Error("链接动态不能同时包含视频");
+            if (!content && !video && keys.length === 0 && !rawLink)
                 throw new Error("动态内容不能为空");
             for (const key of [...keys, ...(video ? [video] : [])]) {
                 if (!(await mediaFiles.byKey(key)))
@@ -261,11 +493,18 @@ export const momentsPlugin: Plugin = {
                 content,
                 images: keys,
                 video,
+                link: rawLink ? await fetchLinkMeta(rawLink) : null,
                 visibility,
                 audience,
             });
             await notify(row, "publish", me);
             return buildOne(row, me.id);
+        });
+
+        gateway.rpc("moment.link", async (raw, conn) => {
+            requireUser(conn);
+            const params = raw as unknown as MomentLinkParams;
+            return fetchLinkMeta(params.url);
         });
 
         gateway.rpc("moment.timeline", async (raw, conn) => {

@@ -4,6 +4,7 @@ import type {
     GroupRole,
     MessageKind,
     MessageQuote,
+    MomentLink,
     MomentVisibility,
     User,
 } from "@plugim/protocol";
@@ -279,6 +280,7 @@ export interface MomentRow {
     content: string;
     images: string[];
     video: string | null;
+    link: MomentLink | null;
     visibility: MomentVisibility;
     audience: string[];
     createdAt: string;
@@ -309,6 +311,7 @@ export interface MomentsStore {
         content: string;
         images: string[];
         video: string | null;
+        link: MomentLink | null;
         visibility: MomentVisibility;
         audience: string[];
     }): Promise<MomentRow>;

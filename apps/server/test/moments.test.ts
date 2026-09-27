@@ -3,7 +3,7 @@ import type {
     MomentTimelineResult,
     MomentUnreadResult,
 } from "@plugim/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestApp, type TestApp, uploadFile } from "./helpers";
 
 const feedOf = async (
@@ -408,6 +408,209 @@ describe("moment video", () => {
         await expect(
             app.call("moment.publish", { content: "  " }, ua.user),
         ).rejects.toThrow("动态内容不能为空");
+    });
+});
+
+const PUBLIC_HOST = "93.184.216.34";
+
+const stubFetch = (
+    handler: (url: string) => {
+        status?: number;
+        headers?: Record<string, string>;
+        body?: string;
+    },
+) => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: unknown) => {
+        const url =
+            input instanceof URL
+                ? input.href
+                : typeof input === "string"
+                  ? input
+                  : String((input as Request).url);
+        calls.push(url);
+        const result = handler(url);
+        return new Response(result.body ?? "", {
+            status: result.status ?? 200,
+            headers: {
+                "content-type": "text/html; charset=utf-8",
+                ...result.headers,
+            },
+        });
+    });
+    return calls;
+};
+
+const stubPage = (html: string, url = `http://${PUBLIC_HOST}/post`) => {
+    const calls = stubFetch(() => ({ body: html }));
+    return { calls, url };
+};
+
+describe("moment link", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("reads the card from open graph tags", async () => {
+        const { app, ua } = await friendPair("la", "lb");
+        const { calls, url } = stubPage(
+            `<html><head>
+                <title>备用标题</title>
+                <meta property="og:title" content="示例 &amp; 标题">
+                <meta name="description" content="站点描述">
+                <meta property="og:image" content="/cover.png">
+                <meta property="og:site_name" content="示例站点">
+            </head><body>hi</body></html>`,
+        );
+        const meta = await app.call("moment.link", { url }, ua.user);
+        expect(calls).toEqual([url]);
+        expect(meta).toEqual({
+            url,
+            title: "示例 & 标题",
+            description: "站点描述",
+            image: `http://${PUBLIC_HOST}/cover.png`,
+            site: "示例站点",
+        });
+    });
+
+    it("follows redirects and falls back to the title tag", async () => {
+        const { app, ua } = await friendPair("la2", "lb2");
+        const target = `http://${PUBLIC_HOST}/final`;
+        stubFetch((url) =>
+            url === `http://${PUBLIC_HOST}/start`
+                ? { status: 302, headers: { location: "/final" } }
+                : { body: "<html><head><title> 最终页 </title></head></html>" },
+        );
+        const meta = await app.call(
+            "moment.link",
+            { url: `http://${PUBLIC_HOST}/start` },
+            ua.user,
+        );
+        expect(meta).toMatchObject({
+            url: target,
+            title: "最终页",
+            description: "",
+            image: null,
+            site: PUBLIC_HOST,
+        });
+    });
+
+    it("refuses private, credentialed and non-http targets without fetching", async () => {
+        const { app, ua } = await friendPair("la3", "lb3");
+        const calls = stubFetch(() => ({ body: "<title>x</title>" }));
+        const cases: [string, string][] = [
+            ["http://127.0.0.1/post", "不支持访问内网地址"],
+            ["http://localhost/post", "不支持访问内网地址"],
+            ["http://192.168.1.10/post", "不支持访问内网地址"],
+            ["http://169.254.169.254/latest/meta-data", "不支持访问内网地址"],
+            ["http://[::1]/post", "不支持访问内网地址"],
+            ["http://intranet/post", "不支持访问内网地址"],
+            ["file:///etc/passwd", "仅支持 http/https 链接"],
+            ["http://user:pass@93.184.216.34/post", "链接不能包含账号密码"],
+        ];
+        for (const [url, message] of cases)
+            await expect(
+                app.call("moment.link", { url }, ua.user),
+            ).rejects.toThrow(message);
+        expect(calls).toEqual([]);
+    });
+
+    it("refuses a redirect into a private network", async () => {
+        const { app, ua } = await friendPair("la4", "lb4");
+        stubFetch(() => ({
+            status: 302,
+            headers: { location: "http://10.0.0.1/admin" },
+        }));
+        await expect(
+            app.call(
+                "moment.link",
+                { url: `http://${PUBLIC_HOST}/go` },
+                ua.user,
+            ),
+        ).rejects.toThrow("不支持访问内网地址");
+    });
+
+    it("rejects non-html answers and unreachable hosts", async () => {
+        const { app, ua } = await friendPair("la5", "lb5");
+        stubFetch(() => ({
+            headers: { "content-type": "application/json" },
+            body: "{}",
+        }));
+        await expect(
+            app.call(
+                "moment.link",
+                { url: `http://${PUBLIC_HOST}/api` },
+                ua.user,
+            ),
+        ).rejects.toThrow("链接不是网页");
+        vi.stubGlobal("fetch", async () => {
+            throw new Error("boom");
+        });
+        await expect(
+            app.call(
+                "moment.link",
+                { url: `http://${PUBLIC_HOST}/down` },
+                ua.user,
+            ),
+        ).rejects.toThrow("链接无法访问");
+    });
+
+    it("publishes a link card and keeps it in the feed", async () => {
+        const { app, ua, ub } = await friendPair("la6", "lb6");
+        const { url } = stubPage(
+            `<meta property="og:title" content="一篇文章"><meta name="description" content="摘要">`,
+        );
+        const post = (await app.call(
+            "moment.publish",
+            { content: "推荐 https://x.test", link: url },
+            ua.user,
+        )) as MomentPost;
+        expect(post.link).toEqual({
+            url,
+            title: "一篇文章",
+            description: "摘要",
+            image: null,
+            site: PUBLIC_HOST,
+        });
+        const feed = await feedOf(app, ub.user);
+        expect(feed.posts[0].link?.title).toBe("一篇文章");
+        const image = await uploadFile(app, ua.token, "c.png", "image/png", 8);
+        const video = await uploadFile(app, ua.token, "c.mp4", "video/mp4", 16);
+        await expect(
+            app.call(
+                "moment.publish",
+                { content: "混合", link: url, images: [image.key] },
+                ua.user,
+            ),
+        ).rejects.toThrow("链接动态不能同时包含图片");
+        await expect(
+            app.call(
+                "moment.publish",
+                { content: "混合", link: url, video: video.key },
+                ua.user,
+            ),
+        ).rejects.toThrow("链接动态不能同时包含视频");
+    });
+
+    it("rejects a link that cannot be previewed", async () => {
+        const { app, ua } = await friendPair("la7", "lb7");
+        stubFetch(() => ({ status: 404 }));
+        await expect(
+            app.call(
+                "moment.publish",
+                { content: "推荐", link: `http://${PUBLIC_HOST}/missing` },
+                ua.user,
+            ),
+        ).rejects.toThrow("链接无法访问（404）");
+    });
+
+    it("requires a signed in user", async () => {
+        const { app } = await friendPair("la8", "lb8");
+        const calls = stubFetch(() => ({ body: "<title>x</title>" }));
+        await expect(
+            app.call("moment.link", { url: `http://${PUBLIC_HOST}/post` }),
+        ).rejects.toThrow("未登录或登录已过期");
+        expect(calls).toEqual([]);
     });
 });
 

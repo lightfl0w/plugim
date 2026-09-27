@@ -15,6 +15,7 @@ const post = (id: string, content: string): MomentPost => ({
     content,
     images: [],
     video: null,
+    link: null,
     visibility: "public",
     audience: [],
     createdAt: new Date().toISOString(),
@@ -53,6 +54,14 @@ const makeMoments = async (
                 return { posts: 0, interactions: 0, total: 0 };
             if (method === "moment.publish")
                 return post("new", String(params.content));
+            if (method === "moment.link")
+                return {
+                    url: String(params.url),
+                    title: "示例站点",
+                    description: "描述",
+                    image: null,
+                    site: "example.com",
+                };
             if (method === "moment.like")
                 return {
                     ...post(String(params.postId), "x"),
@@ -162,6 +171,7 @@ describe("moments service", () => {
             content: "新",
             images: [],
             video: null,
+            link: null,
             visibility: "public",
             audience: [],
         });
@@ -238,6 +248,7 @@ describe("moments service", () => {
             content: "视频",
             images: [],
             video: "clip-key",
+            link: null,
             visibility: "partial",
             audience: ["bob", "carol"],
         });
@@ -247,6 +258,25 @@ describe("moments service", () => {
             video: "clip-key",
             visibility: "partial",
             audience: ["bob", "carol"],
+        });
+    });
+
+    it("previews a link and forwards it when publishing", async () => {
+        const { service, calls } = await makeMoments();
+        const meta = await service.preview("https://example.com/post");
+        expect(calls[0].method).toBe("moment.link");
+        expect(calls[0].params.url).toBe("https://example.com/post");
+        expect(meta).toMatchObject({ site: "example.com" });
+        await service.publish({
+            content: "看看这个",
+            images: [],
+            video: null,
+            link: "https://example.com/post",
+            visibility: "public",
+            audience: [],
+        });
+        expect(calls[1].params).toMatchObject({
+            link: "https://example.com/post",
         });
     });
 

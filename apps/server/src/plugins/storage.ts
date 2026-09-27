@@ -5,6 +5,7 @@ import type {
     FileMeta,
     GroupRole,
     MessageQuote,
+    MomentLink,
     MomentVisibility,
 } from "@plugim/protocol";
 import Database from "better-sqlite3";
@@ -355,6 +356,7 @@ const momentsSqlite = sqliteTable("moments", {
     content: sqliteText("content").notNull(),
     images: sqliteText("images").notNull(),
     video: sqliteText("video"),
+    link: sqliteText("link"),
     visibility: sqliteText("visibility").notNull(),
     createdAt: integer("created_at").notNull(),
 });
@@ -365,6 +367,7 @@ const momentsPg = pgTable("moments", {
     content: pgText("content").notNull(),
     images: pgText("images").notNull(),
     video: pgText("video"),
+    link: pgText("link"),
     visibility: pgText("visibility").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
         .notNull()
@@ -541,6 +544,7 @@ CREATE TABLE IF NOT EXISTS moments (
   content TEXT NOT NULL,
   images TEXT NOT NULL,
   video TEXT,
+  link TEXT,
   visibility TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
@@ -674,6 +678,7 @@ CREATE TABLE IF NOT EXISTS moments (
   content TEXT NOT NULL,
   images TEXT NOT NULL,
   video TEXT,
+  link TEXT,
   visibility TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -772,12 +777,35 @@ const toVisibility = (value: string): MomentVisibility =>
         ? value
         : "public";
 
+const parseLink = (raw: unknown): MomentLink | null => {
+    if (typeof raw !== "string" || !raw) return null;
+    try {
+        const parsed = JSON.parse(raw) as Partial<MomentLink>;
+        if (
+            typeof parsed?.url === "string" &&
+            typeof parsed?.title === "string"
+        )
+            return {
+                url: parsed.url,
+                title: parsed.title,
+                description:
+                    typeof parsed.description === "string"
+                        ? parsed.description
+                        : "",
+                image: typeof parsed.image === "string" ? parsed.image : null,
+                site: typeof parsed.site === "string" ? parsed.site : "",
+            };
+    } catch {}
+    return null;
+};
+
 const momentToRow = (row: {
     id: string;
     authorId: string;
     content: string;
     images: string;
     video: string | null;
+    link: string | null;
     visibility: string;
     createdAt: Date | number;
 }): MomentRow => ({
@@ -786,6 +814,7 @@ const momentToRow = (row: {
     content: row.content,
     images: parseImages(row.images),
     video: row.video ?? null,
+    link: parseLink(row.link),
     visibility: toVisibility(row.visibility),
     audience: [],
     createdAt: toIso(row.createdAt),
@@ -991,6 +1020,9 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE moments ADD COLUMN IF NOT EXISTS video TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE moments ADD COLUMN IF NOT EXISTS link TEXT",
             );
             const db = drizzlePg(client);
 
@@ -1970,6 +2002,9 @@ export const storagePlugin: Plugin = {
                             content: input.content,
                             images: JSON.stringify(input.images),
                             video: input.video,
+                            link: input.link
+                                ? JSON.stringify(input.link)
+                                : null,
                             visibility: input.visibility,
                         })
                         .returning();
@@ -2216,6 +2251,8 @@ export const storagePlugin: Plugin = {
             ) as Array<{ name: string }>;
             if (!momentColumns.some((item) => item.name === "video"))
                 client.exec("ALTER TABLE moments ADD COLUMN video TEXT");
+            if (!momentColumns.some((item) => item.name === "link"))
+                client.exec("ALTER TABLE moments ADD COLUMN link TEXT");
             const db = drizzleSqlite(client);
 
             const messageCursor = async (id: string) => {
@@ -3276,6 +3313,7 @@ export const storagePlugin: Plugin = {
                         content: input.content,
                         images: JSON.stringify(input.images),
                         video: input.video,
+                        link: input.link ? JSON.stringify(input.link) : null,
                         visibility: input.visibility,
                         createdAt,
                     });
@@ -3295,6 +3333,7 @@ export const storagePlugin: Plugin = {
                         content: input.content,
                         images: input.images,
                         video: input.video,
+                        link: input.link,
                         visibility: input.visibility,
                         audience: input.audience,
                         createdAt: new Date(createdAt).toISOString(),

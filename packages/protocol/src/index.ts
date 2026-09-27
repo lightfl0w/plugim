@@ -304,12 +304,21 @@ export interface MomentComment {
     createdAt: string;
 }
 
+export interface MomentLink {
+    url: string;
+    title: string;
+    description: string;
+    image: string | null;
+    site: string;
+}
+
 export interface MomentPost {
     id: string;
     author: string;
     content: string;
     images: string[];
     video: string | null;
+    link: MomentLink | null;
     visibility: MomentVisibility;
     audience: string[];
     createdAt: string;
@@ -317,10 +326,15 @@ export interface MomentPost {
     comments: MomentComment[];
 }
 
+export interface MomentLinkParams {
+    url: string;
+}
+
 export interface MomentPublishParams {
     content: string;
     images?: string[] | null;
     video?: string | null;
+    link?: string | null;
     visibility?: MomentVisibility;
     audience?: string[] | null;
 }

@@ -1,5 +1,6 @@
 import type { Plugin } from "@plugim/core";
 import type {
+    MomentLink,
     MomentPost,
     MomentTimelineResult,
     MomentUnreadResult,
@@ -28,9 +29,11 @@ export interface MomentsService {
         content: string;
         images: string[];
         video: string | null;
+        link: string | null;
         visibility: MomentVisibility;
         audience: string[];
     }): Promise<void>;
+    preview(url: string): Promise<MomentLink>;
     like(postId: string, liked: boolean): Promise<void>;
     comment(postId: string, content: string): Promise<void>;
     remove(postId: string): Promise<void>;
@@ -169,11 +172,14 @@ export const momentsPlugin: Plugin = {
                     content: input.content,
                     images: input.images,
                     video: input.video,
+                    link: input.link,
                     visibility: input.visibility,
                     audience: input.audience,
                 })) as MomentPost;
                 upsert(post);
             },
+            preview: (url) =>
+                rpc.call("moment.link", { url }) as Promise<MomentLink>,
             async like(postId, liked) {
                 const post = (await rpc.call("moment.like", {
                     postId,

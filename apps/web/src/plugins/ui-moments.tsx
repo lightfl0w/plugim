@@ -1,6 +1,7 @@
 import type { Context } from "@plugim/core";
 import type {
     ChatMessage,
+    MomentLink,
     MomentPost,
     MomentVisibility,
 } from "@plugim/protocol";
@@ -76,6 +77,25 @@ const gridClass = (count: number) =>
         : count === 2 || count === 4
           ? "grid-cols-2"
           : "grid-cols-3";
+
+const URL_RE = /https?:\/\/[^\s<>"']+/i;
+
+const detectUrl = (text: string): string | null => {
+    const match = URL_RE.exec(text);
+    if (!match) return null;
+    const url = match[0].replace(/[),.;!?，。；！？、）】]+$/, "");
+    if (url.length <= 8) return null;
+    try {
+        return new URL(url).hostname ? url : null;
+    } catch {
+        return null;
+    }
+};
+
+const withoutUrl = (text: string, url: string): string =>
+    text.replace(url, "").trim();
+
+const PREVIEW_DELAY_MS = 400;
 
 const requestNotifyPermission = () => {
     if (
@@ -213,12 +233,52 @@ export const uiMomentsSetup = async (ctx: Context) => {
         const [busy, setBusy] = useState(false);
         const [uploading, setUploading] = useState(false);
         const [error, setError] = useState("");
+        const [link, setLink] = useState<MomentLink | null>(null);
+        const [linkState, setLinkState] = useState<
+            "idle" | "loading" | "ready" | "error"
+        >("idle");
+        const [linkError, setLinkError] = useState("");
+        const [linkDismissed, setLinkDismissed] = useState<string | null>(null);
+        const previewSeq = useRef(0);
         const fileRef = useRef<HTMLInputElement>(null);
         const videoRef = useRef<HTMLInputElement>(null);
+        const detected = detectUrl(content);
+        const canLink = images.length === 0 && !video;
 
         useEffect(() => {
             void friendService.refresh().catch(() => undefined);
         }, []);
+
+        useEffect(() => {
+            previewSeq.current += 1;
+            const seq = previewSeq.current;
+            setLink(null);
+            setLinkState("idle");
+            setLinkError("");
+            if (!detected) {
+                setLinkDismissed(null);
+                return;
+            }
+            if (!canLink || linkDismissed === detected) return;
+            setLinkState("loading");
+            const timer = window.setTimeout(() => {
+                void moments
+                    .preview(detected)
+                    .then((meta) => {
+                        if (previewSeq.current !== seq) return;
+                        setLink(meta);
+                        setLinkState("ready");
+                    })
+                    .catch((err) => {
+                        if (previewSeq.current !== seq) return;
+                        setLinkState("error");
+                        setLinkError(
+                            err instanceof Error ? err.message : String(err),
+                        );
+                    });
+            }, PREVIEW_DELAY_MS);
+            return () => window.clearTimeout(timer);
+        }, [detected, linkDismissed, canLink]);
 
         const pickImages = async (files: FileList) => {
             const room = MAX_IMAGES - images.length;
@@ -257,20 +317,23 @@ export const uiMomentsSetup = async (ctx: Context) => {
         const publish = async () => {
             const text = content.trim();
             if (!text && images.length === 0 && !video) return;
+            const attached = link ? detected : null;
             setBusy(true);
             setError("");
             requestNotifyPermission();
             try {
                 await moments.publish({
-                    content: text,
+                    content: attached ? withoutUrl(text, attached) : text,
                     images,
                     video,
+                    link: link?.url ?? null,
                     visibility,
                     audience: needsAudience(visibility) ? audience : [],
                 });
                 setContent("");
                 setImages([]);
                 setVideo(null);
+                setLinkDismissed(null);
                 setVisibility("public");
                 setAudience([]);
             } catch (err) {
@@ -291,6 +354,47 @@ export const uiMomentsSetup = async (ctx: Context) => {
                     className="min-h-20 resize-none border-0 bg-transparent px-0 focus-visible:ring-0 dark:bg-transparent"
                     onChange={(event) => setContent(event.target.value)}
                 />
+                {canLink && detected && linkState === "loading" ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        正在获取链接预览…
+                    </p>
+                ) : null}
+                {canLink && detected && linkState === "error" ? (
+                    <p className="mt-1 text-xs text-amber-600">{linkError}</p>
+                ) : null}
+                {canLink && link ? (
+                    <div className="relative mt-2 flex items-center gap-2 rounded-lg border border-border bg-muted/40 p-2 pr-8">
+                        {link.image ? (
+                            <img
+                                src={link.image}
+                                alt=""
+                                referrerPolicy="no-referrer"
+                                className="size-14 shrink-0 rounded-md bg-muted object-cover"
+                            />
+                        ) : null}
+                        <div className="min-w-0 flex-1">
+                            <p className="line-clamp-2 text-xs font-medium">
+                                {link.title}
+                            </p>
+                            {link.description ? (
+                                <p className="line-clamp-2 text-[11px] text-muted-foreground">
+                                    {link.description}
+                                </p>
+                            ) : null}
+                            <p className="text-[11px] text-muted-foreground">
+                                {link.site}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            title="移除链接卡片"
+                            className="absolute top-1 right-1 rounded-md p-0.5 text-muted-foreground hover:bg-accent"
+                            onClick={() => setLinkDismissed(detected)}
+                        >
+                            <XIcon className="size-3.5" />
+                        </button>
+                    </div>
+                ) : null}
                 {images.length > 0 ? (
                     <div
                         className={cn(
@@ -374,10 +478,15 @@ export const uiMomentsSetup = async (ctx: Context) => {
                         title={
                             video
                                 ? "视频动态不能再选图片"
-                                : `添加图片，最多 ${MAX_IMAGES} 张`
+                                : link
+                                  ? "链接动态不能再选图片"
+                                  : `添加图片，最多 ${MAX_IMAGES} 张`
                         }
                         disabled={
-                            uploading || !!video || images.length >= MAX_IMAGES
+                            uploading ||
+                            !!video ||
+                            !!link ||
+                            images.length >= MAX_IMAGES
                         }
                         onClick={() => fileRef.current?.click()}
                     >
@@ -389,9 +498,13 @@ export const uiMomentsSetup = async (ctx: Context) => {
                         title={
                             images.length > 0
                                 ? "图片动态不能再选视频"
-                                : "添加视频"
+                                : link
+                                  ? "链接动态不能再选视频"
+                                  : "添加视频"
                         }
-                        disabled={uploading || !!video || images.length > 0}
+                        disabled={
+                            uploading || !!video || !!link || images.length > 0
+                        }
                         onClick={() => videoRef.current?.click()}
                     >
                         <FilmIcon />
@@ -426,6 +539,7 @@ export const uiMomentsSetup = async (ctx: Context) => {
                             busy ||
                             uploading ||
                             waiting ||
+                            linkState === "loading" ||
                             (!content.trim() && images.length === 0 && !video)
                         }
                         onClick={() => void publish()}
@@ -576,6 +690,37 @@ export const uiMomentsSetup = async (ctx: Context) => {
                     <p className="mt-2 text-sm break-words whitespace-pre-wrap">
                         {post.content}
                     </p>
+                ) : null}
+                {post.link ? (
+                    <a
+                        href={post.link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 flex items-center gap-3 overflow-hidden rounded-lg border border-border bg-muted/40 p-2 transition-colors hover:bg-accent/60"
+                    >
+                        {post.link.image ? (
+                            <img
+                                src={post.link.image}
+                                alt=""
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                                className="size-20 shrink-0 rounded-md bg-muted object-cover"
+                            />
+                        ) : null}
+                        <span className="min-w-0 flex-1">
+                            <span className="line-clamp-2 block text-sm font-medium">
+                                {post.link.title}
+                            </span>
+                            {post.link.description ? (
+                                <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+                                    {post.link.description}
+                                </span>
+                            ) : null}
+                            <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                                {post.link.site}
+                            </span>
+                        </span>
+                    </a>
                 ) : null}
                 {post.images.length > 0 ? (
                     <div
