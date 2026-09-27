@@ -101,3 +101,83 @@ describe("friend remarks", () => {
         });
     });
 });
+
+describe("friend groups", () => {
+    it("creates, renames, moves and removes groups", async () => {
+        const { app, ua, ub } = await friendPair("ga", "gb");
+        const created = (await app.call(
+            "friend.group.create",
+            { name: " 同学 " },
+            ua.user,
+        )) as {
+            groups: { id: string; name: string }[];
+            friendGroups: Record<string, string | null>;
+        };
+        const groupId = created.groups[0]?.id ?? "";
+        expect(created.groups).toEqual([{ id: groupId, name: "同学" }]);
+        const moved = (await app.call(
+            "friend.group.move",
+            { username: "gb", groupId },
+            ua.user,
+        )) as { friendGroups: Record<string, string | null> };
+        expect(moved.friendGroups).toEqual({ gb: groupId });
+        const renamed = (await app.call(
+            "friend.group.rename",
+            { groupId, name: "家人" },
+            ua.user,
+        )) as { groups: { id: string; name: string }[] };
+        expect(renamed.groups).toEqual([{ id: groupId, name: "家人" }]);
+        await app.call("friend.group.create", { name: "同事" }, ua.user);
+        await expect(
+            app.call("friend.group.create", { name: "同事" }, ua.user),
+        ).rejects.toThrow("分组名称已存在");
+        await expect(
+            app.call(
+                "friend.group.rename",
+                { groupId, name: "同事" },
+                ua.user,
+            ),
+        ).rejects.toThrow("分组名称已存在");
+        await expect(
+            app.call(
+                "friend.group.move",
+                { username: "gb", groupId: "missing" },
+                ua.user,
+            ),
+        ).rejects.toThrow("分组不存在");
+        const stranger = await app.register("gc");
+        await expect(
+            app.call(
+                "friend.group.move",
+                { username: "gb", groupId: null },
+                stranger.user,
+            ),
+        ).rejects.toThrow("只能移动好友");
+        const removed = (await app.call(
+            "friend.group.remove",
+            { groupId },
+            ua.user,
+        )) as {
+            groups: { name: string }[];
+            friendGroups: Record<string, string | null>;
+        };
+        expect(removed.groups.map((group) => group.name)).toEqual(["同事"]);
+        expect(removed.friendGroups).toEqual({ gb: null });
+    });
+
+    it("validates names and caps the count at 20", async () => {
+        const { app, ua } = await friendPair("ha", "hb");
+        await expect(
+            app.call("friend.group.create", { name: "  " }, ua.user),
+        ).rejects.toThrow("分组名称不能为空");
+        for (let i = 0; i < 20; i++)
+            await app.call(
+                "friend.group.create",
+                { name: `分组${i}` },
+                ua.user,
+            );
+        await expect(
+            app.call("friend.group.create", { name: "更多" }, ua.user),
+        ).rejects.toThrow("分组数量已达上限");
+    });
+});

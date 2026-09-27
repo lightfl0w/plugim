@@ -1,6 +1,7 @@
 import type { Context } from "@plugim/core";
 import type {
     GroupCallInfo,
+    GroupEssenceItem,
     GroupFileItem,
     GroupInfo,
     GroupJoinRequest,
@@ -37,7 +38,7 @@ import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { PresenceService } from "./presence";
 import type { SenderService } from "./sender";
-import { formatBytes } from "./ui-shared";
+import { formatBytes, messageLabel } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 interface MembersResult {
@@ -138,6 +139,7 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
         const [uploading, setUploading] = useState("");
         const [call, setCall] = useState<GroupCallInfo | null>(null);
         const [requests, setRequests] = useState<GroupJoinRequest[]>([]);
+        const [essences, setEssences] = useState<GroupEssenceItem[]>([]);
         const [expiry, setExpiry] = useState<InviteExpiry>("never");
         const panelRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
@@ -145,32 +147,41 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
 
         const load = async (id: string) => {
             try {
-                const [nextInfo, nextMembers, nextFiles, nextCall] =
-                    await Promise.all([
-                        rpc.call("group.info", {
+                const [
+                    nextInfo,
+                    nextMembers,
+                    nextFiles,
+                    nextCall,
+                    nextEssence,
+                ] = await Promise.all([
+                    rpc.call("group.info", {
+                        groupId: id,
+                    }) as Promise<GroupInfo>,
+                    rpc.call("group.members", {
+                        groupId: id,
+                    }) as Promise<MembersResult>,
+                    rpc
+                        .call("group.file.list", {
                             groupId: id,
-                        }) as Promise<GroupInfo>,
-                        rpc.call("group.members", {
-                            groupId: id,
-                        }) as Promise<MembersResult>,
-                        rpc
-                            .call("group.file.list", {
-                                groupId: id,
-                                limit: 50,
-                            })
-                            .catch(() => null) as Promise<{
-                            files: GroupFileItem[];
-                            total: number;
-                        } | null>,
-                        rpc
-                            .call("call.group.info", { groupId: id })
-                            .catch(() => null) as Promise<GroupCallInfo | null>,
-                    ]);
+                            limit: 50,
+                        })
+                        .catch(() => null) as Promise<{
+                        files: GroupFileItem[];
+                        total: number;
+                    } | null>,
+                    rpc
+                        .call("call.group.info", { groupId: id })
+                        .catch(() => null) as Promise<GroupCallInfo | null>,
+                    rpc
+                        .call("group.essence.list", { groupId: id })
+                        .catch(() => []) as Promise<GroupEssenceItem[]>,
+                ]);
                 setInfo(nextInfo);
                 setMembers(nextMembers.members);
                 setFiles(nextFiles?.files ?? []);
                 setTotal(nextFiles?.total ?? 0);
                 setCall(nextCall);
+                setEssences(nextEssence);
                 const manager =
                     nextInfo.myRole === "owner" || nextInfo.myRole === "admin";
                 setRequests(
@@ -197,6 +208,7 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 setNoticeDraft(null);
                 setNameDraft(null);
                 setRequests([]);
+                setEssences([]);
                 void loadRef.current(id);
             });
             const disposeUpdate = ctx.on("server:group:update", (payload) => {
@@ -217,11 +229,21 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 };
                 if (changed === groupId) void loadRef.current(groupId);
             });
+            const disposeEssence = ctx.on(
+                "server:essence:update",
+                (payload) => {
+                    const { groupId: changed } = payload as {
+                        groupId: string;
+                    };
+                    if (changed === groupId) void loadRef.current(groupId);
+                },
+            );
             return () => {
                 void dispose();
                 void disposeUpdate();
                 void disposeRequest();
                 void disposeCall();
+                void disposeEssence();
             };
         }, [groupId]);
 
@@ -265,6 +287,16 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
             } finally {
                 setBusy(false);
             }
+        };
+
+        const locateEssence = (item: GroupEssenceItem) => {
+            if (!groupId) return;
+            setGroupId(null);
+            ctx.emit("ui:chat:search:jump", {
+                session: `g:${groupId}`,
+                id: item.messageId,
+                at: item.createdAt,
+            });
         };
 
         const uploadFile = async (file: File) => {
@@ -561,6 +593,71 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                                     }
                                                 >
                                                     <Trash2Icon className="size-4" />
+                                                </button>
+                                            ) : null}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </section>
+
+                        <section className="border-b border-border p-4">
+                            <p className="mb-2 text-xs font-semibold text-muted-foreground">
+                                群精华 ({essences.length})
+                            </p>
+                            {essences.length === 0 ? (
+                                <p className="py-1 text-xs text-muted-foreground">
+                                    暂无精华消息
+                                </p>
+                            ) : (
+                                <div className="flex flex-col gap-1">
+                                    {essences.map((item) => (
+                                        <div
+                                            key={item.messageId}
+                                            className="flex items-start gap-1 rounded-lg bg-amber-500/10 px-2 py-1.5 hover:bg-amber-500/20"
+                                        >
+                                            <button
+                                                type="button"
+                                                title="定位原消息"
+                                                className="min-w-0 flex-1 cursor-pointer text-left"
+                                                onClick={() =>
+                                                    locateEssence(item)
+                                                }
+                                            >
+                                                <p className="truncate text-xs font-medium text-amber-600 dark:text-amber-400">
+                                                    {item.sender}
+                                                </p>
+                                                <p className="truncate text-sm">
+                                                    {messageLabel(
+                                                        item.kind ?? undefined,
+                                                        item.content,
+                                                    ) ?? item.content}
+                                                </p>
+                                                <p className="text-[10px] text-muted-foreground">
+                                                    {item.setBy} 设为精华{" "}
+                                                    {new Date(
+                                                        item.setAt,
+                                                    ).toLocaleDateString()}
+                                                </p>
+                                            </button>
+                                            {privileged ? (
+                                                <button
+                                                    type="button"
+                                                    title="取消精华"
+                                                    className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+                                                    disabled={busy}
+                                                    onClick={() =>
+                                                        void act(
+                                                            "group.essence.set",
+                                                            {
+                                                                messageId:
+                                                                    item.messageId,
+                                                                on: false,
+                                                            },
+                                                        )
+                                                    }
+                                                >
+                                                    <Trash2Icon className="size-3.5" />
                                                 </button>
                                             ) : null}
                                         </div>

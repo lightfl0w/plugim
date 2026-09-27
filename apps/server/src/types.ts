@@ -361,4 +361,38 @@ export interface FriendsStore {
     edgesOf(userId: string): Promise<FriendEdge[]>;
     setRemark(ownerId: string, friendId: string, remark: string): Promise<void>;
     remarksOf(ownerId: string): Promise<Record<string, string>>;
+    groupListOf(ownerId: string): Promise<FriendGroupRow[]>;
+    groupCreate(ownerId: string, name: string): Promise<FriendGroupRow>;
+    groupRename(ownerId: string, groupId: string, name: string): Promise<void>;
+    groupRemove(ownerId: string, groupId: string): Promise<void>;
+    groupSetFriend(
+        ownerId: string,
+        friendId: string,
+        groupId: string | null,
+    ): Promise<void>;
+    friendGroupMap(ownerId: string): Promise<Record<string, string>>;
+}
+
+export interface FriendGroupRow {
+    id: string;
+    ownerId: string;
+    name: string;
+    createdAt: string;
+}
+
+export interface EssenceItemRow {
+    messageId: string;
+    sender: string;
+    content: string;
+    kind: string | null;
+    createdAt: string;
+    setBy: string;
+    setAt: string;
+}
+
+export interface EssencesStore {
+    add(groupId: string, messageId: string, setBy: string): Promise<void>;
+    remove(groupId: string, messageId: string): Promise<void>;
+    has(groupId: string, messageId: string): Promise<boolean>;
+    listOf(groupId: string): Promise<EssenceItemRow[]>;
 }

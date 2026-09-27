@@ -67,12 +67,19 @@ export interface CredentialsParams {
     password: string;
 }
 
+export interface FriendGroupInfo {
+    id: string;
+    name: string;
+}
+
 export interface FriendListResult {
     friends: string[];
     incoming: string[];
     outgoing: string[];
     blocked: string[];
     remarks: Record<string, string>;
+    groups: FriendGroupInfo[];
+    friendGroups: Record<string, string | null>;
 }
 
 export interface MessageRecalledEvent {
@@ -286,6 +293,37 @@ export interface FriendTargetParams {
 export interface FriendRemarkParams {
     username: string;
     remark: string;
+}
+
+export interface FriendGroupParams {
+    groupId?: string;
+    name?: string;
+}
+
+export interface FriendGroupMoveParams {
+    username: string;
+    groupId: string | null;
+}
+
+export interface GroupEssenceParams {
+    groupId: string;
+    messageId: string;
+    on: boolean;
+}
+
+export interface GroupEssenceItem {
+    messageId: string;
+    sender: string;
+    content: string;
+    kind: MessageKind | null;
+    createdAt: string;
+    setBy: string;
+    setAt: string;
+}
+
+export interface ChatPokeParams {
+    session: string;
+    target?: string;
 }
 
 export interface UserInfoResult {

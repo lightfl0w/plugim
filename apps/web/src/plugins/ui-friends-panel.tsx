@@ -1,13 +1,14 @@
 import type { Context } from "@plugim/core";
 import type { FriendListResult } from "@plugim/protocol";
-import { ArrowLeftIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Separator } from "../components/ui/separator";
 import { UserAvatar } from "../components/ui/user-avatar";
+import { cn } from "../lib/utils";
 import type { FriendsService } from "./friends";
 import { displayName, openChat, setShellPane } from "./ui-shared";
 import type { UiService } from "./ui-types";
@@ -15,6 +16,13 @@ import type { UiService } from "./ui-types";
 type DetailView =
     | { type: "friend"; name: string }
     | { type: "outgoing" }
+    | null;
+
+const DEFAULT_GROUP = "__default__";
+
+type FriendMenu =
+    | { kind: "friend"; x: number; y: number; name: string }
+    | { kind: "group"; x: number; y: number; id: string }
     | null;
 
 export const uiFriendsPanelSetup = async (ctx: Context) => {
@@ -37,8 +45,35 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
         const list = useFriendList();
         const [addName, setAddName] = useState("");
         const [error, setError] = useState("");
+        const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+        const [creating, setCreating] = useState(false);
+        const [newName, setNewName] = useState("");
+        const [rename, setRename] = useState<{
+            id: string;
+            text: string;
+        } | null>(null);
+        const [menu, setMenu] = useState<FriendMenu>(null);
 
-        const run = async (fn: () => Promise<void>) => {
+        useEffect(() => {
+            if (!menu) return undefined;
+            const close = () => setMenu(null);
+            const onKey = (e: KeyboardEvent) => {
+                if (e.key === "Escape") setMenu(null);
+            };
+            window.addEventListener("click", close);
+            window.addEventListener("keydown", onKey);
+            return () => {
+                window.removeEventListener("click", close);
+                window.removeEventListener("keydown", onKey);
+            };
+        }, [menu]);
+
+        const groups = list?.groups ?? [];
+        const groupOf = (name: string) => list?.friendGroups?.[name] ?? null;
+        const membersIn = (groupId: string | null) =>
+            (list?.friends ?? []).filter((name) => groupOf(name) === groupId);
+
+        const run = async (fn: () => Promise<unknown>) => {
             setError("");
             try {
                 await fn();
@@ -46,6 +81,141 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
             } catch (err) {
                 setError(err instanceof Error ? err.message : "failed");
             }
+        };
+
+        const toggle = (key: string) =>
+            setCollapsed((prev) => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+            });
+
+        const moveFriend = (name: string, groupId: string | null) => {
+            setMenu(null);
+            void run(() => friends.groupMove(name, groupId));
+        };
+
+        const groupAction = (action: "rename" | "remove") => {
+            if (menu?.kind !== "group") return;
+            const group = groups.find((g) => g.id === menu.id);
+            setMenu(null);
+            if (!group) return;
+            if (action === "rename") {
+                setRename({ id: group.id, text: group.name });
+                return;
+            }
+            if (!confirm(`删除分组「${group.name}」？成员将移回我的好友`))
+                return;
+            void run(() => friends.groupRemove(group.id));
+        };
+
+        const createGroup = () =>
+            run(async () => {
+                await friends.groupCreate(newName.trim());
+                setCreating(false);
+                setNewName("");
+            });
+
+        const submitRename = () => {
+            if (!rename?.text.trim()) return;
+            const target = rename;
+            void run(async () => {
+                await friends.groupRename(target.id, target.text.trim());
+                setRename(null);
+            });
+        };
+
+        const friendRow = (name: string) => (
+            <button
+                key={name}
+                type="button"
+                className="flex h-10 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-accent/60"
+                onClick={() => {
+                    ctx.emit("ui:friend:select", { name });
+                    setShellPane("chat");
+                }}
+                onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMenu({
+                        kind: "friend",
+                        x: e.clientX,
+                        y: e.clientY,
+                        name,
+                    });
+                }}
+            >
+                <UserAvatar name={name} size="sm" />
+                <span className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm">
+                        {displayName(name, list?.remarks)}
+                    </span>
+                    {list?.remarks?.[name] ? (
+                        <span className="truncate text-[11px] text-muted-foreground">
+                            {name}
+                        </span>
+                    ) : null}
+                </span>
+            </button>
+        );
+
+        const groupNode = (
+            key: string,
+            label: string,
+            names: string[],
+            onContext: ((e: ReactMouseEvent) => void) | null,
+        ): ReactNode => {
+            const isCollapsed = collapsed.has(key);
+            return (
+                <div key={key} className="flex flex-col">
+                    <div className="flex h-9 items-center gap-1 rounded-lg px-1 hover:bg-accent/60">
+                        <button
+                            type="button"
+                            title={isCollapsed ? "展开" : "收起"}
+                            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                            onClick={() => toggle(key)}
+                        >
+                            <ChevronRightIcon
+                                className={cn(
+                                    "size-4 transition-transform",
+                                    !isCollapsed && "rotate-90",
+                                )}
+                            />
+                        </button>
+                        {rename?.id === key ? (
+                            <Input
+                                autoFocus
+                                value={rename.text}
+                                className="h-7 flex-1"
+                                onChange={(e) =>
+                                    setRename({
+                                        id: key,
+                                        text: e.target.value,
+                                    })
+                                }
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") submitRename();
+                                    if (e.key === "Escape") setRename(null);
+                                }}
+                            />
+                        ) : (
+                            <button
+                                type="button"
+                                className="min-w-0 flex-1 truncate rounded px-1 text-left text-xs font-semibold text-muted-foreground"
+                                onClick={() => toggle(key)}
+                                onContextMenu={(e) => {
+                                    if (!onContext) return;
+                                    e.preventDefault();
+                                    onContext(e);
+                                }}
+                            >
+                                {label}（{names.length}）
+                            </button>
+                        )}
+                    </div>
+                    {!isCollapsed ? names.map(friendRow) : null}
+                </div>
+            );
         };
 
         const section = (title: string, items: ReactNode, count: number) => {
@@ -63,7 +233,18 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
         return (
             <>
                 <div className="flex h-12 min-h-12 items-center px-4">
-                    <p className="text-sm font-semibold">好友</p>
+                    <p className="flex-1 text-sm font-semibold">好友</p>
+                    <button
+                        type="button"
+                        title="新建分组"
+                        className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        onClick={() => {
+                            setCreating((v) => !v);
+                            setNewName("");
+                        }}
+                    >
+                        <PlusIcon className="size-4" />
+                    </button>
                 </div>
                 <div className="flex gap-1 px-2 pb-1">
                     <Input
@@ -87,45 +268,56 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                         添加
                     </Button>
                 </div>
+                {creating ? (
+                    <div className="flex gap-1 px-2 pb-1">
+                        <Input
+                            autoFocus
+                            placeholder="分组名称"
+                            value={newName}
+                            className="h-9"
+                            onChange={(e) => setNewName(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && newName.trim())
+                                    void createGroup();
+                                if (e.key === "Escape") {
+                                    setCreating(false);
+                                    setNewName("");
+                                }
+                            }}
+                        />
+                        <Button
+                            size="sm"
+                            className="h-9 shrink-0"
+                            disabled={!newName.trim()}
+                            onClick={() => void createGroup()}
+                        >
+                            创建
+                        </Button>
+                    </div>
+                ) : null}
                 {error ? (
                     <p className="px-4 text-xs text-red-500">{error}</p>
                 ) : null}
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
-                    {section(
+                    {groupNode(
+                        DEFAULT_GROUP,
                         "我的好友",
-                        <>
-                            {(list?.friends ?? []).map((name) => (
-                                <Button
-                                    key={name}
-                                    variant="ghost"
-                                    className="h-10 w-full justify-start gap-2 rounded-lg px-2 text-foreground hover:bg-accent/60"
-                                    onClick={() => {
-                                        ctx.emit("ui:friend:select", {
-                                            name,
-                                        });
-                                        setShellPane("chat");
-                                    }}
-                                >
-                                    <UserAvatar name={name} size="sm" />
-                                    <span className="flex min-w-0 flex-col text-left">
-                                        <span className="truncate">
-                                            {displayName(name, list?.remarks)}
-                                        </span>
-                                        {list?.remarks?.[name] ? (
-                                            <span className="truncate text-[11px] text-muted-foreground">
-                                                {name}
-                                            </span>
-                                        ) : null}
-                                    </span>
-                                </Button>
-                            ))}
-                            {list?.friends.length === 0 ? (
-                                <p className="px-2 py-1 text-xs text-muted-foreground">
-                                    上方输入用户名添加好友
-                                </p>
-                            ) : null}
-                        </>,
-                        list?.friends.length ?? 0,
+                        membersIn(null),
+                        null,
+                    )}
+                    {groups.map((group) =>
+                        groupNode(
+                            group.id,
+                            group.name,
+                            membersIn(group.id),
+                            (e) =>
+                                setMenu({
+                                    kind: "group",
+                                    x: e.clientX,
+                                    y: e.clientY,
+                                    id: group.id,
+                                }),
+                        ),
                     )}
                     {section(
                         "收到的申请",
@@ -211,6 +403,72 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                         <span>{list?.outgoing.length ?? 0}</span>
                     </button>
                 </div>
+                {menu ? (
+                    <div
+                        role="menu"
+                        className="fixed z-50 w-44 rounded-lg border border-border bg-popover py-1 text-sm shadow-lg"
+                        style={{
+                            left: Math.min(menu.x, window.innerWidth - 190),
+                            top: Math.min(menu.y, window.innerHeight - 250),
+                        }}
+                    >
+                        {menu.kind === "friend" ? (
+                            <>
+                                <p className="px-3 py-1 text-xs text-muted-foreground">
+                                    移动到分组
+                                </p>
+                                <button
+                                    type="button"
+                                    className="flex w-full items-center px-3 py-1.5 text-left hover:bg-accent"
+                                    onClick={() => moveFriend(menu.name, null)}
+                                >
+                                    我的好友
+                                    {groupOf(menu.name) === null ? (
+                                        <span className="ml-auto text-xs text-primary">
+                                            当前
+                                        </span>
+                                    ) : null}
+                                </button>
+                                {groups.map((group) => (
+                                    <button
+                                        key={group.id}
+                                        type="button"
+                                        className="flex w-full items-center px-3 py-1.5 text-left hover:bg-accent"
+                                        onClick={() =>
+                                            moveFriend(menu.name, group.id)
+                                        }
+                                    >
+                                        <span className="truncate">
+                                            {group.name}
+                                        </span>
+                                        {groupOf(menu.name) === group.id ? (
+                                            <span className="ml-auto shrink-0 text-xs text-primary">
+                                                当前
+                                            </span>
+                                        ) : null}
+                                    </button>
+                                ))}
+                            </>
+                        ) : (
+                            <>
+                                <button
+                                    type="button"
+                                    className="w-full px-3 py-1.5 text-left hover:bg-accent"
+                                    onClick={() => groupAction("rename")}
+                                >
+                                    重命名
+                                </button>
+                                <button
+                                    type="button"
+                                    className="w-full px-3 py-1.5 text-left hover:bg-accent"
+                                    onClick={() => groupAction("remove")}
+                                >
+                                    删除分组
+                                </button>
+                            </>
+                        )}
+                    </div>
+                ) : null}
             </>
         );
     };

@@ -724,3 +724,71 @@ describe("chat link cards", () => {
         expect(payload.list[1].link).toBeNull();
     });
 });
+
+describe("chat.poke", () => {
+    it("pokes a friend and mirrors a system message", async () => {
+        const { app, ua, ub } = await friendPair("pka", "pkb");
+        const saved = (await app.call(
+            "chat.poke",
+            { session: "p2p:pkb" },
+            ua.user,
+        )) as { kind: string; content: string; session: string };
+        expect(saved.kind).toBe("system");
+        expect(saved.content).toBe("pka 戳了戳 pkb");
+        expect(saved.session).toBe("p2p:pkb");
+        expect(app.eventsFor(ua.user.id, "message:new")).toHaveLength(1);
+        const theirs = app.eventsFor(ub.user.id, "message:new");
+        expect(theirs).toHaveLength(1);
+        expect(
+            (theirs[0] as { payload: { message: { session: string } } })
+                .payload.message.session,
+        ).toBe("p2p:pka");
+        await expect(
+            app.call("chat.poke", { session: "p2p:pkb" }, ua.user),
+        ).rejects.toThrow("戳得太快了，休息一下吧");
+        await expect(
+            app.call("chat.poke", { session: "general" }, ua.user),
+        ).rejects.toThrow("该会话不支持戳一戳");
+    });
+
+    it("requires friendship and group membership for targets", async () => {
+        const app = await createTestApp();
+        const ua = await app.register("pkc");
+        await app.register("pkd");
+        const mem = await app.register("pke");
+        await expect(
+            app.call("chat.poke", { session: "p2p:pkd" }, ua.user),
+        ).rejects.toThrow("只能和好友私聊");
+        const group = (await app.call(
+            "group.create",
+            { name: "戳戳群", members: ["pke"] },
+            ua.user,
+        )) as { id: string };
+        const targeted = (await app.call(
+            "chat.poke",
+            { session: `g:${group.id}`, target: "pke" },
+            ua.user,
+        )) as { content: string };
+        expect(targeted.content).toBe("pkc 戳了戳 pke");
+        await expect(
+            app.call(
+                "chat.poke",
+                { session: `g:${group.id}`, target: "pkd" },
+                ua.user,
+            ),
+        ).rejects.toThrow("对方不在该群中");
+        const broadcast = (await app.call(
+            "chat.poke",
+            { session: `g:${group.id}` },
+            mem.user,
+        )) as { content: string };
+        expect(broadcast.content).toBe("pke 戳了戳大家");
+        const groupPokes = app.events.filter(
+            (event) =>
+                event.name === "message:new" &&
+                (event.payload as { message: { session: string } }).message
+                    .session === `g:${group.id}`,
+        );
+        expect(groupPokes).toHaveLength(4);
+    });
+});

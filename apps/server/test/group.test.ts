@@ -307,3 +307,111 @@ describe("group announcements", () => {
         ]);
     });
 });
+
+describe("group essence", () => {
+    it("sets, lists and removes with manage permission", async () => {
+        const { app, owner, admin, member, stranger, group } = await setup();
+        const sent = (await app.call(
+            "message.send",
+            { session: `g:${group.id}`, content: "记住这段" },
+            member.user,
+        )) as ChatMessage;
+        await expect(
+            app.call(
+                "group.essence.set",
+                { groupId: group.id, messageId: sent.id, on: true },
+                stranger.user,
+            ),
+        ).rejects.toThrow("你不在该群中");
+        await expect(
+            app.call(
+                "group.essence.set",
+                { groupId: group.id, messageId: sent.id, on: true },
+                member.user,
+            ),
+        ).rejects.toThrow("需要群主或管理员权限");
+        await app.call(
+            "group.member.role",
+            { groupId: group.id, username: "adm", role: "admin" },
+            owner.user,
+        );
+        await app.call(
+            "group.essence.set",
+            { groupId: group.id, messageId: sent.id, on: true },
+            admin.user,
+        );
+        const rows = (await app.call(
+            "group.essence.list",
+            { groupId: group.id },
+            member.user,
+        )) as {
+            messageId: string;
+            sender: string;
+            content: string;
+            setBy: string;
+        }[];
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+            messageId: sent.id,
+            sender: "mem",
+            content: "记住这段",
+            setBy: "adm",
+        });
+        await expect(
+            app.call(
+                "group.essence.list",
+                { groupId: group.id },
+                stranger.user,
+            ),
+        ).rejects.toThrow("你不在该群中");
+        await app.call(
+            "group.essence.set",
+            { groupId: group.id, messageId: sent.id, on: false },
+            owner.user,
+        );
+        expect(
+            await app.call(
+                "group.essence.list",
+                { groupId: group.id },
+                owner.user,
+            ),
+        ).toHaveLength(0);
+        expect(
+            app.events.filter((event) => event.name === "essence:update"),
+        ).toHaveLength(6);
+    });
+
+    it("rejects foreign and recalled messages", async () => {
+        const { app, owner, member, group } = await setup();
+        const otherGroup = (await app.call(
+            "group.create",
+            { name: "另一个群" },
+            member.user,
+        )) as GroupInfo;
+        const outside = (await app.call(
+            "message.send",
+            { session: `g:${otherGroup.id}`, content: "外部消息" },
+            member.user,
+        )) as ChatMessage;
+        await expect(
+            app.call(
+                "group.essence.set",
+                { groupId: group.id, messageId: outside.id, on: true },
+                owner.user,
+            ),
+        ).rejects.toThrow("消息不属于该群");
+        const sent = (await app.call(
+            "message.send",
+            { session: `g:${group.id}`, content: "会被撤回" },
+            member.user,
+        )) as ChatMessage;
+        await app.call("message.recall", { id: sent.id }, member.user);
+        await expect(
+            app.call(
+                "group.essence.set",
+                { groupId: group.id, messageId: sent.id, on: true },
+                owner.user,
+            ),
+        ).rejects.toThrow("消息已撤回");
+    });
+});

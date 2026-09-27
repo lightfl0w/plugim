@@ -45,6 +45,8 @@ import postgres from "postgres";
 import type {
     AccountsStore,
     AdminUserRow,
+    EssenceItemRow,
+    EssencesStore,
     FriendEdge,
     FriendsStore,
     GroupFileRow,
@@ -274,6 +276,66 @@ const friendRemarksPg = pgTable(
     (table) => [pgPrimaryKey({ columns: [table.ownerId, table.friendId] })],
 );
 
+const friendGroupsSqlite = sqliteTable("friend_groups", {
+    id: sqliteText("id").primaryKey(),
+    ownerId: sqliteText("owner_id").notNull(),
+    name: sqliteText("name").notNull(),
+    createdAt: integer("created_at").notNull(),
+});
+
+const friendGroupsPg = pgTable("friend_groups", {
+    id: pgText("id").primaryKey(),
+    ownerId: pgText("owner_id").notNull(),
+    name: pgText("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+});
+
+const friendGroupMembersSqlite = sqliteTable(
+    "friend_group_members",
+    {
+        ownerId: sqliteText("owner_id").notNull(),
+        friendId: sqliteText("friend_id").notNull(),
+        groupId: sqliteText("group_id").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.ownerId, table.friendId] })],
+);
+
+const friendGroupMembersPg = pgTable(
+    "friend_group_members",
+    {
+        ownerId: pgText("owner_id").notNull(),
+        friendId: pgText("friend_id").notNull(),
+        groupId: pgText("group_id").notNull(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.ownerId, table.friendId] })],
+);
+
+const essencesSqlite = sqliteTable(
+    "essences",
+    {
+        groupId: sqliteText("group_id").notNull(),
+        messageId: sqliteText("message_id").notNull(),
+        setBy: sqliteText("set_by").notNull(),
+        createdAt: integer("created_at").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.groupId, table.messageId] })],
+);
+
+const essencesPg = pgTable(
+    "essences",
+    {
+        groupId: pgText("group_id").notNull(),
+        messageId: pgText("message_id").notNull(),
+        setBy: pgText("set_by").notNull(),
+        createdAt: timestamp("created_at", { withTimezone: true })
+            .notNull()
+            .defaultNow(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.groupId, table.messageId] })],
+);
+
 const settingsSqlite = sqliteTable("settings", {
     key: sqliteText("key").primaryKey(),
     value: sqliteText("value").notNull(),
@@ -479,6 +541,25 @@ CREATE TABLE IF NOT EXISTS friend_remarks (
   remark TEXT NOT NULL,
   PRIMARY KEY (owner_id, friend_id)
 );
+CREATE TABLE IF NOT EXISTS friend_groups (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS friend_group_members (
+  owner_id TEXT NOT NULL,
+  friend_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  PRIMARY KEY (owner_id, friend_id)
+);
+CREATE TABLE IF NOT EXISTS essences (
+  group_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  set_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (group_id, message_id)
+);
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -613,6 +694,25 @@ CREATE TABLE IF NOT EXISTS friend_remarks (
   friend_id TEXT NOT NULL,
   remark TEXT NOT NULL,
   PRIMARY KEY (owner_id, friend_id)
+);
+CREATE TABLE IF NOT EXISTS friend_groups (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS friend_group_members (
+  owner_id TEXT NOT NULL,
+  friend_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  PRIMARY KEY (owner_id, friend_id)
+);
+CREATE TABLE IF NOT EXISTS essences (
+  group_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  set_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (group_id, message_id)
 );
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
@@ -962,6 +1062,7 @@ export const storagePlugin: Plugin = {
         "accounts",
         "friendships",
         "groups",
+        "essences",
         "reads",
         "settings",
         "pushes",
@@ -984,6 +1085,7 @@ export const storagePlugin: Plugin = {
         let groupFiles: GroupFilesStore;
         let joinRequests: JoinRequestsStore;
         let moments: MomentsStore;
+        let essences: EssencesStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -1461,6 +1563,93 @@ export const storagePlugin: Plugin = {
                         .where(eq(friendRemarksPg.ownerId, ownerId));
                     const result: Record<string, string> = {};
                     for (const row of rows) result[row.friendId] = row.remark;
+                    return result;
+                },
+                async groupListOf(ownerId) {
+                    const rows = await db
+                        .select()
+                        .from(friendGroupsPg)
+                        .where(eq(friendGroupsPg.ownerId, ownerId))
+                        .orderBy(asc(friendGroupsPg.createdAt));
+                    return rows.map((row) => ({
+                        id: row.id,
+                        ownerId: row.ownerId,
+                        name: row.name,
+                        createdAt: toIso(row.createdAt),
+                    }));
+                },
+                async groupCreate(ownerId, name) {
+                    const rows = await db
+                        .insert(friendGroupsPg)
+                        .values({ id: crypto.randomUUID(), ownerId, name })
+                        .returning();
+                    const row = rows[0];
+                    return {
+                        id: row.id,
+                        ownerId: row.ownerId,
+                        name: row.name,
+                        createdAt: toIso(row.createdAt),
+                    };
+                },
+                async groupRename(ownerId, groupId, name) {
+                    await db
+                        .update(friendGroupsPg)
+                        .set({ name })
+                        .where(
+                            and(
+                                eq(friendGroupsPg.id, groupId),
+                                eq(friendGroupsPg.ownerId, ownerId),
+                            ),
+                        );
+                },
+                async groupRemove(ownerId, groupId) {
+                    await db
+                        .delete(friendGroupsPg)
+                        .where(
+                            and(
+                                eq(friendGroupsPg.id, groupId),
+                                eq(friendGroupsPg.ownerId, ownerId),
+                            ),
+                        );
+                    await db
+                        .delete(friendGroupMembersPg)
+                        .where(
+                            and(
+                                eq(friendGroupMembersPg.ownerId, ownerId),
+                                eq(friendGroupMembersPg.groupId, groupId),
+                            ),
+                        );
+                },
+                async groupSetFriend(ownerId, friendId, groupId) {
+                    if (!groupId) {
+                        await db
+                            .delete(friendGroupMembersPg)
+                            .where(
+                                and(
+                                    eq(friendGroupMembersPg.ownerId, ownerId),
+                                    eq(friendGroupMembersPg.friendId, friendId),
+                                ),
+                            );
+                        return;
+                    }
+                    await db
+                        .insert(friendGroupMembersPg)
+                        .values({ ownerId, friendId, groupId })
+                        .onConflictDoUpdate({
+                            target: [
+                                friendGroupMembersPg.ownerId,
+                                friendGroupMembersPg.friendId,
+                            ],
+                            set: { groupId },
+                        });
+                },
+                async friendGroupMap(ownerId) {
+                    const rows = await db
+                        .select()
+                        .from(friendGroupMembersPg)
+                        .where(eq(friendGroupMembersPg.ownerId, ownerId));
+                    const result: Record<string, string> = {};
+                    for (const row of rows) result[row.friendId] = row.groupId;
                     return result;
                 },
             };
@@ -2208,6 +2397,72 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            essences = {
+                async add(groupId, messageId, setBy) {
+                    await db
+                        .insert(essencesPg)
+                        .values({ groupId, messageId, setBy })
+                        .onConflictDoNothing();
+                },
+                async remove(groupId, messageId) {
+                    await db
+                        .delete(essencesPg)
+                        .where(
+                            and(
+                                eq(essencesPg.groupId, groupId),
+                                eq(essencesPg.messageId, messageId),
+                            ),
+                        );
+                },
+                async has(groupId, messageId) {
+                    const rows = await db
+                        .select({ messageId: essencesPg.messageId })
+                        .from(essencesPg)
+                        .where(
+                            and(
+                                eq(essencesPg.groupId, groupId),
+                                eq(essencesPg.messageId, messageId),
+                            ),
+                        )
+                        .limit(1);
+                    return rows.length > 0;
+                },
+                async listOf(groupId) {
+                    const rows = await db
+                        .select({
+                            messageId: essencesPg.messageId,
+                            setBy: essencesPg.setBy,
+                            setAt: essencesPg.createdAt,
+                            sender: messagesPg.sender,
+                            content: messagesPg.content,
+                            kind: messagesPg.kind,
+                            createdAt: messagesPg.createdAt,
+                            recalledAt: messagesPg.recalledAt,
+                        })
+                        .from(essencesPg)
+                        .innerJoin(
+                            messagesPg,
+                            eq(messagesPg.id, essencesPg.messageId),
+                        )
+                        .where(eq(essencesPg.groupId, groupId))
+                        .orderBy(desc(essencesPg.createdAt))
+                        .limit(200);
+                    return rows
+                        .filter((row) => row.recalledAt === null)
+                        .map(
+                            (row): EssenceItemRow => ({
+                                messageId: row.messageId,
+                                sender: row.sender,
+                                content: row.content,
+                                kind: row.kind,
+                                createdAt: toIso(row.createdAt),
+                                setBy: row.setBy,
+                                setAt: toIso(row.setAt),
+                            }),
+                        );
+                },
+            };
+
             ctx.log.info(`storage driver: postgres (${config.dbUrl})`);
         } else {
             const file = resolve(process.cwd(), config.dbFile);
@@ -2736,6 +2991,102 @@ export const storagePlugin: Plugin = {
                         .where(eq(friendRemarksSqlite.ownerId, ownerId));
                     const result: Record<string, string> = {};
                     for (const row of rows) result[row.friendId] = row.remark;
+                    return result;
+                },
+                async groupListOf(ownerId) {
+                    const rows = await db
+                        .select()
+                        .from(friendGroupsSqlite)
+                        .where(eq(friendGroupsSqlite.ownerId, ownerId))
+                        .orderBy(asc(friendGroupsSqlite.createdAt));
+                    return rows.map((row) => ({
+                        id: row.id,
+                        ownerId: row.ownerId,
+                        name: row.name,
+                        createdAt: toIso(row.createdAt),
+                    }));
+                },
+                async groupCreate(ownerId, name) {
+                    const id = crypto.randomUUID();
+                    const createdAt = Date.now();
+                    await db.insert(friendGroupsSqlite).values({
+                        id,
+                        ownerId,
+                        name,
+                        createdAt,
+                    });
+                    return {
+                        id,
+                        ownerId,
+                        name,
+                        createdAt: new Date(createdAt).toISOString(),
+                    };
+                },
+                async groupRename(ownerId, groupId, name) {
+                    await db
+                        .update(friendGroupsSqlite)
+                        .set({ name })
+                        .where(
+                            and(
+                                eq(friendGroupsSqlite.id, groupId),
+                                eq(friendGroupsSqlite.ownerId, ownerId),
+                            ),
+                        );
+                },
+                async groupRemove(ownerId, groupId) {
+                    await db
+                        .delete(friendGroupsSqlite)
+                        .where(
+                            and(
+                                eq(friendGroupsSqlite.id, groupId),
+                                eq(friendGroupsSqlite.ownerId, ownerId),
+                            ),
+                        );
+                    await db
+                        .delete(friendGroupMembersSqlite)
+                        .where(
+                            and(
+                                eq(friendGroupMembersSqlite.ownerId, ownerId),
+                                eq(friendGroupMembersSqlite.groupId, groupId),
+                            ),
+                        );
+                },
+                async groupSetFriend(ownerId, friendId, groupId) {
+                    if (!groupId) {
+                        await db
+                            .delete(friendGroupMembersSqlite)
+                            .where(
+                                and(
+                                    eq(
+                                        friendGroupMembersSqlite.ownerId,
+                                        ownerId,
+                                    ),
+                                    eq(
+                                        friendGroupMembersSqlite.friendId,
+                                        friendId,
+                                    ),
+                                ),
+                            );
+                        return;
+                    }
+                    await db
+                        .insert(friendGroupMembersSqlite)
+                        .values({ ownerId, friendId, groupId })
+                        .onConflictDoUpdate({
+                            target: [
+                                friendGroupMembersSqlite.ownerId,
+                                friendGroupMembersSqlite.friendId,
+                            ],
+                            set: { groupId },
+                        });
+                },
+                async friendGroupMap(ownerId) {
+                    const rows = await db
+                        .select()
+                        .from(friendGroupMembersSqlite)
+                        .where(eq(friendGroupMembersSqlite.ownerId, ownerId));
+                    const result: Record<string, string> = {};
+                    for (const row of rows) result[row.friendId] = row.groupId;
                     return result;
                 },
             };
@@ -3543,6 +3894,77 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            essences = {
+                async add(groupId, messageId, setBy) {
+                    await db
+                        .insert(essencesSqlite)
+                        .values({
+                            groupId,
+                            messageId,
+                            setBy,
+                            createdAt: Date.now(),
+                        })
+                        .onConflictDoNothing();
+                },
+                async remove(groupId, messageId) {
+                    await db
+                        .delete(essencesSqlite)
+                        .where(
+                            and(
+                                eq(essencesSqlite.groupId, groupId),
+                                eq(essencesSqlite.messageId, messageId),
+                            ),
+                        );
+                },
+                async has(groupId, messageId) {
+                    const rows = await db
+                        .select({ messageId: essencesSqlite.messageId })
+                        .from(essencesSqlite)
+                        .where(
+                            and(
+                                eq(essencesSqlite.groupId, groupId),
+                                eq(essencesSqlite.messageId, messageId),
+                            ),
+                        )
+                        .limit(1);
+                    return rows.length > 0;
+                },
+                async listOf(groupId) {
+                    const rows = await db
+                        .select({
+                            messageId: essencesSqlite.messageId,
+                            setBy: essencesSqlite.setBy,
+                            setAt: essencesSqlite.createdAt,
+                            sender: messagesSqlite.sender,
+                            content: messagesSqlite.content,
+                            kind: messagesSqlite.kind,
+                            createdAt: messagesSqlite.createdAt,
+                            recalledAt: messagesSqlite.recalledAt,
+                        })
+                        .from(essencesSqlite)
+                        .innerJoin(
+                            messagesSqlite,
+                            eq(messagesSqlite.id, essencesSqlite.messageId),
+                        )
+                        .where(eq(essencesSqlite.groupId, groupId))
+                        .orderBy(desc(essencesSqlite.createdAt))
+                        .limit(200);
+                    return rows
+                        .filter((row) => row.recalledAt === null)
+                        .map(
+                            (row): EssenceItemRow => ({
+                                messageId: row.messageId,
+                                sender: row.sender,
+                                content: row.content,
+                                kind: row.kind,
+                                createdAt: toIso(row.createdAt),
+                                setBy: row.setBy,
+                                setAt: toIso(row.setAt),
+                            }),
+                        );
+                },
+            };
+
             ctx.log.info(`storage driver: sqlite (${file})`);
         }
 
@@ -3550,6 +3972,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<AccountsStore>("accounts", accounts);
         ctx.provide<FriendsStore>("friendships", friends);
         ctx.provide<GroupsStore>("groups", groups);
+        ctx.provide<EssencesStore>("essences", essences);
         ctx.provide<ReadsStore>("reads", reads);
         ctx.provide<SettingsStore>("settings", settings);
         ctx.provide<PushStore>("pushes", pushes);

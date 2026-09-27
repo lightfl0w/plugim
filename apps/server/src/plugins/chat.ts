@@ -1,6 +1,7 @@
 import type { Plugin } from "@plugim/core";
 import type {
     ChatMessage,
+    ChatPokeParams,
     FileMeta,
     HistoryParams,
     LinkPreview,
@@ -313,6 +314,73 @@ export const chatPlugin: Plugin = {
                 username: user.username,
             } satisfies TypingEvent);
             return true;
+        });
+
+        const pokeGate = new Map<string, number>();
+        const POKE_COOLDOWN_MS = 10_000;
+
+        gateway.rpc("chat.poke", async (raw, conn) => {
+            const user = requireUser(conn);
+            const { session, target } = raw as unknown as ChatPokeParams;
+            const rawSession = String(session ?? "").trim();
+            if (!rawSession) throw new Error("缺少会话");
+            if (!rawSession.startsWith("p2p:") && !rawSession.startsWith("g:"))
+                throw new Error("该会话不支持戳一戳");
+            let targetName = "";
+            let peerId: string | null = null;
+            if (rawSession.startsWith("p2p:")) {
+                const peer = await resolveP2p(user, rawSession);
+                targetName = peer.username;
+                peerId = peer.id;
+            } else {
+                await resolveGroup(user, rawSession);
+                if (target) {
+                    const members = await groups.membersOf(rawSession.slice(2));
+                    const targetUser = await accounts.byUsername(
+                        String(target).toLowerCase(),
+                    );
+                    if (
+                        !targetUser ||
+                        !members.some((m) => m.userId === targetUser.id)
+                    )
+                        throw new Error("对方不在该群中");
+                    targetName = targetUser.username;
+                }
+            }
+            const gateKey = `${user.id}:${rawSession}:${targetName}`;
+            const now = Date.now();
+            if (now - (pokeGate.get(gateKey) ?? 0) < POKE_COOLDOWN_MS)
+                throw new Error("戳得太快了，休息一下吧");
+            pokeGate.set(gateKey, now);
+            const saved = await store.save({
+                session: rawSession.startsWith("p2p:")
+                    ? p2pKey(user.username, targetName)
+                    : rawSession,
+                sender: user.username,
+                content: targetName
+                    ? `${user.username} 戳了戳 ${targetName}`
+                    : `${user.username} 戳了戳大家`,
+                quote: null,
+                mentions: null,
+                kind: "system",
+                file: null,
+                link: null,
+            });
+            if (rawSession.startsWith("p2p:") && peerId) {
+                gateway.emitToUser(user.id, "message:new", {
+                    message: { ...saved, session: `p2p:${targetName}` },
+                });
+                gateway.emitToUser(peerId, "message:new", {
+                    message: { ...saved, session: `p2p:${user.username}` },
+                });
+            } else {
+                const ids = await groups.memberIdsOf(rawSession.slice(2));
+                for (const id of ids)
+                    gateway.emitToUser(id, "message:new", { message: saved });
+            }
+            return rawSession.startsWith("p2p:")
+                ? { ...saved, session: `p2p:${targetName}` }
+                : saved;
         });
 
         gateway.rpc("message.forward", async (raw, conn) => {

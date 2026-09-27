@@ -39,6 +39,7 @@ import type { GroupsService } from "./groups";
 import type { MomentsService } from "./moments";
 import type { PresenceService } from "./presence";
 import type { AdminService } from "./ui-admin";
+import { draftKey, draftStore } from "./ui-drafts";
 import {
     clientSessionOf,
     currentChatTarget,
@@ -281,6 +282,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const [pinned, setPinned] = useState<string[]>([]);
         const [dnd, setDnd] = useState<string[]>([]);
         const [mentioned, setMentioned] = useState<Record<string, boolean>>({});
+        const draftMap = useSyncExternalStore(
+            draftStore.subscribe,
+            draftStore.snapshot,
+        );
         const [query, setQuery] = useState("");
         const [hits, setHits] = useState<ChatMessage[]>([]);
         const [hitsTotal, setHitsTotal] = useState(0);
@@ -631,6 +636,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
         }) => {
             const { session, label, isGroup, pending } = entry;
             const preview = previews[session];
+            const draftText = draftMap[draftKey(me, session)] ?? "";
             const count = unread[session] ?? 0;
             const peerName = session.startsWith("p2p:")
                 ? session.slice(4)
@@ -700,9 +706,18 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                         [@我]
                                     </span>
                                 ) : null}
-                                {preview
-                                    ? previewText(preview.content, preview.kind)
-                                    : "暂无消息"}
+                                {draftText.trim() ? (
+                                    <>
+                                        <span className="mr-1 text-amber-600 dark:text-amber-400">
+                                            [草稿]
+                                        </span>
+                                        {draftText.replace(/\s+/g, " ")}
+                                    </>
+                                ) : preview ? (
+                                    previewText(preview.content, preview.kind)
+                                ) : (
+                                    "暂无消息"
+                                )}
                             </span>
                             {count > 0 ? (
                                 <span

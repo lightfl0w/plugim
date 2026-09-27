@@ -15,12 +15,13 @@ import {
     XIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { ConnStatus, RpcService } from "./connection";
 import type { SenderService } from "./sender";
+import { draftStore } from "./ui-drafts";
 import type { UiService } from "./ui-types";
 
 const EMOJIS = [
@@ -95,6 +96,14 @@ export const uiComposerSetup = async (ctx: Context) => {
         const recorderRef = useRef<MediaRecorder | null>(null);
         const chunksRef = useRef<Blob[]>([]);
         const typingAtRef = useRef(0);
+        const me = auth.user()?.username ?? "";
+        const writeDraft = useCallback(
+            (text: string) => {
+                setDraft(text);
+                if (currentSession) draftStore.set(me, currentSession, text);
+            },
+            [me],
+        );
 
         useEffect(() => rpc.onStatus(setStatus), []);
 
@@ -158,7 +167,6 @@ export const uiComposerSetup = async (ctx: Context) => {
                         };
                         const info = infoResult as GroupInfo;
                         setGroupMembers(members.map((m) => m.username));
-                        const me = auth.user()?.username ?? "";
                         const mine = members.find((m) => m.username === me);
                         const privileged =
                             mine?.role === "owner" || mine?.role === "admin";
@@ -186,14 +194,14 @@ export const uiComposerSetup = async (ctx: Context) => {
                 sessionListeners.delete(load);
                 void dispose();
             };
-        }, [status]);
+        }, [status, me]);
 
-        const autoGrow = () => {
+        const autoGrow = useCallback(() => {
             const el = textareaRef.current;
             if (!el) return;
             el.style.height = "auto";
             el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-        };
+        }, []);
 
         const notifyTyping = (value: string) => {
             if (!value.trim() || !currentSession || status !== "open") return;
@@ -205,6 +213,33 @@ export const uiComposerSetup = async (ctx: Context) => {
                 .call("typing.send", { session: currentSession })
                 .catch(() => undefined);
         };
+
+        useEffect(() => {
+            const sync = () => {
+                setDraft(draftStore.get(me, currentSession));
+                setQuote(null);
+                setMentionIndex(0);
+                setEmojiOpen(false);
+            };
+            sync();
+            sessionListeners.add(sync);
+            return () => {
+                sessionListeners.delete(sync);
+            };
+        }, [me]);
+
+        useEffect(() => {
+            const dispose = ctx.on("ui:chat:draft:set", (payload) => {
+                writeDraft((payload as { content: string }).content);
+                requestAnimationFrame(() => {
+                    textareaRef.current?.focus();
+                    autoGrow();
+                });
+            });
+            return () => {
+                void dispose();
+            };
+        }, [writeDraft, autoGrow]);
 
         const typingNames = Object.keys(typers)
             .filter((key) => key.startsWith(`${currentSession}\n`))
@@ -243,8 +278,8 @@ export const uiComposerSetup = async (ctx: Context) => {
         };
 
         const insertMention = (name: string) => {
-            setDraft((prev) =>
-                prev.replace(
+            writeDraft(
+                draft.replace(
                     MENTION_TOKEN_RE,
                     (_m, head: string) => `${head}@${name} `,
                 ),
@@ -266,11 +301,11 @@ export const uiComposerSetup = async (ctx: Context) => {
                     quote,
                     isGroup ? collectMentions(content) : null,
                 );
-                setDraft("");
+                writeDraft("");
                 setQuote(null);
                 autoGrow();
             } catch {
-                setDraft("");
+                writeDraft("");
                 setQuote(null);
                 autoGrow();
             } finally {
@@ -513,7 +548,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                     rows={2}
                     className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground"
                     onChange={(e) => {
-                        setDraft(e.target.value);
+                        writeDraft(e.target.value);
                         autoGrow();
                         notifyTyping(e.target.value);
                     }}
@@ -542,7 +577,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                             }
                             if (e.key === "Escape") {
                                 e.preventDefault();
-                                setDraft((prev) => `${prev} `);
+                                writeDraft(`${draft} `);
                                 return;
                             }
                         }

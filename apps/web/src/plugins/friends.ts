@@ -13,6 +13,13 @@ export interface FriendsService {
     unblock(username: string): Promise<void>;
     remarkOf(username: string): string | null;
     setRemark(username: string, remark: string): Promise<void>;
+    groupCreate(name: string): Promise<FriendListResult>;
+    groupRename(groupId: string, name: string): Promise<FriendListResult>;
+    groupRemove(groupId: string): Promise<FriendListResult>;
+    groupMove(
+        username: string,
+        groupId: string | null,
+    ): Promise<FriendListResult>;
     onUpdate(cb: () => void): () => void;
 }
 
@@ -81,6 +88,34 @@ export const friendsPlugin: Plugin = {
                     .then((result) => {
                         cache = result as FriendListResult;
                         emit();
+                    }),
+            groupCreate: (name) =>
+                rpc.call("friend.group.create", { name }).then((result) => {
+                    cache = result as FriendListResult;
+                    emit();
+                    return cache;
+                }),
+            groupRename: (groupId, name) =>
+                rpc
+                    .call("friend.group.rename", { groupId, name })
+                    .then((result) => {
+                        cache = result as FriendListResult;
+                        emit();
+                        return cache;
+                    }),
+            groupRemove: (groupId) =>
+                rpc.call("friend.group.remove", { groupId }).then((result) => {
+                    cache = result as FriendListResult;
+                    emit();
+                    return cache;
+                }),
+            groupMove: (username, groupId) =>
+                rpc
+                    .call("friend.group.move", { username, groupId })
+                    .then((result) => {
+                        cache = result as FriendListResult;
+                        emit();
+                        return cache;
                     }),
             onUpdate(cb) {
                 listeners.add(cb);

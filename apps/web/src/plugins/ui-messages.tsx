@@ -18,6 +18,7 @@ import {
     ListChecksIcon,
     MegaphoneIcon,
     RotateCcwIcon,
+    StarIcon,
     XIcon,
 } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
@@ -245,6 +246,8 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [selectMode, setSelectMode] = useState(false);
         const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
         const [mergeView, setMergeView] = useState<MergePayload | null>(null);
+        const [hint, setHint] = useState<string | null>(null);
+        const [essenceIds, setEssenceIds] = useState<Set<string>>(new Set());
         const [, bumpForward] = useReducer((n: number) => n + 1, 0);
         useEffect(() => {
             if (forwardIds.length === 0) return undefined;
@@ -270,6 +273,12 @@ export const uiMessagesSetup = async (ctx: Context) => {
             id: string;
             at: string;
         } | null>(null);
+        const pokeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+            undefined,
+        );
+        const hintTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+            undefined,
+        );
         const user = auth.user();
         const me = user?.username ?? "";
         const isP2p = session.startsWith("p2p:");
@@ -350,16 +359,23 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     id: string;
                     at: string;
                 };
-                jumpRef.current = target;
                 setSearchQuery(null);
                 setSearchResults([]);
+                if (
+                    target.session === sessionRef.current &&
+                    document.getElementById(`msg-${target.id}`)
+                ) {
+                    scrollToHighlight(target.id);
+                    return;
+                }
+                jumpRef.current = target;
                 setJumpTarget(target);
             });
             return () => {
                 void disposeOpen();
                 void disposeJump();
             };
-        }, []);
+        }, [scrollToHighlight]);
 
         useEffect(() => {
             const dispose = ctx.on("chat:pending", (payload) => {
@@ -430,6 +446,36 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 void dispose();
             };
         }, [session, status]);
+
+        useEffect(() => {
+            if (!session.startsWith("g:")) {
+                setEssenceIds(new Set());
+                return;
+            }
+            const groupId = session.slice(2);
+            const load = () => {
+                void rpc
+                    .call("group.essence.list", { groupId })
+                    .then((rows) =>
+                        setEssenceIds(
+                            new Set(
+                                (rows as { messageId: string }[]).map(
+                                    (row) => row.messageId,
+                                ),
+                            ),
+                        ),
+                    )
+                    .catch(() => setEssenceIds(new Set()));
+            };
+            load();
+            const dispose = ctx.on("server:essence:update", (payload) => {
+                if ((payload as { groupId: string }).groupId === groupId)
+                    load();
+            });
+            return () => {
+                void dispose();
+            };
+        }, [session]);
 
         useEffect(() => {
             if (!me || !session || status !== "open") return undefined;
@@ -543,17 +589,19 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     if (!alive || sessionRef.current !== target.session) return;
                     const rows = page as ChatMessage[];
                     const newest = (head as ChatMessage[])[0];
-                    const tail = rows[rows.length - 1];
-                    const gap = Boolean(
-                        newest && tail && newest.id !== tail.id,
-                    );
                     skipScrollRef.current = true;
-                    setMessages(rows);
+                    setMessages((prev) => {
+                        const merged = mergeById(prev, rows);
+                        const tail = merged[merged.length - 1];
+                        applyHasNewer(
+                            Boolean(newest && tail && newest.id !== tail.id),
+                        );
+                        prevCountRef.current = merged.length;
+                        return merged;
+                    });
                     setHasMore(rows.length >= PAGE_SIZE);
-                    applyHasNewer(gap);
-                    prevCountRef.current = rows.length;
-                    atBottomRef.current = !gap;
-                    setAtBottom(!gap);
+                    atBottomRef.current = false;
+                    setAtBottom(false);
                     setNewCount(0);
                     setJumpTarget(null);
                     void cache
@@ -819,6 +867,57 @@ export const uiMessagesSetup = async (ctx: Context) => {
             !message.recalledAt &&
             Date.now() - Date.parse(message.createdAt) <= RECALL_WINDOW_MS;
 
+        const reEdit = (message: ChatMessage) => {
+            ctx.emit("ui:chat:draft:set", { content: message.content });
+        };
+
+        const avatarTap = (username: string, e: ReactMouseEvent) => {
+            if (username === me) {
+                openProfile(username, e);
+                return;
+            }
+            if (pokeTimerRef.current) clearTimeout(pokeTimerRef.current);
+            pokeTimerRef.current = setTimeout(
+                () => openProfile(username, e),
+                260,
+            );
+        };
+
+        const poke = async (username: string) => {
+            if (pokeTimerRef.current) {
+                clearTimeout(pokeTimerRef.current);
+                pokeTimerRef.current = undefined;
+            }
+            if (!sessionRef.current) return;
+            try {
+                await rpc.call("chat.poke", {
+                    session: sessionRef.current,
+                    target: username,
+                });
+            } catch (err) {
+                showHint(err instanceof Error ? err.message : String(err));
+            }
+        };
+
+        const showHint = (text: string) => {
+            setHint(text);
+            if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+            hintTimerRef.current = setTimeout(() => setHint(null), 2400);
+        };
+
+        const setEssence = (message: ChatMessage, on: boolean) => {
+            if (!session.startsWith("g:")) return;
+            void rpc
+                .call("group.essence.set", {
+                    groupId: session.slice(2),
+                    messageId: message.id,
+                    on,
+                })
+                .catch((err) =>
+                    showHint(err instanceof Error ? err.message : String(err)),
+                );
+        };
+
         const openForward = (ids: string[], preview: string) => {
             setForwardIds(ids);
             setForwardPreview(preview);
@@ -1061,7 +1160,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                         <MegaphoneIcon className="size-3.5" />
                                         群公告
                                         <span className="ml-auto truncate font-normal text-muted-foreground">
-                                            {row.sender} · {formatStamp(row.at)}
+                                            {row.sender} {formatStamp(row.at)}
                                         </span>
                                     </span>
                                     <span className="whitespace-pre-wrap break-words text-sm">
@@ -1073,6 +1172,9 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                     {row.group.items.map((message) => {
                                         const mine = row.group.mine;
                                         if (message.recalledAt) {
+                                            const reeditable =
+                                                message.sender === me &&
+                                                mediaKind(message) === "text";
                                             return (
                                                 <p
                                                     key={message.id}
@@ -1080,6 +1182,17 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                 >
                                                     「{message.sender}
                                                     」撤回了一条消息
+                                                    {reeditable ? (
+                                                        <button
+                                                            type="button"
+                                                            className="ml-1 text-primary hover:underline"
+                                                            onClick={() =>
+                                                                reEdit(message)
+                                                            }
+                                                        >
+                                                            重新编辑
+                                                        </button>
+                                                    ) : null}
                                                 </p>
                                             );
                                         }
@@ -1141,9 +1254,14 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                             title="查看资料"
                                                             className="rounded-full"
                                                             onClick={(e) =>
-                                                                openProfile(
+                                                                avatarTap(
                                                                     message.sender,
                                                                     e,
+                                                                )
+                                                            }
+                                                            onDoubleClick={() =>
+                                                                void poke(
+                                                                    message.sender,
                                                                 )
                                                             }
                                                         >
@@ -1511,6 +1629,27 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                             ) : null}
                                                         </BubbleContent>
                                                     </Bubble>
+                                                    {essenceIds.has(
+                                                        message.id,
+                                                    ) ? (
+                                                        <button
+                                                            type="button"
+                                                            title="定位原消息"
+                                                            className={cn(
+                                                                "mt-0.5 flex w-fit cursor-pointer items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400",
+                                                                mine &&
+                                                                    "self-end",
+                                                            )}
+                                                            onClick={() =>
+                                                                jumpToMessage(
+                                                                    message.id,
+                                                                )
+                                                            }
+                                                        >
+                                                            <StarIcon className="size-3" />
+                                                            精华消息
+                                                        </button>
+                                                    ) : null}
                                                     {isP2p &&
                                                     mine &&
                                                     message.id === lastOwnId ? (
@@ -1607,6 +1746,11 @@ export const uiMessagesSetup = async (ctx: Context) => {
                             <ArrowDownIcon className="size-4" />
                         </button>
                     ) : null}
+                    {hint ? (
+                        <div className="pointer-events-none absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-full bg-foreground/80 px-3 py-1.5 text-xs text-background shadow-md">
+                            {hint}
+                        </div>
+                    ) : null}
                     {selectMode ? (
                         <div className="absolute bottom-3 left-1/2 z-10 flex h-10 -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-background px-4 text-xs shadow-md">
                             <span className="font-medium">
@@ -1692,6 +1836,24 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                   <RotateCcwIcon className="size-4" />,
                                   "撤回",
                                   () => void recall(menu.message),
+                              )
+                            : null}
+                        {!menu.message.recalledAt &&
+                        session.startsWith("g:") &&
+                        groupInfo &&
+                        (groupInfo.myRole === "owner" ||
+                            groupInfo.myRole === "admin")
+                            ? menuItem(
+                                  "essence",
+                                  <StarIcon className="size-4" />,
+                                  essenceIds.has(menu.message.id)
+                                      ? "取消精华"
+                                      : "设为精华",
+                                  () =>
+                                      setEssence(
+                                          menu.message,
+                                          !essenceIds.has(menu.message.id),
+                                      ),
                               )
                             : null}
                     </div>

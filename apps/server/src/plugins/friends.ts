@@ -1,5 +1,7 @@
 import type { Plugin } from "@plugim/core";
 import type {
+    FriendGroupMoveParams,
+    FriendGroupParams,
     FriendListResult,
     FriendRemarkParams,
     FriendTargetParams,
@@ -59,6 +61,8 @@ export const friendsPlugin: Plugin = {
                 outgoing: [],
                 blocked: [],
                 remarks: {},
+                groups: [],
+                friendGroups: {},
             };
             for (const edge of edges) {
                 const other =
@@ -86,6 +90,14 @@ export const friendsPlugin: Plugin = {
                 const name = nameById.get(friendId);
                 if (name) result.remarks[name] = remark;
             }
+            const groupRows = await friendships.groupListOf(me.id);
+            result.groups = groupRows.map((row) => ({
+                id: row.id,
+                name: row.name,
+            }));
+            const groupMap = await friendships.friendGroupMap(me.id);
+            for (const user of users)
+                result.friendGroups[user.username] = groupMap[user.id] ?? null;
             return result;
         };
 
@@ -182,6 +194,80 @@ export const friendsPlugin: Plugin = {
         gateway.rpc("friend.list", async (_raw, conn) =>
             buildList(requireUser(conn)),
         );
+
+        const normalizeGroupName = (raw: unknown) => {
+            const name = String(raw ?? "")
+                .trim()
+                .slice(0, 16);
+            if (!name) throw new Error("分组名称不能为空");
+            return name;
+        };
+
+        gateway.rpc("friend.group.create", async (raw, conn) => {
+            const me = requireUser(conn);
+            const name = normalizeGroupName(
+                (raw as unknown as FriendGroupParams).name,
+            );
+            const rows = await friendships.groupListOf(me.id);
+            if (rows.length >= 20) throw new Error("分组数量已达上限");
+            if (rows.some((row) => row.name === name))
+                throw new Error("分组名称已存在");
+            await friendships.groupCreate(me.id, name);
+            return buildList(me);
+        });
+
+        gateway.rpc("friend.group.rename", async (raw, conn) => {
+            const me = requireUser(conn);
+            const params = raw as unknown as FriendGroupParams;
+            if (!params.groupId) throw new Error("缺少分组");
+            const name = normalizeGroupName(params.name);
+            const rows = await friendships.groupListOf(me.id);
+            if (!rows.some((row) => row.id === params.groupId))
+                throw new Error("分组不存在");
+            if (
+                rows.some(
+                    (row) => row.id !== params.groupId && row.name === name,
+                )
+            )
+                throw new Error("分组名称已存在");
+            await friendships.groupRename(me.id, params.groupId, name);
+            return buildList(me);
+        });
+
+        gateway.rpc("friend.group.remove", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { groupId } = raw as unknown as FriendGroupParams;
+            if (!groupId) throw new Error("缺少分组");
+            const rows = await friendships.groupListOf(me.id);
+            if (!rows.some((row) => row.id === groupId))
+                throw new Error("分组不存在");
+            await friendships.groupRemove(me.id, groupId);
+            return buildList(me);
+        });
+
+        gateway.rpc("friend.group.move", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { username, groupId } =
+                raw as unknown as FriendGroupMoveParams;
+            const target = await usernameToUser(String(username ?? ""));
+            const edges = await friendships.edgesOf(me.id);
+            const isFriend = edges.some(
+                (edge) =>
+                    edge.status === "accepted" &&
+                    ((edge.requesterId === me.id &&
+                        edge.addresseeId === target.id) ||
+                        (edge.requesterId === target.id &&
+                            edge.addresseeId === me.id)),
+            );
+            if (!isFriend) throw new Error("只能移动好友");
+            if (groupId) {
+                const rows = await friendships.groupListOf(me.id);
+                if (!rows.some((row) => row.id === groupId))
+                    throw new Error("分组不存在");
+            }
+            await friendships.groupSetFriend(me.id, target.id, groupId ?? null);
+            return buildList(me);
+        });
         return undefined;
     },
 };

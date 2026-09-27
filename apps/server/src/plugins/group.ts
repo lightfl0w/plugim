@@ -1,5 +1,6 @@
 import type { Plugin } from "@plugim/core";
 import type {
+    GroupEssenceParams,
     GroupInfo,
     GroupJoinRequest,
     GroupJoinResult,
@@ -11,11 +12,13 @@ import type {
     AuthUser,
     ChatService,
     ConnInfo,
+    EssencesStore,
     GatewayService,
     GroupAclService,
     GroupRow,
     GroupsStore,
     JoinRequestsStore,
+    MessageStore,
 } from "../types";
 
 const requireUser = (conn: ConnInfo): AuthUser => {
@@ -49,13 +52,23 @@ export const groupPlugin: Plugin = {
     name: "group",
     description: "群组管理 RPC",
     provides: ["group-rpc", "group-acl"],
-    inject: ["gateway", "groups", "accounts", "join-requests", "chat"],
+    inject: [
+        "gateway",
+        "groups",
+        "accounts",
+        "join-requests",
+        "chat",
+        "store",
+        "essences",
+    ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const groups = ctx.get<GroupsStore>("groups");
         const accounts = ctx.get<AccountsStore>("accounts");
         const joinRequests = ctx.get<JoinRequestsStore>("join-requests");
         const chat = ctx.get<ChatService>("chat");
+        const store = ctx.get<MessageStore>("store");
+        const essences = ctx.get<EssencesStore>("essences");
 
         const memberNames = async (
             memberIds: string[],
@@ -493,6 +506,33 @@ export const groupPlugin: Plugin = {
                     : `${me.username} 解除了 ${target.username} 的禁言`,
             );
             return true;
+        });
+
+        gateway.rpc("group.essence.set", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { groupId, messageId, on } =
+                raw as unknown as GroupEssenceParams;
+            await requireManage(groupId, me);
+            const message = await store.byId(messageId);
+            if (!message || message.session !== sessionOf(groupId))
+                throw new Error("消息不属于该群");
+            if (on) {
+                if (message.recalledAt) throw new Error("消息已撤回");
+                await essences.add(groupId, messageId, me.username);
+            } else {
+                await essences.remove(groupId, messageId);
+            }
+            const ids = await groups.memberIdsOf(groupId);
+            for (const id of ids)
+                gateway.emitToUser(id, "essence:update", { groupId });
+            return true;
+        });
+
+        gateway.rpc("group.essence.list", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { groupId } = raw as unknown as { groupId: string };
+            await requireMembership(groupId, me);
+            return essences.listOf(groupId);
         });
 
         gateway.rpc("group.delete", async (raw, conn) => {
