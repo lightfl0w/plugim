@@ -1,5 +1,9 @@
 import type { Context } from "@plugim/core";
-import type { IceServerConfig, ScreenSignal } from "@plugim/protocol";
+import type {
+    IceServerConfig,
+    ScreenCallState,
+    ScreenSignal,
+} from "@plugim/protocol";
 import {
     MicIcon,
     MicOffIcon,
@@ -352,12 +356,18 @@ export const uiCallSetup = async (ctx: Context) => {
         switch (signal.type) {
             case "invite": {
                 if (state.phase !== "idle") {
-                    await rpc
-                        .call("screen.decline", {
-                            callId: signal.callId,
-                        })
-                        .catch(() => undefined);
-                    return;
+                    const mine = (await rpc
+                        .call("screen.state", {})
+                        .catch(() => null)) as ScreenCallState | null;
+                    if (mine && mine.callId === callId && !mine.active) {
+                        await rpc
+                            .call("screen.decline", {
+                                callId: signal.callId,
+                            })
+                            .catch(() => undefined);
+                        return;
+                    }
+                    teardown();
                 }
                 callId = signal.callId;
                 set({
@@ -374,6 +384,11 @@ export const uiCallSetup = async (ctx: Context) => {
             case "decline": {
                 if (state.phase === "outgoing")
                     flashError(`${signal.from} 拒绝了通话`);
+                teardown();
+                break;
+            }
+            case "timeout": {
+                if (state.phase === "outgoing") flashError("对方无应答");
                 teardown();
                 break;
             }
@@ -438,6 +453,32 @@ export const uiCallSetup = async (ctx: Context) => {
         const peer = session.startsWith("p2p:") ? session.slice(4) : "";
         set({ peer });
     });
+
+    const restore = async () => {
+        if (state.phase !== "idle") return;
+        const info = (await rpc.call(
+            "screen.state",
+            {},
+        )) as ScreenCallState | null;
+        if (!info || info.active) return;
+        if (info.kind !== "voice" && info.kind !== "video") return;
+        if (state.phase !== "idle") return;
+        callId = info.callId;
+        isCaller = !info.incoming;
+        trace(`restore ${info.kind} as ${info.incoming ? "callee" : "caller"}`);
+        set({
+            phase: info.incoming ? "incoming" : "outgoing",
+            media: info.kind === "video" ? "video" : "voice",
+            incomingFrom: info.peer,
+            peer: info.peer,
+        });
+    };
+
+    const onStatus = (status: string) => {
+        if (status === "open") void restore().catch(() => undefined);
+    };
+    const disposeStatus = rpc.onStatus(onStatus);
+    if (rpc.status() === "open") void restore().catch(() => undefined);
 
     const fmt = (n: number) =>
         `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`;
@@ -676,6 +717,7 @@ export const uiCallSetup = async (ctx: Context) => {
         unregisterOverlay();
         disposeSignal();
         disposeOpen();
+        disposeStatus();
         clearTimeout(errorTimer);
         clearInterval(tickTimer);
         teardown();

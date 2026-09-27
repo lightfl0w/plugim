@@ -8,7 +8,7 @@ import {
     XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ConnStatus, RpcService } from "./connection";
+import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { PresenceService } from "./presence";
 import {
@@ -20,18 +20,6 @@ import {
     useShellPane,
 } from "./ui-shared";
 import type { UiService } from "./ui-types";
-
-const statusColor: Record<ConnStatus, string> = {
-    open: "bg-emerald-500",
-    connecting: "bg-amber-400",
-    closed: "bg-red-500",
-};
-
-const statusText: Record<ConnStatus, string> = {
-    open: "已连接",
-    connecting: "连接中",
-    closed: "已断开",
-};
 
 export const uiHeaderSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
@@ -138,10 +126,6 @@ export const uiHeaderSetup = async (ctx: Context) => {
                         {presence.isOnline(peerName) ? "在线" : "离线"}
                     </span>
                 ) : null}
-                <span
-                    title={statusText[status]}
-                    className={`size-2 shrink-0 rounded-full ${statusColor[status]}`}
-                />
                 <div className="ml-auto flex shrink-0 items-center gap-1">
                     {groupInfo ? (
                         <button

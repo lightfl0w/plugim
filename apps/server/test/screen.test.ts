@@ -1,5 +1,5 @@
 import type { ScreenSignal } from "@plugim/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTestApp } from "./helpers";
 
 const pair = async () => {
@@ -288,5 +288,94 @@ describe("screen signaling", () => {
         ).rejects.toThrow("不存在");
         app.setOnline(b.user);
         await app.call("screen.invite", { to: "sb" }, a.user);
+    });
+});
+
+const RING_MS = 60_000;
+
+describe("call lifecycle", () => {
+    it("reports a pending call so a refreshed client can restore it", async () => {
+        const { app, a, b } = await pair();
+        const { callId } = (await app.call(
+            "screen.invite",
+            { to: "sb", kind: "video" },
+            a.user,
+        )) as { callId: string };
+        await expect(app.call("screen.state", {}, b.user)).resolves.toEqual({
+            callId,
+            kind: "video",
+            peer: "sa",
+            active: false,
+            incoming: true,
+        });
+        await expect(
+            app.call("screen.state", {}, a.user),
+        ).resolves.toMatchObject({
+            callId,
+            incoming: false,
+            peer: "sb",
+            active: false,
+        });
+        await app.call("screen.accept", { callId }, b.user);
+        await expect(
+            app.call("screen.state", {}, a.user),
+        ).resolves.toMatchObject({ active: true });
+        const stranger = await app.register("sc");
+        await expect(
+            app.call("screen.state", {}, stranger.user),
+        ).resolves.toBeNull();
+    });
+
+    it("expires an unanswered invite and frees both users", async () => {
+        const { app, a, b } = await pair();
+        vi.useFakeTimers();
+        try {
+            const { callId } = (await app.call(
+                "screen.invite",
+                { to: "sb", kind: "voice" },
+                a.user,
+            )) as { callId: string };
+            await expect(
+                app.call("screen.state", {}, b.user),
+            ).resolves.toMatchObject({ callId, active: false });
+            await expect(
+                app.call("screen.invite", { to: "sa", kind: "voice" }, b.user),
+            ).rejects.toThrow("你正在进行通话");
+            vi.advanceTimersByTime(RING_MS);
+            const toCaller = app
+                .eventsFor(a.user.id, "screen:signal")
+                .at(-1) as { payload: ScreenSignal };
+            const toCallee = app
+                .eventsFor(b.user.id, "screen:signal")
+                .at(-1) as { payload: ScreenSignal };
+            expect(toCaller.payload).toMatchObject({
+                type: "timeout",
+                callId,
+                from: "sb",
+            });
+            expect(toCallee.payload).toMatchObject({ type: "timeout", callId });
+            await expect(
+                app.call("screen.state", {}, a.user),
+            ).resolves.toBeNull();
+            await expect(
+                app.call("screen.invite", { to: "sb", kind: "voice" }, a.user),
+            ).resolves.toMatchObject({ kind: "voice" });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("does not expire a call that was answered", async () => {
+        const { app, a, b } = await pair();
+        const callId = await inviteAndAccept(app, a, b);
+        vi.useFakeTimers();
+        try {
+            vi.advanceTimersByTime(RING_MS * 2);
+        } finally {
+            vi.useRealTimers();
+        }
+        await expect(
+            app.call("screen.state", {}, a.user),
+        ).resolves.toMatchObject({ callId, active: true });
     });
 });

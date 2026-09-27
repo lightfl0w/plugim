@@ -1,5 +1,9 @@
 import type { Context } from "@plugim/core";
-import type { IceServerConfig, ScreenSignal } from "@plugim/protocol";
+import type {
+    IceServerConfig,
+    ScreenCallState,
+    ScreenSignal,
+} from "@plugim/protocol";
 import {
     MonitorIcon,
     PhoneForwardedIcon,
@@ -278,12 +282,18 @@ export const uiScreenSetup = async (ctx: Context) => {
         switch (signal.type) {
             case "invite": {
                 if (state.phase !== "idle") {
-                    await rpc
-                        .call("screen.decline", {
-                            callId: signal.callId,
-                        })
-                        .catch(() => undefined);
-                    return;
+                    const mine = (await rpc
+                        .call("screen.state", {})
+                        .catch(() => null)) as ScreenCallState | null;
+                    if (mine && mine.callId === callId && !mine.active) {
+                        await rpc
+                            .call("screen.decline", {
+                                callId: signal.callId,
+                            })
+                            .catch(() => undefined);
+                        return;
+                    }
+                    teardown();
                 }
                 callId = signal.callId;
                 set({ phase: "incoming", incomingFrom: signal.from });
@@ -298,6 +308,12 @@ export const uiScreenSetup = async (ctx: Context) => {
                     teardown();
                     flashError(`${signal.from} 拒绝了共享请求`);
                 } else teardown();
+                break;
+            }
+            case "timeout": {
+                const outgoing = state.phase === "outgoing";
+                teardown();
+                if (outgoing) flashError("对方无应答");
                 break;
             }
             case "hangup": {

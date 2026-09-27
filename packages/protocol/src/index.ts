@@ -16,6 +16,7 @@ export interface MergedChat {
     sender: string;
     content: string;
     kind?: MessageKind;
+    link?: LinkPreview | null;
     createdAt: string;
 }
 
@@ -136,6 +137,7 @@ export type ScreenSignalType =
     | "accept"
     | "decline"
     | "hangup"
+    | "timeout"
     | "offer"
     | "answer"
     | "ice";
@@ -149,6 +151,14 @@ export interface ScreenSignal {
     kind?: CallKind;
     sdp?: string;
     candidate?: unknown;
+}
+
+export interface ScreenCallState {
+    callId: string;
+    kind: CallKind;
+    peer: string;
+    active: boolean;
+    incoming: boolean;
 }
 
 export interface IceServerConfig {

@@ -1809,6 +1809,34 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                 item.content,
                                             ) ?? item.content}
                                         </p>
+                                        {item.link ? (
+                                            <a
+                                                href={item.link.url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="mt-1 flex items-center gap-2.5 overflow-hidden rounded-lg border border-border bg-muted/40 p-2"
+                                            >
+                                                {item.link.image ? (
+                                                    <img
+                                                        src={item.link.image}
+                                                        alt=""
+                                                        loading="lazy"
+                                                        referrerPolicy="no-referrer"
+                                                        className="size-10 shrink-0 rounded object-cover"
+                                                    />
+                                                ) : null}
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="block truncate text-xs font-medium">
+                                                        {item.link.title}
+                                                    </span>
+                                                    <span className="block truncate text-[11px] text-muted-foreground">
+                                                        {item.link
+                                                            .description ||
+                                                            item.link.site}
+                                                    </span>
+                                                </span>
+                                            </a>
+                                        ) : null}
                                     </div>
                                 ))}
                             </div>

@@ -46,6 +46,7 @@ const KINDS: MessageKind[] = [
 ];
 
 const LINK_BUDGET_MS = 2000;
+const MERGE_LINK_MAX = 5;
 
 export const chatPlugin: Plugin = {
     name: "chat",
@@ -115,18 +116,17 @@ export const chatPlugin: Plugin = {
             return payload.content.slice(0, 80);
         };
 
-        const linkOf = async (
-            payload: ChatSendPayload,
+        const linkOfText = async (
+            content: string,
         ): Promise<LinkPreview | null> => {
-            if (payload.kind !== "text" || !payload.content.includes("://"))
-                return null;
+            if (!content.includes("://")) return null;
             let timer: ReturnType<typeof setTimeout> | undefined;
             const budget = new Promise<LinkPreview | null>((resolve) => {
                 timer = setTimeout(() => resolve(null), LINK_BUDGET_MS);
             });
             try {
                 return await Promise.race([
-                    linkPreview.previewOfText(payload.content),
+                    linkPreview.previewOfText(content),
                     budget,
                 ]);
             } catch {
@@ -141,7 +141,10 @@ export const chatPlugin: Plugin = {
             rawSession: string,
             payload: ChatSendPayload,
         ): Promise<ChatMessage> => {
-            const link = await linkOf(payload);
+            const link =
+                payload.kind === "text"
+                    ? await linkOfText(payload.content)
+                    : null;
             if (rawSession.startsWith("p2p:")) {
                 const peer = await resolveP2p(user, rawSession);
                 const saved = await store.save({
@@ -352,6 +355,20 @@ export const chatPlugin: Plugin = {
             sources.sort(
                 (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
             );
+            const linkContents = [
+                ...new Set(
+                    sources
+                        .filter((m) => (m.kind ?? "text") === "text")
+                        .map((m) => m.content)
+                        .filter((content) => content.includes("://")),
+                ),
+            ].slice(0, MERGE_LINK_MAX);
+            const linkByContent = new Map<string, LinkPreview | null>();
+            await Promise.all(
+                linkContents.map(async (content) => {
+                    linkByContent.set(content, await linkOfText(content));
+                }),
+            );
             const merged: SendMessageParams | null =
                 sources.length > 1
                     ? {
@@ -368,6 +385,7 @@ export const chatPlugin: Plugin = {
                                               : `[${m.kind}]`
                                           : m.content.slice(0, 500),
                                   kind: m.kind ?? "text",
+                                  link: linkByContent.get(m.content) ?? null,
                                   createdAt: m.createdAt,
                               })),
                           } satisfies MergePayload),

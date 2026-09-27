@@ -5,6 +5,7 @@ import type {
     GroupCallEventType,
     GroupCallInfo,
     GroupCallSignal,
+    ScreenCallState,
     ScreenSignal,
     ScreenSignalType,
 } from "@plugim/protocol";
@@ -26,6 +27,7 @@ interface Call {
     toName: string;
     kind: CallKind;
     active: boolean;
+    timer?: ReturnType<typeof setTimeout>;
 }
 
 interface Room {
@@ -49,6 +51,7 @@ const GROUP_SIGNAL_TYPES: GroupCallSignal["type"][] = [
     "ice",
 ];
 const ROOM_LIMIT = 6;
+const RING_TIMEOUT_MS = 60_000;
 
 export const screenPlugin: Plugin = {
     name: "screen",
@@ -69,6 +72,7 @@ export const screenPlugin: Plugin = {
             );
 
         const drop = (call: Call) => {
+            if (call.timer) clearTimeout(call.timer);
             calls.delete(call.id);
         };
 
@@ -143,7 +147,38 @@ export const screenPlugin: Plugin = {
                 from: me.username,
                 kind: callKind,
             } satisfies ScreenSignal);
+            call.timer = setTimeout(() => {
+                if (calls.get(call.id) !== call) return;
+                const parties: [string, string][] = [
+                    [call.fromId, call.toName],
+                    [call.toId, call.fromName],
+                ];
+                for (const [id, from] of parties)
+                    gateway.emitToUser(id, "screen:signal", {
+                        type: "timeout",
+                        callId: call.id,
+                        from,
+                        kind: call.kind,
+                    } satisfies ScreenSignal);
+                drop(call);
+            }, RING_TIMEOUT_MS);
+            call.timer.unref?.();
             return { callId: call.id, kind: callKind };
+        });
+
+        gateway.rpc("screen.state", async (_raw, conn) => {
+            const me = requireUser(conn);
+            const call = callOf(me.id);
+            if (!call) return null;
+            const incoming = call.toId === me.id;
+            const state: ScreenCallState = {
+                callId: call.id,
+                kind: call.kind,
+                peer: incoming ? call.fromName : call.toName,
+                active: call.active,
+                incoming,
+            };
+            return state;
         });
 
         gateway.rpc("screen.accept", async (raw, conn) => {
@@ -152,6 +187,7 @@ export const screenPlugin: Plugin = {
             const call = calls.get(callId);
             if (!call || call.toId !== me.id)
                 throw new Error("通话不存在或已结束");
+            if (call.timer) clearTimeout(call.timer);
             call.active = true;
             forward(call, me, "accept");
             return true;

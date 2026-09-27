@@ -691,4 +691,36 @@ describe("chat link cards", () => {
         expect(sent.link).toBeNull();
         expect(calls).toEqual([]);
     });
+
+    it("carries link previews for text items inside a merged forward", async () => {
+        const { app, ua } = await friendPair("lk", "ll");
+        stubPage();
+        const first = (await app.call(
+            "message.send",
+            { session: "p2p:ll", content: `带链接 http://${HOST}/m1` },
+            ua.user,
+        )) as { id: string };
+        const second = (await app.call(
+            "message.send",
+            { session: "p2p:ll", content: "普通一条" },
+            ua.user,
+        )) as { id: string };
+        await app.call(
+            "message.forward",
+            { ids: [first.id, second.id], sessions: ["general"] },
+            ua.user,
+        );
+        const history = (await app.call(
+            "history.list",
+            { session: "general" },
+            ua.user,
+        )) as { kind: string; content: string }[];
+        const merge = history.find((item) => item.kind === "merge");
+        const payload = JSON.parse(merge?.content ?? "{}") as {
+            list: { content: string; link: { title: string } | null }[];
+        };
+        expect(payload.list).toHaveLength(2);
+        expect(payload.list[0].link?.title).toBe("链接标题");
+        expect(payload.list[1].link).toBeNull();
+    });
 });

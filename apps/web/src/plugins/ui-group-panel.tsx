@@ -324,7 +324,7 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
             ) : null;
 
         return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 max-md:p-0">
+            <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 max-md:p-0">
                 <div
                     ref={panelRef}
                     role="dialog"
