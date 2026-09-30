@@ -38,7 +38,7 @@ import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { PresenceService } from "./presence";
 import type { SenderService } from "./sender";
-import { formatBytes, messageLabel } from "./ui-shared";
+import { formatBytes, messageLabel, showAlert, showConfirm } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 interface MembersResult {
@@ -110,13 +110,16 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                             code,
                         })) as GroupJoinResult;
                         await groups.refresh().catch(() => undefined);
-                        alert(
+                        showAlert(
                             result.status === "joined"
                                 ? `已加入群「${result.name}」`
                                 : `已提交加群申请，等待「${result.name}」管理员同意`,
                         );
                     } catch (err) {
-                        alert(String(err instanceof Error ? err.message : err));
+                        showAlert(
+                            String(err instanceof Error ? err.message : err),
+                            "出错了",
+                        );
                     }
                 })();
             }, 300);
@@ -283,7 +286,10 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 await rpc.call(method, { groupId, ...params });
                 await load(groupId);
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             } finally {
                 setBusy(false);
             }
@@ -302,7 +308,7 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
         const uploadFile = async (file: File) => {
             if (!groupId) return;
             if (file.size > uploadLimitMb * 1024 * 1024) {
-                alert(`文件超过 ${uploadLimitMb} MB 上限`);
+                showAlert(`文件超过 ${uploadLimitMb} MB 上限`);
                 return;
             }
             setUploading(file.name);
@@ -311,27 +317,43 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 await rpc.call("group.file.add", { groupId, key });
                 await load(groupId);
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             } finally {
                 setUploading("");
             }
         };
 
-        const removeFile = async (file: GroupFileItem) => {
-            if (!groupId) return;
-            if (!confirm(`确定删除群文件「${file.name}」吗？`)) return;
-            setBusy(true);
-            try {
-                await rpc.call("group.file.delete", {
-                    groupId,
-                    key: file.key,
-                });
-                await load(groupId);
-            } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
-            } finally {
-                setBusy(false);
-            }
+        const removeFile = (file: GroupFileItem) => {
+            const gid = groupId;
+            if (!gid) return;
+            showConfirm(
+                `确定删除群文件「${file.name}」吗？`,
+                () => {
+                    void (async () => {
+                        setBusy(true);
+                        try {
+                            await rpc.call("group.file.delete", {
+                                groupId: gid,
+                                key: file.key,
+                            });
+                            await load(gid);
+                        } catch (err) {
+                            showAlert(
+                                String(
+                                    err instanceof Error ? err.message : err,
+                                ),
+                                "出错了",
+                            );
+                        } finally {
+                            setBusy(false);
+                        }
+                    })();
+                },
+                "删除群文件",
+            );
         };
 
         const startCall = (kind: "voice" | "video", room?: string) => {
@@ -756,11 +778,16 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                                 void navigator.clipboard
                                                     .writeText(link)
                                                     .then(() =>
-                                                        alert(
+                                                        showAlert(
                                                             `邀请链接已复制\n${link}`,
                                                         ),
                                                     )
-                                                    .catch(() => alert(link));
+                                                    .catch(() =>
+                                                        showAlert(
+                                                            link,
+                                                            "复制失败，请手动复制",
+                                                        ),
+                                                    );
                                             }}
                                         >
                                             <CheckIcon />
@@ -1098,15 +1125,15 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                 variant="destructive"
                                 className="ml-auto"
                                 disabled={busy}
-                                onClick={async () => {
-                                    if (
-                                        !confirm(
-                                            `确定解散群「${info.name}」吗？`,
-                                        )
-                                    )
-                                        return;
-                                    await act("group.delete", {});
-                                    setGroupId(null);
+                                onClick={() => {
+                                    showConfirm(
+                                        `确定解散群「${info.name}」吗？`,
+                                        async () => {
+                                            await act("group.delete", {});
+                                            setGroupId(null);
+                                        },
+                                        "解散群",
+                                    );
                                 }}
                             >
                                 <PinOffIcon />
@@ -1118,15 +1145,15 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                 variant="destructive"
                                 className="ml-auto"
                                 disabled={busy}
-                                onClick={async () => {
-                                    if (
-                                        !confirm(
-                                            `确定退出群「${info.name}」吗？`,
-                                        )
-                                    )
-                                        return;
-                                    await act("group.leave", {});
-                                    setGroupId(null);
+                                onClick={() => {
+                                    showConfirm(
+                                        `确定退出群「${info.name}」吗？`,
+                                        async () => {
+                                            await act("group.leave", {});
+                                            setGroupId(null);
+                                        },
+                                        "退出群聊",
+                                    );
                                 }}
                             >
                                 退出群聊

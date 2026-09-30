@@ -185,3 +185,72 @@ export const isSoundEnabled = (owner: string): boolean =>
 export const setSoundEnabled = (owner: string, on: boolean) => {
     localStorage.setItem(soundKey(owner), on ? "1" : "0");
 };
+
+export interface UIAlert {
+    title: string;
+    message: string;
+}
+
+let alertState: UIAlert | null = null;
+const alertListeners = new Set<() => void>();
+
+export const showAlert = (message: string, title = "提示") => {
+    alertState = { title, message };
+    for (const cb of alertListeners) cb();
+};
+
+export const closeAlert = () => {
+    if (!alertState) return;
+    alertState = null;
+    for (const cb of alertListeners) cb();
+};
+
+export const currentAlert = (): UIAlert | null => alertState;
+
+export const onAlert = (cb: () => void) => {
+    alertListeners.add(cb);
+    return () => {
+        alertListeners.delete(cb);
+    };
+};
+
+export interface UIConfirm {
+    title: string;
+    message: string;
+    onAccept: () => void;
+}
+
+let confirmState: UIConfirm | null = null;
+const confirmListeners = new Set<() => void>();
+
+export const showConfirm = (
+    message: string,
+    onAccept: () => void,
+    title = "确认操作",
+) => {
+    confirmState = { title, message, onAccept };
+    for (const cb of confirmListeners) cb();
+};
+
+export const acceptConfirm = () => {
+    if (!confirmState) return;
+    const { onAccept } = confirmState;
+    confirmState = null;
+    for (const cb of confirmListeners) cb();
+    onAccept();
+};
+
+export const cancelConfirm = () => {
+    if (!confirmState) return;
+    confirmState = null;
+    for (const cb of confirmListeners) cb();
+};
+
+export const currentConfirm = (): UIConfirm | null => confirmState;
+
+export const onConfirmChange = (cb: () => void) => {
+    confirmListeners.add(cb);
+    return () => {
+        confirmListeners.delete(cb);
+    };
+};

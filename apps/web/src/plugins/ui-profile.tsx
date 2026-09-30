@@ -32,7 +32,7 @@ import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { ThemeMode, ThemeService } from "./theme";
 import type { AdminService } from "./ui-admin";
-import { isSoundEnabled, setSoundEnabled } from "./ui-shared";
+import { isSoundEnabled, setSoundEnabled, showAlert } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const THEME_OPTIONS: { value: ThemeMode; label: string; icon: ReactNode }[] = [
@@ -370,7 +370,10 @@ export const uiProfileSetup = async (ctx: Context) => {
                 });
                 setPushState("on");
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             } finally {
                 setPushBusy(false);
             }
@@ -379,9 +382,12 @@ export const uiProfileSetup = async (ctx: Context) => {
         const testPush = async () => {
             try {
                 await rpc.call("push.test", {});
-                alert("测试通知已发送");
+                showAlert("测试通知已发送");
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             }
         };
 

@@ -6,7 +6,7 @@ import {
     SlidersIcon,
 } from "lucide-react";
 import type { FC } from "react";
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useRef, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import {
     BrowserRouter,
@@ -22,7 +22,16 @@ import { Button } from "./components/ui/button";
 import { Switch } from "./components/ui/switch";
 import { saveDisabledPlugins } from "./plugins/registry";
 import type { SettingsService } from "./plugins/settings";
-import { isPopupWindow } from "./plugins/ui-shared";
+import {
+    acceptConfirm,
+    cancelConfirm,
+    closeAlert,
+    currentAlert,
+    currentConfirm,
+    isPopupWindow,
+    onAlert,
+    onConfirmChange,
+} from "./plugins/ui-shared";
 import type { UiService, UiSlot } from "./plugins/ui-types";
 
 interface SlotEntry {
@@ -228,6 +237,95 @@ export const mountHost = (ctx: Context): void => {
         </div>
     );
 
+    const AlertHost = () => {
+        const alert = useSyncExternalStore(onAlert, currentAlert, currentAlert);
+        const okRef = useRef<HTMLButtonElement>(null);
+        useEffect(() => {
+            if (alert) okRef.current?.focus();
+        }, [alert]);
+        if (!alert) return null;
+        return (
+            <div
+                className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+                role="alertdialog"
+                aria-modal="true"
+                aria-label={alert.title}
+                onClick={(event) => {
+                    if (event.target === event.currentTarget) closeAlert();
+                }}
+                onKeyDown={(event) => {
+                    if (event.key === "Escape") closeAlert();
+                }}
+            >
+                <div className="w-full max-w-xs rounded-xl border border-border bg-card p-4 shadow-xl">
+                    <p className="text-sm font-semibold">{alert.title}</p>
+                    <p className="mt-1.5 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                        {alert.message}
+                    </p>
+                    <button
+                        ref={okRef}
+                        type="button"
+                        className="mt-4 w-full rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                        onClick={closeAlert}
+                    >
+                        好
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+    const ConfirmHost = () => {
+        const confirm = useSyncExternalStore(
+            onConfirmChange,
+            currentConfirm,
+            currentConfirm,
+        );
+        const okRef = useRef<HTMLButtonElement>(null);
+        useEffect(() => {
+            if (confirm) okRef.current?.focus();
+        }, [confirm]);
+        if (!confirm) return null;
+        return (
+            <div
+                className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+                role="dialog"
+                aria-modal="true"
+                aria-label={confirm.title}
+                onClick={(event) => {
+                    if (event.target === event.currentTarget) cancelConfirm();
+                }}
+                onKeyDown={(event) => {
+                    if (event.key === "Escape") cancelConfirm();
+                }}
+            >
+                <div className="w-full max-w-xs rounded-xl border border-border bg-card p-4 shadow-xl">
+                    <p className="text-sm font-semibold">{confirm.title}</p>
+                    <p className="mt-1.5 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                        {confirm.message}
+                    </p>
+                    <div className="mt-4 flex justify-end gap-2">
+                        <button
+                            type="button"
+                            className="rounded-lg border border-border px-3 py-2 text-sm hover:bg-accent"
+                            onClick={cancelConfirm}
+                        >
+                            取消
+                        </button>
+                        <button
+                            ref={okRef}
+                            type="button"
+                            className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                            onClick={acceptConfirm}
+                        >
+                            确定
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     const Root = () =>
         routes.has("/chat") ? <Navigate to="/chat" replace /> : <NoRoute />;
 
@@ -269,6 +367,8 @@ export const mountHost = (ctx: Context): void => {
                         <Route path="*" element={<NoRoute />} />
                     </Routes>
                 </main>
+                <AlertHost />
+                <ConfirmHost />
             </div>
         );
     };

@@ -22,6 +22,7 @@ import type { AuthService } from "./auth";
 import type { ConnStatus, RpcService } from "./connection";
 import type { SenderService } from "./sender";
 import { draftStore } from "./ui-drafts";
+import { showAlert } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const EMOJIS = [
@@ -316,14 +317,17 @@ export const uiComposerSetup = async (ctx: Context) => {
         const sendFile = async (file: File) => {
             if (status !== "open" || sending || !currentSession) return;
             if (file.size > uploadLimitMb * 1024 * 1024) {
-                alert(`文件超过 ${uploadLimitMb} MB 上限`);
+                showAlert(`文件超过 ${uploadLimitMb} MB 上限`);
                 return;
             }
             setSending(true);
             try {
                 await sender.sendMedia(currentSession, file, file.name);
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             } finally {
                 setSending(false);
             }
@@ -339,7 +343,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                 typeof MediaRecorder === "undefined" ||
                 !navigator.mediaDevices?.getUserMedia
             ) {
-                alert("当前浏览器不支持录音");
+                showAlert("当前浏览器不支持录音");
                 return;
             }
             try {
@@ -361,7 +365,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                     });
                     if (blob.size === 0) return;
                     if (blob.size > uploadLimitMb * 1024 * 1024) {
-                        alert("录音过长，请分段发送");
+                        showAlert("录音过长，请分段发送");
                         return;
                     }
                     setSending(true);
@@ -372,7 +376,10 @@ export const uiComposerSetup = async (ctx: Context) => {
                             "语音消息.webm",
                         );
                     } catch (err) {
-                        alert(String(err instanceof Error ? err.message : err));
+                        showAlert(
+                            String(err instanceof Error ? err.message : err),
+                            "出错了",
+                        );
                     } finally {
                         setSending(false);
                     }
@@ -381,7 +388,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                 recorder.start();
                 setRecording(true);
             } catch {
-                alert("无法访问麦克风");
+                showAlert("无法访问麦克风", "出错了");
             }
         };
 

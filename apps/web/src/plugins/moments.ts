@@ -210,7 +210,7 @@ export const momentsPlugin: Plugin = {
             },
         });
 
-        const alert = (payload: unknown) => {
+        const notifyMomentUpdate = (payload: unknown) => {
             const event = payload as MomentUpdateEvent;
             if (event.action !== "like" && event.action !== "comment") return;
             const me = auth.user()?.username ?? "";
@@ -240,7 +240,7 @@ export const momentsPlugin: Plugin = {
         };
 
         const disposeEvent = ctx.on("server:moment:update", (payload) => {
-            alert(payload);
+            notifyMomentUpdate(payload);
             void run(false);
             syncUnread();
         });

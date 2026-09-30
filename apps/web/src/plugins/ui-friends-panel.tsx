@@ -10,7 +10,7 @@ import { Separator } from "../components/ui/separator";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { FriendsService } from "./friends";
-import { displayName, openChat, setShellPane } from "./ui-shared";
+import { displayName, openChat, setShellPane, showConfirm } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 type DetailView =
@@ -105,9 +105,13 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                 setRename({ id: group.id, text: group.name });
                 return;
             }
-            if (!confirm(`删除分组「${group.name}」？成员将移回我的好友`))
-                return;
-            void run(() => friends.groupRemove(group.id));
+            showConfirm(
+                `删除分组「${group.name}」？成员将移回我的好友`,
+                () => {
+                    void run(() => friends.groupRemove(group.id));
+                },
+                "删除分组",
+            );
         };
 
         const createGroup = () =>

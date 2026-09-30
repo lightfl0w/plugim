@@ -50,6 +50,7 @@ import {
     openChat,
     openDetachedChat,
     setShellPane,
+    showAlert,
 } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
@@ -622,7 +623,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 setInvitees([]);
                 openSession(`g:${info.id}`, info.name);
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             } finally {
                 setCreating(false);
             }

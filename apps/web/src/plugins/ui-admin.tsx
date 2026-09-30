@@ -24,7 +24,7 @@ import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
-import { formatBytes } from "./ui-shared";
+import { formatBytes, showAlert, showConfirm } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 export interface AdminService {
@@ -512,7 +512,10 @@ export const uiAdminSetup = async (ctx: Context) => {
                 .call("admin.retention.set", { days })
                 .then(() => refresh())
                 .catch((err) =>
-                    alert(String(err instanceof Error ? err.message : err)),
+                    showAlert(
+                        String(err instanceof Error ? err.message : err),
+                        "出错了",
+                    ),
                 );
         };
 
@@ -521,23 +524,40 @@ export const uiAdminSetup = async (ctx: Context) => {
                 .call("admin.cleanup", {})
                 .then((result) => {
                     const { deleted } = result as { deleted: number };
-                    alert(`已清理 ${deleted} 条过期消息`);
+                    showAlert(`已清理 ${deleted} 条过期消息`);
                     refresh();
                 })
                 .catch((err) =>
-                    alert(String(err instanceof Error ? err.message : err)),
+                    showAlert(
+                        String(err instanceof Error ? err.message : err),
+                        "出错了",
+                    ),
                 );
         };
 
-        const deleteFile = async (row: AdminFileRow) => {
-            if (!confirm(`确定删除文件「${row.name}」吗？`)) return;
-            try {
-                await rpc.call("admin.files.delete", { key: row.key });
-                loadFiles(fileOffset);
-                refresh();
-            } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
-            }
+        const deleteFile = (row: AdminFileRow) => {
+            showConfirm(
+                `确定删除文件「${row.name}」吗？`,
+                () => {
+                    void (async () => {
+                        try {
+                            await rpc.call("admin.files.delete", {
+                                key: row.key,
+                            });
+                            loadFiles(fileOffset);
+                            refresh();
+                        } catch (err) {
+                            showAlert(
+                                String(
+                                    err instanceof Error ? err.message : err,
+                                ),
+                                "出错了",
+                            );
+                        }
+                    })();
+                },
+                "删除文件",
+            );
         };
 
         const saveStorage = async () => {
@@ -582,7 +602,10 @@ export const uiAdminSetup = async (ctx: Context) => {
                 loadTasks();
                 refresh();
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             }
         };
 
@@ -594,7 +617,10 @@ export const uiAdminSetup = async (ctx: Context) => {
                 await rpc.call("admin.task.set", { name, ...patch });
                 loadTasks();
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             }
         };
 
@@ -611,7 +637,10 @@ export const uiAdminSetup = async (ctx: Context) => {
                 await rpc.call(method, params);
                 refresh();
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             }
         };
 
@@ -625,9 +654,12 @@ export const uiAdminSetup = async (ctx: Context) => {
                 });
                 setResetUser(null);
                 setResetPassword("");
-                alert("密码已重置，该用户需重新登录");
+                showAlert("密码已重置，该用户需重新登录");
             } catch (err) {
-                alert(String(err instanceof Error ? err.message : err));
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
             } finally {
                 setResetBusy(false);
             }
@@ -785,18 +817,19 @@ export const uiAdminSetup = async (ctx: Context) => {
                                         <Button
                                             size="sm"
                                             variant="destructive"
-                                            onClick={async () => {
-                                                if (
-                                                    !confirm(
-                                                        `确定解散群「${group.name}」吗？`,
-                                                    )
-                                                )
-                                                    return;
-                                                await act(
-                                                    "admin.group.delete",
-                                                    {
-                                                        groupId: group.id,
+                                            onClick={() => {
+                                                showConfirm(
+                                                    `确定解散群「${group.name}」吗？`,
+                                                    () => {
+                                                        void act(
+                                                            "admin.group.delete",
+                                                            {
+                                                                groupId:
+                                                                    group.id,
+                                                            },
+                                                        );
                                                     },
+                                                    "解散群",
                                                 );
                                             }}
                                         >

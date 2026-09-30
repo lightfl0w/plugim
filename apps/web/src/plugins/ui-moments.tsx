@@ -29,7 +29,7 @@ import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { MomentsService } from "./moments";
 import type { SenderService } from "./sender";
-import { displayName } from "./ui-shared";
+import { displayName, showConfirm } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const MAX_IMAGES = 9;
@@ -808,8 +808,13 @@ export const uiMomentsSetup = async (ctx: Context) => {
         };
 
         const remove = () => {
-            if (!window.confirm("删除这条动态？")) return;
-            void run(() => moments.remove(post.id));
+            showConfirm(
+                "删除这条动态？",
+                () => {
+                    void run(() => moments.remove(post.id));
+                },
+                "删除动态",
+            );
         };
 
         const tag = post.author === me ? visibilityLabel(post) : "";
