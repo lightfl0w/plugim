@@ -2,7 +2,7 @@ import { promises as dns } from "node:dns";
 import { Context } from "@plugim/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/plugins/config";
-import { linkPreviewPlugin } from "../src/plugins/link-preview";
+import { linkPreviewPlugin, linkTransport } from "../src/plugins/link-preview";
 import type { LinkPreviewService } from "../src/types";
 
 vi.mock("node:dns", () => ({ promises: { lookup: vi.fn() } }));
@@ -10,6 +10,20 @@ vi.mock("node:dns", () => ({ promises: { lookup: vi.fn() } }));
 const lookup = vi.mocked(dns.lookup);
 
 const PUBLIC = [{ address: "93.184.216.34", family: 4 }];
+
+const realTransport = linkTransport.fetch;
+
+const htmlResponse = (body: string) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => "text/html; charset=utf-8" },
+    body: new ReadableStream<Uint8Array>({
+        start(controller) {
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+        },
+    }),
+});
 
 const silent = {
     info: () => undefined,
@@ -27,15 +41,12 @@ const make = async (config: Partial<AppConfig> = {}) => {
     ctx.plugin(linkPreviewPlugin);
     await ctx.start();
     const calls: string[] = [];
-    vi.stubGlobal("fetch", async (input: URL) => {
-        calls.push(input.href);
-        return new Response(
+    linkTransport.fetch = async (target: URL) => {
+        calls.push(target.href);
+        return htmlResponse(
             "<html><head><title>页面标题</title></head></html>",
-            {
-                headers: { "content-type": "text/html; charset=utf-8" },
-            },
         );
-    });
+    };
     return { service: ctx.get<LinkPreviewService>("link-preview"), calls };
 };
 
@@ -45,7 +56,7 @@ const resolveTo = (records: { address: string; family: number }[]) => {
 
 describe("link preview guards", () => {
     afterEach(() => {
-        vi.unstubAllGlobals();
+        linkTransport.fetch = realTransport;
         lookup.mockReset();
     });
 
@@ -97,6 +108,15 @@ describe("link preview guards", () => {
             site: "good.example.com",
         });
         expect(calls).toEqual(["http://good.example.com/"]);
+    });
+
+    it("refuses non-standard ports before any fetch", async () => {
+        const { service, calls } = await make();
+        resolveTo(PUBLIC);
+        await expect(
+            service.preview("http://host.example.com:8080/"),
+        ).rejects.toThrow("仅支持 80/443 端口");
+        expect(calls).toEqual([]);
     });
 
     it("caches a preview until it is cleared", async () => {

@@ -1,4 +1,8 @@
 import { promises as dns } from "node:dns";
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
+import { Readable } from "node:stream";
 import type { Plugin } from "@plugim/core";
 import type { LinkPreview } from "@plugim/protocol";
 import type { LinkPreviewService } from "../types";
@@ -118,7 +122,65 @@ const isPrivateHost = (hostname: string): boolean => {
 const inList = (hostname: string, list: string[]): boolean =>
     list.some((entry) => hostname === entry || hostname.endsWith(`.${entry}`));
 
-const readHtml = async (response: Response): Promise<string> => {
+interface FetchedResponse {
+    ok: boolean;
+    status: number;
+    headers: { get(name: string): string | null };
+    body: ReadableStream<Uint8Array> | null;
+}
+
+const pinnedFetch = (target: URL, ip: string): Promise<FetchedResponse> =>
+    new Promise((resolvePromise, rejectPromise) => {
+        const isHttps = target.protocol === "https:";
+        const transport = isHttps ? https : http;
+        const family = net.isIP(ip);
+        if (!family) {
+            rejectPromise(new Error("无法解析该域名"));
+            return;
+        }
+        const req = transport.request(
+            target,
+            {
+                lookup: (_host, _options, callback) => {
+                    callback(null, ip, family);
+                },
+                servername: isHttps ? target.hostname : undefined,
+                headers: {
+                    accept: "text/html,application/xhtml+xml",
+                    "user-agent": USER_AGENT,
+                },
+            },
+            (res) => {
+                const status = res.statusCode ?? 0;
+                const headers = res.headers;
+                resolvePromise({
+                    ok: status >= 200 && status < 300,
+                    status,
+                    headers: {
+                        get: (name: string) => {
+                            const value = headers[name.toLowerCase()];
+                            if (value === undefined) return null;
+                            return Array.isArray(value)
+                                ? value.join(", ")
+                                : value;
+                        },
+                    },
+                    body: Readable.toWeb(res) as ReadableStream<Uint8Array>,
+                });
+            },
+        );
+        req.setTimeout(TIMEOUT_MS, () => {
+            req.destroy(new Error("链接无法访问"));
+        });
+        req.on("error", (err) => rejectPromise(err));
+        req.end();
+    });
+
+export const linkTransport: {
+    fetch: (target: URL, ip: string) => Promise<FetchedResponse>;
+} = { fetch: pinnedFetch };
+
+const readHtml = async (response: FetchedResponse): Promise<string> => {
     const body = response.body;
     if (!body) return "";
     const reader = body.getReader();
@@ -178,7 +240,9 @@ export const linkPreviewPlugin: Plugin = {
         const deny = config.linkDenyHosts;
         const cache = new Map<string, { at: number; value: LinkPreview }>();
 
-        const guard = async (value: string): Promise<URL> => {
+        const guard = async (
+            value: string,
+        ): Promise<{ url: URL; ip: string }> => {
             let url: URL;
             try {
                 url = new URL(value);
@@ -187,6 +251,11 @@ export const linkPreviewPlugin: Plugin = {
             }
             if (url.protocol !== "http:" && url.protocol !== "https:")
                 throw new Error("仅支持 http/https 链接");
+            if (
+                url.port &&
+                url.port !== (url.protocol === "https:" ? "443" : "80")
+            )
+                throw new Error("仅支持 80/443 端口");
             if (url.username || url.password)
                 throw new Error("链接不能包含账号密码");
             const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
@@ -208,7 +277,7 @@ export const linkPreviewPlugin: Plugin = {
             if (records.length === 0) throw new Error("无法解析该域名");
             if (records.some((record) => isPrivateHost(record.address)))
                 throw new Error("不支持访问内网地址");
-            return url;
+            return { url, ip: records[0].address };
         };
 
         const read = async (rawUrl: unknown): Promise<LinkPreview> => {
@@ -222,35 +291,36 @@ export const linkPreviewPlugin: Plugin = {
             const hit = cache.get(requested);
             if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
             let current = requested;
-            let response: Response | null = null;
+            let response: FetchedResponse | null = null;
             for (let hop = 0; hop <= REDIRECT_MAX; hop += 1) {
-                const target = await guard(current);
+                const { url: target, ip } = await guard(current);
                 try {
-                    response = await fetch(target, {
-                        redirect: "manual",
-                        headers: {
-                            accept: "text/html,application/xhtml+xml",
-                            "user-agent": USER_AGENT,
-                        },
-                        signal: AbortSignal.timeout(TIMEOUT_MS),
-                    });
+                    response = await linkTransport.fetch(target, ip);
                 } catch {
                     throw new Error("链接无法访问");
                 }
                 if (response.status < 300 || response.status >= 400) break;
                 const location = response.headers.get("location");
+                void response.body?.cancel().catch(() => undefined);
                 if (!location) throw new Error("链接无法访问");
                 if (hop === REDIRECT_MAX) throw new Error("链接重定向次数过多");
                 current = new URL(location, target).href;
             }
             if (!response) throw new Error("链接无法访问");
-            if (!response.ok)
+            if (!response.ok) {
+                void response.body?.cancel().catch(() => undefined);
                 throw new Error(`链接无法访问（${response.status}）`);
+            }
             const type = (
                 response.headers.get("content-type") ?? ""
             ).toLowerCase();
             if (!type.includes("text/html")) throw new Error("链接不是网页");
-            const html = await readHtml(response);
+            let html: string;
+            try {
+                html = await readHtml(response);
+            } catch {
+                throw new Error("链接读取失败");
+            }
             const meta = metaContent(html);
             const host = new URL(current).hostname.replace(/^www\./i, "");
             const titleTag = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);

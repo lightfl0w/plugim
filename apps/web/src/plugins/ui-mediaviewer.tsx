@@ -44,11 +44,26 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
 
         if (!message) return null;
 
-        const mime = message.file?.mime || mimeOf(message.content);
-        const isVideo = message.kind === "video" || mime.startsWith("video/");
-        const isAudio = message.kind === "audio" || mime.startsWith("audio/");
-        const isImage = message.kind === "image" || mime.startsWith("image/");
-        const isPdf = mime === "application/pdf";
+        const fileUrl = /^\/files\/[a-f0-9]{32}$/.test(message.content)
+            ? message.content
+            : "";
+        const dataImage = /^data:image\/(?:png|jpe?g|gif|webp);base64,/.test(
+            message.content,
+        )
+            ? message.content
+            : "";
+        const src = fileUrl || dataImage;
+        const mime = message.file?.mime || mimeOf(src);
+        const isVideo =
+            Boolean(src) &&
+            (message.kind === "video" || mime.startsWith("video/"));
+        const isAudio =
+            Boolean(src) &&
+            (message.kind === "audio" || mime.startsWith("audio/"));
+        const isImage =
+            Boolean(src) &&
+            (message.kind === "image" || mime.startsWith("image/"));
+        const isPdf = Boolean(fileUrl) && mime === "application/pdf";
 
         return (
             <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6">
@@ -63,17 +78,19 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
                             {message.file?.name ?? `${message.sender} 的分享`}
                         </span>
                         <span className="flex shrink-0 items-center gap-1">
-                            <a
-                                href={message.content}
-                                download={
-                                    message.file?.name ??
-                                    `${message.id.slice(0, 8)}`
-                                }
-                                className="rounded-md p-1.5 hover:bg-white/10"
-                                title="下载"
-                            >
-                                <DownloadIcon className="size-5" />
-                            </a>
+                            {src ? (
+                                <a
+                                    href={src}
+                                    download={
+                                        message.file?.name ??
+                                        `${message.id.slice(0, 8)}`
+                                    }
+                                    className="rounded-md p-1.5 hover:bg-white/10"
+                                    title="下载"
+                                >
+                                    <DownloadIcon className="size-5" />
+                                </a>
+                            ) : null}
                             <button
                                 type="button"
                                 className="rounded-md p-1.5 hover:bg-white/10"
@@ -86,13 +103,13 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
                     </div>
                     {isImage ? (
                         <img
-                            src={message.content}
+                            src={src}
                             alt={message.file?.name ?? "图片"}
                             className="max-h-[80vh] w-auto max-w-full rounded-lg object-contain"
                         />
                     ) : isVideo ? (
                         <video
-                            src={message.content}
+                            src={src}
                             controls
                             autoPlay
                             className="max-h-[80vh] w-full max-w-3xl rounded-lg bg-black"
@@ -102,13 +119,13 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
                     ) : isAudio ? (
                         <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-2xl bg-white/10 p-8">
                             <FileIcon className="size-12 text-white/80" />
-                            <audio src={message.content} controls autoPlay>
+                            <audio src={src} controls autoPlay>
                                 <track kind="captions" label="字幕" />
                             </audio>
                         </div>
                     ) : isPdf ? (
                         <iframe
-                            src={message.content}
+                            src={fileUrl}
                             title={message.file?.name ?? "PDF 预览"}
                             className="h-[80vh] w-full rounded-lg bg-white"
                         />

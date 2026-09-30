@@ -267,7 +267,7 @@ export interface PushStore {
         p256dh: string;
         auth: string;
     }): Promise<void>;
-    remove(endpoint: string): Promise<void>;
+    remove(userId: string, endpoint: string): Promise<void>;
     ofUser(userId: string): Promise<PushSubscriptionRow[]>;
     ofUsers(userIds: string[]): Promise<PushSubscriptionRow[]>;
     ofAll(): Promise<PushSubscriptionRow[]>;

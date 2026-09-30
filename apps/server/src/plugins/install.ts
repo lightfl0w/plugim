@@ -47,6 +47,9 @@ const testDatabase = async (
     }
 };
 
+const hasDotDot = (value: string): boolean =>
+    value.split(/[\\/]+/).includes("..");
+
 const normalizeDbParams = (
     raw: InstallDbParams,
 ): {
@@ -60,11 +63,11 @@ const normalizeDbParams = (
     const file = String(raw.dbFile ?? "").trim();
     const url = String(raw.databaseUrl ?? "").trim();
     const logDir = String(raw.logDir ?? "").trim();
-    if (!LOG_DIR_RE.test(logDir))
+    if (logDir && (!LOG_DIR_RE.test(logDir) || hasDotDot(logDir)))
         throw new Error("日志目录仅允许字母数字与 . / _ -");
     if (driver === "sqlite") {
         const target = file || "data/plugim.db";
-        if (!DB_FILE_RE.test(target))
+        if (!DB_FILE_RE.test(target) || hasDotDot(target))
             throw new Error("数据库文件名需以 .db 结尾，且不含空格");
         return { driver, file: target, url: "", logDir };
     }
@@ -85,24 +88,31 @@ export const installPlugin: Plugin = {
         const config = ctx.get<AppConfig>("config");
 
         const isLocked = async () =>
-            (await settings.get("installed")) === "true";
+            (await settings.get("installed")) === "true" ||
+            (await accounts.count()) > 0;
 
         gateway.rpc("install.status", async () => {
             const allow = await settings.get("allow_register");
             const invite = await settings.get("invite_code");
-            const hasUsers = (await accounts.count()) > 0;
+            const locked = await isLocked();
             const install = readInstallConfig();
             return {
-                installed: hasUsers || (await isLocked()),
-                hasUsers,
-                dbDriver: config.dbDriver,
-                dbFile:
-                    install.dbFile ??
-                    (config.dbDriver === "sqlite" ? config.dbFile : ""),
-                databaseUrlSet:
-                    install.databaseUrl !== undefined ||
-                    !!process.env.DATABASE_URL,
-                logDir: install.logDir ?? config.logDir,
+                installed: locked,
+                hasUsers: (await accounts.count()) > 0,
+                ...(locked
+                    ? {}
+                    : {
+                          dbDriver: config.dbDriver,
+                          dbFile:
+                              install.dbFile ??
+                              (config.dbDriver === "sqlite"
+                                  ? config.dbFile
+                                  : ""),
+                          databaseUrlSet:
+                              install.databaseUrl !== undefined ||
+                              !!process.env.DATABASE_URL,
+                          logDir: install.logDir ?? config.logDir,
+                      }),
                 allowRegister:
                     allow === null ? config.allowRegister : allow !== "false",
                 inviteRequired:

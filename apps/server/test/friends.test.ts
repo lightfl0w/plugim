@@ -104,7 +104,7 @@ describe("friend remarks", () => {
 
 describe("friend groups", () => {
     it("creates, renames, moves and removes groups", async () => {
-        const { app, ua, ub } = await friendPair("ga", "gb");
+        const { app, ua } = await friendPair("ga", "gb");
         const created = (await app.call(
             "friend.group.create",
             { name: " 同学 " },
@@ -132,11 +132,7 @@ describe("friend groups", () => {
             app.call("friend.group.create", { name: "同事" }, ua.user),
         ).rejects.toThrow("分组名称已存在");
         await expect(
-            app.call(
-                "friend.group.rename",
-                { groupId, name: "同事" },
-                ua.user,
-            ),
+            app.call("friend.group.rename", { groupId, name: "同事" }, ua.user),
         ).rejects.toThrow("分组名称已存在");
         await expect(
             app.call(

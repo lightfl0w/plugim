@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { linkTransport } from "../src/plugins/link-preview";
 import type { AuthUser } from "../src/types";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -602,21 +603,34 @@ describe("message search", () => {
 
 const HOST = "93.184.216.34";
 
+const realTransport = linkTransport.fetch;
+
 const stubPage = () => {
     const calls: string[] = [];
-    vi.stubGlobal("fetch", async (input: URL) => {
-        calls.push(input.href);
-        return new Response(
-            '<html><head><meta property="og:title" content="链接标题"><meta property="og:site_name" content="链接站点"></head></html>',
-            { headers: { "content-type": "text/html; charset=utf-8" } },
-        );
-    });
+    linkTransport.fetch = async (target: URL) => {
+        calls.push(target.href);
+        return {
+            ok: true,
+            status: 200,
+            headers: { get: () => "text/html; charset=utf-8" },
+            body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(
+                        new TextEncoder().encode(
+                            '<html><head><meta property="og:title" content="链接标题"><meta property="og:site_name" content="链接站点"></head></html>',
+                        ),
+                    );
+                    controller.close();
+                },
+            }),
+        };
+    };
     return calls;
 };
 
 describe("chat link cards", () => {
     afterEach(() => {
-        vi.unstubAllGlobals();
+        linkTransport.fetch = realTransport;
     });
 
     it("attaches the preview to the stored and delivered message", async () => {
@@ -647,9 +661,9 @@ describe("chat link cards", () => {
 
     it("sends the message unchanged when the preview fails", async () => {
         const { app, ua } = await friendPair("lc", "ld");
-        vi.stubGlobal("fetch", async () => {
+        linkTransport.fetch = async () => {
             throw new Error("boom");
-        });
+        };
         const sent = (await app.call(
             "message.send",
             { session: "p2p:ld", content: `挂了 http://${HOST}/x` },
@@ -671,7 +685,7 @@ describe("chat link cards", () => {
             "message.send",
             {
                 session: "p2p:lf",
-                content: `http://${HOST}/file`,
+                content: `/files/${"a".repeat(32)}`,
                 kind: "file",
                 file: { name: "a.txt", size: 3 },
             },
@@ -725,6 +739,79 @@ describe("chat link cards", () => {
     });
 });
 
+describe("media and session guards", () => {
+    it("rejects media messages that do not reference uploaded files", async () => {
+        const { app, ua } = await friendPair("xa", "xb");
+        await expect(
+            app.call(
+                "message.send",
+                {
+                    session: "p2p:xb",
+                    content: "javascript:alert(1)",
+                    kind: "file",
+                    file: { name: "x.html", size: 4 },
+                },
+                ua.user,
+            ),
+        ).rejects.toThrow("媒体消息必须引用已上传的文件");
+        await expect(
+            app.call(
+                "message.send",
+                {
+                    session: "p2p:xb",
+                    content: "http://evil.example.com/x.png",
+                    kind: "image",
+                    file: { name: "x.png", size: 4 },
+                },
+                ua.user,
+            ),
+        ).rejects.toThrow("媒体消息必须引用已上传的文件");
+    });
+
+    it("normalizes an invalid media mime type", async () => {
+        const { app, ua } = await friendPair("xm", "xn");
+        const sent = (await app.call(
+            "message.send",
+            {
+                session: "p2p:xn",
+                content: `/files/${"b".repeat(32)}`,
+                kind: "file",
+                file: { name: "x.bin", size: 4, mime: "not a mime!!" },
+            },
+            ua.user,
+        )) as { file: { mime: string } };
+        expect(sent.file.mime).toBe("application/octet-stream");
+    });
+
+    it("restricts sends to p2p, group or the default session", async () => {
+        const app = await createTestApp();
+        const ua = await app.register("xs");
+        await expect(
+            app.call(
+                "message.send",
+                { session: "lobby2", content: "hi" },
+                ua.user,
+            ),
+        ).rejects.toThrow("会话不存在");
+        const sent = (await app.call(
+            "message.send",
+            { session: "general", content: "hi" },
+            ua.user,
+        )) as { session: string };
+        expect(sent.session).toBe("general");
+    });
+
+    it("truncates oversized text content", async () => {
+        const { app, ua } = await friendPair("xt", "xu");
+        const sent = (await app.call(
+            "message.send",
+            { session: "p2p:xu", content: "好".repeat(9000) },
+            ua.user,
+        )) as { content: string };
+        expect(sent.content).toHaveLength(8000);
+    });
+});
+
 describe("chat.poke", () => {
     it("pokes a friend and mirrors a system message", async () => {
         const { app, ua, ub } = await friendPair("pka", "pkb");
@@ -740,8 +827,8 @@ describe("chat.poke", () => {
         const theirs = app.eventsFor(ub.user.id, "message:new");
         expect(theirs).toHaveLength(1);
         expect(
-            (theirs[0] as { payload: { message: { session: string } } })
-                .payload.message.session,
+            (theirs[0] as { payload: { message: { session: string } } }).payload
+                .message.session,
         ).toBe("p2p:pka");
         await expect(
             app.call("chat.poke", { session: "p2p:pkb" }, ua.user),

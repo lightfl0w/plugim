@@ -1912,10 +1912,15 @@ export const storagePlugin: Plugin = {
                             },
                         });
                 },
-                async remove(endpoint) {
+                async remove(userId: string, endpoint: string) {
                     await db
                         .delete(pushPg)
-                        .where(eq(pushPg.endpoint, endpoint));
+                        .where(
+                            and(
+                                eq(pushPg.endpoint, endpoint),
+                                eq(pushPg.userId, userId),
+                            ),
+                        );
                 },
                 async ofUser(userId) {
                     const rows = await db
@@ -3372,10 +3377,15 @@ export const storagePlugin: Plugin = {
                             },
                         });
                 },
-                async remove(endpoint) {
+                async remove(userId: string, endpoint: string) {
                     await db
                         .delete(pushSqlite)
-                        .where(eq(pushSqlite.endpoint, endpoint));
+                        .where(
+                            and(
+                                eq(pushSqlite.endpoint, endpoint),
+                                eq(pushSqlite.userId, userId),
+                            ),
+                        );
                 },
                 async ofUser(userId) {
                     const rows = await db

@@ -13,6 +13,8 @@ import type { AppConfig } from "./config";
 
 const USERNAME_RE = /^[a-z0-9_]{2,24}$/;
 const TOKEN_TTL = "30d";
+const LOGIN_WINDOW_MS = 60_000;
+const LOGIN_MAX_ATTEMPTS = 10;
 
 const unauthorized = (): Error => new Error("未登录或登录已过期");
 
@@ -27,6 +29,33 @@ export const authPlugin: Plugin = {
         const config = ctx.get<AppConfig>("config");
         const settings = ctx.get<SettingsStore>("settings");
         const secret = new TextEncoder().encode(config.jwtSecret);
+
+        const loginAttempts = new Map<
+            string,
+            { count: number; resetAt: number }
+        >();
+        const loginLimited = (key: string): boolean => {
+            const entry = loginAttempts.get(key);
+            if (!entry) return false;
+            if (Date.now() > entry.resetAt) {
+                loginAttempts.delete(key);
+                return false;
+            }
+            return entry.count >= LOGIN_MAX_ATTEMPTS;
+        };
+        const recordLoginFail = (key: string): void => {
+            const now = Date.now();
+            const entry = loginAttempts.get(key);
+            if (!entry || now > entry.resetAt) {
+                if (loginAttempts.size >= 10_000) loginAttempts.clear();
+                loginAttempts.set(key, {
+                    count: 1,
+                    resetAt: now + LOGIN_WINDOW_MS,
+                });
+                return;
+            }
+            entry.count += 1;
+        };
 
         const signToken = async (
             user: AuthUser,
@@ -110,8 +139,9 @@ export const authPlugin: Plugin = {
             if (!USERNAME_RE.test(username))
                 throw new Error("用户名需为 2-24 位小写字母、数字或下划线");
             if (password.length < 6) throw new Error("密码至少需要 6 位");
+            const hasUsers = (await accounts.count()) > 0;
             const policy = await registerPolicy();
-            if ((await accounts.count()) > 0) {
+            if (hasUsers) {
                 if (policy.inviteCode) {
                     const invite = String(params.inviteCode ?? "").trim();
                     if (invite !== policy.inviteCode)
@@ -123,7 +153,7 @@ export const authPlugin: Plugin = {
                 throw new Error("用户名已被占用");
             const passwordHash = await hash(password);
             const user = await accounts.create(username, passwordHash);
-            await ensureBootstrapAdmin(username);
+            if (!hasUsers) await ensureBootstrapAdmin(username);
             return toAuthSuccess(user, await signToken(user, 0));
         });
 
@@ -135,15 +165,23 @@ export const authPlugin: Plugin = {
             const username = String(params.username ?? "")
                 .trim()
                 .toLowerCase();
+            if (loginLimited(username))
+                throw new Error("尝试过于频繁，请一分钟后再试");
             const row = await accounts.byUsername(username);
-            if (!row) throw new Error("用户名或密码错误");
+            if (!row) {
+                recordLoginFail(username);
+                throw new Error("用户名或密码错误");
+            }
             const ok = await verify(
                 row.passwordHash,
                 String(params.password ?? ""),
             ).catch(() => false);
-            if (!ok) throw new Error("用户名或密码错误");
+            if (!ok) {
+                recordLoginFail(username);
+                throw new Error("用户名或密码错误");
+            }
             if (row.banned) throw new Error("账号已被封禁");
-            await ensureBootstrapAdmin(row.username);
+            loginAttempts.delete(username);
             const user: User = {
                 id: row.id,
                 username: row.username,

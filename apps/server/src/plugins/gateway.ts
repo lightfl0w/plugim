@@ -36,6 +36,20 @@ export const gatewayPlugin: Plugin = {
         let verifyToken: TokenVerifier = nullVerifier;
 
         const app = new Hono();
+        app.use("/ws", async (c, next) => {
+            const origin = c.req.header("origin");
+            if (origin) {
+                let originHost = "";
+                try {
+                    originHost = new URL(origin).host;
+                } catch {
+                    originHost = "";
+                }
+                if (originHost !== c.req.header("host"))
+                    return c.json({ ok: false, message: "拒绝跨站连接" }, 403);
+            }
+            await next();
+        });
         const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({
             app,
         });

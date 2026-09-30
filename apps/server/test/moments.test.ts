@@ -3,7 +3,8 @@ import type {
     MomentTimelineResult,
     MomentUnreadResult,
 } from "@plugim/protocol";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { linkTransport } from "../src/plugins/link-preview";
 import { createTestApp, type TestApp, uploadFile } from "./helpers";
 
 const feedOf = async (
@@ -413,6 +414,16 @@ describe("moment video", () => {
 
 const PUBLIC_HOST = "93.184.216.34";
 
+const realTransport = linkTransport.fetch;
+
+const htmlOf = (body: string) =>
+    new ReadableStream<Uint8Array>({
+        start(controller) {
+            if (body) controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+        },
+    });
+
 const stubFetch = (
     handler: (url: string) => {
         status?: number;
@@ -421,23 +432,25 @@ const stubFetch = (
     },
 ) => {
     const calls: string[] = [];
-    vi.stubGlobal("fetch", async (input: unknown) => {
-        const url =
-            input instanceof URL
-                ? input.href
-                : typeof input === "string"
-                  ? input
-                  : String((input as Request).url);
-        calls.push(url);
-        const result = handler(url);
-        return new Response(result.body ?? "", {
-            status: result.status ?? 200,
+    linkTransport.fetch = async (target: URL) => {
+        calls.push(target.href);
+        const result = handler(target.href);
+        const status = result.status ?? 200;
+        return {
+            ok: status >= 200 && status < 300,
+            status,
             headers: {
-                "content-type": "text/html; charset=utf-8",
-                ...result.headers,
+                get: (name: string) => {
+                    const map: Record<string, string> = {
+                        "content-type": "text/html; charset=utf-8",
+                        ...result.headers,
+                    };
+                    return map[name.toLowerCase()] ?? null;
+                },
             },
-        });
-    });
+            body: htmlOf(result.body ?? ""),
+        };
+    };
     return calls;
 };
 
@@ -448,7 +461,7 @@ const stubPage = (html: string, url = `http://${PUBLIC_HOST}/post`) => {
 
 describe("moment link", () => {
     afterEach(() => {
-        vi.unstubAllGlobals();
+        linkTransport.fetch = realTransport;
     });
 
     it("reads the card from open graph tags", async () => {
@@ -543,9 +556,9 @@ describe("moment link", () => {
                 ua.user,
             ),
         ).rejects.toThrow("链接不是网页");
-        vi.stubGlobal("fetch", async () => {
+        linkTransport.fetch = async () => {
             throw new Error("boom");
-        });
+        };
         await expect(
             app.call(
                 "moment.link",

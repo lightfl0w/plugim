@@ -30,8 +30,13 @@ import type { AppConfig } from "./config";
 
 const KEY_RE = /^[a-f0-9]{32}$/;
 const MIME_RE = /^[\w.+-]+\/[\w.+-]+$/;
+const INLINE_MIME_RE = /^(?:image|video|audio)\//;
 const DIR_RE = /^[\w./-]{1,256}$/;
 const TEXT_LIMIT = 512;
+
+const inlineableMime = (mime: string): boolean =>
+    (INLINE_MIME_RE.test(mime) && !mime.startsWith("image/svg")) ||
+    mime === "application/pdf";
 
 const SETTINGS = {
     driver: "storage_driver",
@@ -262,11 +267,31 @@ export const filesPlugin: Plugin = {
             const oversize = `文件超过 ${current.uploadLimitMb} MB 上限`;
             if (Number(c.req.header("content-length") ?? 0) > limit)
                 return c.json({ ok: false, message: oversize }, 413);
-            const data = new Uint8Array(await c.req.arrayBuffer());
-            if (data.byteLength === 0)
+            const body = c.req.raw.body;
+            if (!body)
                 return c.json({ ok: false, message: "上传内容为空" }, 400);
-            if (data.byteLength > limit)
-                return c.json({ ok: false, message: oversize }, 413);
+            const chunks: Uint8Array[] = [];
+            let total = 0;
+            const reader = body.getReader();
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (!value) continue;
+                total += value.byteLength;
+                if (total > limit) {
+                    await reader.cancel().catch(() => undefined);
+                    return c.json({ ok: false, message: oversize }, 413);
+                }
+                chunks.push(value);
+            }
+            const data = new Uint8Array(total);
+            let offset = 0;
+            for (const chunk of chunks) {
+                data.set(chunk, offset);
+                offset += chunk.byteLength;
+            }
+            if (total === 0)
+                return c.json({ ok: false, message: "上传内容为空" }, 400);
             const rawMime = (c.req.header("content-type") ?? "")
                 .split(";")[0]
                 .trim()
@@ -312,12 +337,13 @@ export const filesPlugin: Plugin = {
             const row = await mediaFiles.byKey(key);
             if (!row) return c.json({ ok: false, message: "文件不存在" }, 404);
             const download = c.req.query("download") === "1";
+            const inline = !download && inlineableMime(row.mime || "");
             const disposition = `${
-                download ? "attachment" : "inline"
+                inline ? "inline" : "attachment"
             }; filename*=UTF-8''${encodeURIComponent(row.name)}`;
             const cfg = current;
             if (cfg.driver === "s3") {
-                if (cfg.publicBase && !download)
+                if (cfg.publicBase && inline)
                     return c.redirect(`${cfg.publicBase}/${key}`, 302);
                 try {
                     const url = await getSignedUrl(
@@ -347,9 +373,10 @@ export const filesPlugin: Plugin = {
                 "content-type": row.mime || "application/octet-stream",
                 "content-length": String(row.size),
                 "content-disposition": disposition,
-                "cache-control": download
-                    ? "private, max-age=0"
-                    : "public, max-age=31536000, immutable",
+                "x-content-type-options": "nosniff",
+                "cache-control": inline
+                    ? "public, max-age=31536000, immutable"
+                    : "private, max-age=0",
             });
         });
 

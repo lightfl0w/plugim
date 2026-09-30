@@ -73,6 +73,30 @@ describe("auth rpc", () => {
         expect(row?.isAdmin).toBe(true);
     });
 
+    it("does not promote a later user matching the bootstrap name", async () => {
+        const app = await createTestApp({ admins: ["mallory"] });
+        await app.register("first");
+        const { user } = await app.register("mallory");
+        const accounts = app.ctx.get<{
+            fullById(id: string): Promise<{ isAdmin: boolean } | null>;
+        }>("accounts");
+        expect((await accounts.fullById(user.id))?.isAdmin).toBe(false);
+    });
+
+    it("throttles repeated failed logins for a username", async () => {
+        const app = await createTestApp();
+        await app.register("oscar");
+        for (let i = 0; i < 10; i += 1) {
+            await expect(app.login("oscar", "nope")).rejects.toThrow(
+                "用户名或密码错误",
+            );
+        }
+        await expect(app.login("oscar", "nope")).rejects.toThrow(
+            "尝试过于频繁",
+        );
+        await expect(app.login("oscar")).rejects.toThrow("尝试过于频繁");
+    });
+
     it("requires an invite code when configured, exempting the first user", async () => {
         const app = await createTestApp({ inviteCode: "alpha" });
         await app.register("ivy");

@@ -48,6 +48,9 @@ const KINDS: MessageKind[] = [
 
 const LINK_BUDGET_MS = 2000;
 const MERGE_LINK_MAX = 5;
+const CONTENT_MAX = 8000;
+const MIME_RE = /^[\w.+-]+\/[\w.+-]+$/;
+const FILE_URL_RE = /^\/files\/[a-f0-9]{32}$/;
 
 export const chatPlugin: Plugin = {
     name: "chat",
@@ -143,6 +146,12 @@ export const chatPlugin: Plugin = {
             rawSession: string,
             payload: ChatSendPayload,
         ): Promise<ChatMessage> => {
+            if (
+                !rawSession.startsWith("p2p:") &&
+                !rawSession.startsWith("g:") &&
+                rawSession !== config.defaultSession
+            )
+                throw new Error("会话不存在");
             const link =
                 payload.kind === "text"
                     ? await linkOfText(payload.content)
@@ -259,18 +268,38 @@ export const chatPlugin: Plugin = {
                 params.kind && KINDS.includes(params.kind)
                     ? params.kind
                     : "text";
+            const content = String(params.content).slice(0, CONTENT_MAX);
+            if (
+                kind === "image" ||
+                kind === "audio" ||
+                kind === "video" ||
+                kind === "file"
+            ) {
+                if (!FILE_URL_RE.test(content))
+                    throw new Error("媒体消息必须引用已上传的文件");
+            }
+            const rawMime = String(params.file?.mime ?? "");
             const file: FileMeta | null =
                 params.file &&
                 typeof params.file.name === "string" &&
                 typeof params.file.size === "number"
                     ? {
                           name: params.file.name.slice(0, 200),
-                          size: params.file.size,
-                          mime: String(params.file.mime ?? "").slice(0, 100),
+                          size: Math.max(
+                              0,
+                              Math.floor(
+                                  Number.isFinite(params.file.size)
+                                      ? params.file.size
+                                      : 0,
+                              ),
+                          ),
+                          mime: MIME_RE.test(rawMime)
+                              ? rawMime.slice(0, 100)
+                              : "application/octet-stream",
                       }
                     : null;
             return sendTo(user, rawSession, {
-                content: params.content,
+                content,
                 quote,
                 mentions,
                 kind,

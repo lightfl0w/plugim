@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Plugin } from "@plugim/core";
 import type { IceServerConfig } from "@plugim/protocol";
 import { readInstallConfig } from "../installConfig";
@@ -43,10 +44,11 @@ export const configPlugin: Plugin = {
     provides: ["config"],
     async apply(ctx) {
         const driver = process.env.PLUGIM_DB_DRIVER;
-        const jwtSecret = process.env.PLUGIM_JWT_SECRET;
-        if (!jwtSecret) {
+        const secretEnv = process.env.PLUGIM_JWT_SECRET;
+        const jwtSecret = secretEnv ?? randomBytes(32).toString("base64url");
+        if (!secretEnv) {
             ctx.log.warn(
-                "PLUGIM_JWT_SECRET not set, using insecure dev secret",
+                "PLUGIM_JWT_SECRET not set, using ephemeral random secret (all sessions reset on restart)",
             );
         }
         const install = readInstallConfig();
@@ -65,7 +67,7 @@ export const configPlugin: Plugin = {
                 "data/plugim.db",
             logDir: install.logDir ?? process.env.PLUGIM_LOG_DIR ?? "",
             defaultSession: process.env.PLUGIM_DEFAULT_SESSION ?? "general",
-            jwtSecret: jwtSecret ?? "plugim-dev-secret-do-not-use-in-prod",
+            jwtSecret,
             bootstrapAdmins: (process.env.PLUGIM_ADMINS ?? "")
                 .split(",")
                 .map((name) => name.trim().toLowerCase())

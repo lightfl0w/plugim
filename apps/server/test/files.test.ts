@@ -161,4 +161,79 @@ describe("media files", () => {
         expect(result.lastMessage).toContain("清理 1 个未引用文件");
         expect(await mediaFiles.count()).toBe(1);
     });
+
+    it("serves risky types as attachments and normal media inline", async () => {
+        const app = await createTestApp();
+        const root = await app.register("root");
+        const html = await uploadFile(
+            app,
+            root.token,
+            "页面.html",
+            "text/html",
+            12,
+        );
+        const svg = await uploadFile(
+            app,
+            root.token,
+            "icon.svg",
+            "image/svg+xml",
+            12,
+        );
+        const pdf = await uploadFile(
+            app,
+            root.token,
+            "doc.pdf",
+            "application/pdf",
+            12,
+        );
+        const png = await uploadFile(
+            app,
+            root.token,
+            "pic.png",
+            "image/png",
+            12,
+        );
+
+        const htmlRes = await app.app.request(`/files/${html.key}`);
+        expect(htmlRes.headers.get("content-disposition")).toContain(
+            "attachment",
+        );
+        expect(htmlRes.headers.get("x-content-type-options")).toBe("nosniff");
+
+        const svgRes = await app.app.request(`/files/${svg.key}`);
+        expect(svgRes.headers.get("content-disposition")).toContain(
+            "attachment",
+        );
+
+        const pdfRes = await app.app.request(`/files/${pdf.key}`);
+        expect(pdfRes.headers.get("content-disposition")).toContain("inline");
+
+        const pngRes = await app.app.request(`/files/${png.key}`);
+        expect(pngRes.headers.get("content-disposition")).toContain("inline");
+        expect(pngRes.headers.get("cache-control")).toContain("immutable");
+    });
+
+    it("rejects chunked uploads that exceed the limit mid-stream", async () => {
+        const app = await createTestApp({ admins: ["root"] });
+        const root = await app.register("root");
+        await app.call("files.config.set", { uploadLimitMb: 1 }, root.user);
+        const chunk = new Uint8Array(600_000);
+        const res = await app.app.request("/upload", {
+            method: "POST",
+            headers: {
+                authorization: `Bearer ${root.token}`,
+                "content-type": "application/octet-stream",
+                "x-file-name": "big.bin",
+            },
+            body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(chunk);
+                    controller.enqueue(chunk);
+                    controller.close();
+                },
+            }),
+            duplex: "half",
+        } as RequestInit);
+        expect(res.status).toBe(413);
+    });
 });

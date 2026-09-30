@@ -273,6 +273,8 @@ export const screenPlugin: Plugin = {
             const { callId } = raw as unknown as { callId: string };
             const call = calls.get(callId);
             if (!call) return true;
+            if (call.fromId !== me.id && call.toId !== me.id)
+                throw new Error("无权操作该通话");
             if (!call.active) await finishCall(call, me, "decline");
             forward(call, me, "decline");
             drop(call);

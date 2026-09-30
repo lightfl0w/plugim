@@ -81,11 +81,11 @@ describe("install wizard", () => {
 
     it("finish persists register policy that overrides env defaults", async () => {
         const app = await createTestApp();
-        await app.register("rootuser");
         await app.call("install.finish", {
             allowRegister: false,
             inviteCode: "key9",
         });
+        await app.register("rootuser");
         await expect(app.register("guest")).rejects.toThrow("邀请码");
         const ok = await app.call("auth.register", {
             username: "guest",
@@ -98,23 +98,22 @@ describe("install wizard", () => {
         });
     });
 
-    it("treats a database with existing users as installed (legacy upgrade)", async () => {
+    it("treats a database with existing users as installed and locks the wizard", async () => {
         const app = await createTestApp();
         await app.register("legacy1");
         expect(await app.call("install.status")).toMatchObject({
             installed: true,
             hasUsers: true,
         });
-        await app.call("install.finish", { allowRegister: false });
-        await expect(app.call("install.finish", {})).rejects.toThrow(
-            "完成初始化",
-        );
+        await expect(
+            app.call("install.finish", { allowRegister: false }),
+        ).rejects.toThrow("完成初始化");
     });
 
     it("closed policy without invite code blocks register after bootstrap", async () => {
         const app = await createTestApp();
-        await app.register("rootuser");
         await app.call("install.finish", { allowRegister: false });
+        await app.register("rootuser");
         expect(await app.call("install.status")).toMatchObject({
             allowRegister: false,
             hasUsers: true,

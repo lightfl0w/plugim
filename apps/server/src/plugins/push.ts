@@ -62,21 +62,22 @@ export const pushPlugin: Plugin = {
         );
 
         const send = async (
-            endpoint: string,
-            p256dh: string,
-            auth: string,
+            row: PushSubscriptionRow,
             payload: PushPayload,
         ): Promise<boolean> => {
             try {
                 await webpush.sendNotification(
-                    { endpoint, keys: { p256dh, auth } },
+                    {
+                        endpoint: row.endpoint,
+                        keys: { p256dh: row.p256dh, auth: row.auth },
+                    },
                     JSON.stringify(payload),
                 );
                 return true;
             } catch (err) {
                 const code = (err as { statusCode?: number }).statusCode;
                 if (code === 404 || code === 410) {
-                    await pushes.remove(endpoint);
+                    await pushes.remove(row.userId, row.endpoint);
                     return false;
                 }
                 ctx.log.warn("push send failed", code ?? String(err));
@@ -85,11 +86,9 @@ export const pushPlugin: Plugin = {
         };
 
         const deliver = (rows: PushSubscriptionRow[], payload: PushPayload) => {
-            void Promise.all(
-                rows.map((row) =>
-                    send(row.endpoint, row.p256dh, row.auth, payload),
-                ),
-            ).catch((err) => ctx.log.warn("push deliver failed", err));
+            void Promise.all(rows.map((row) => send(row, payload))).catch(
+                (err) => ctx.log.warn("push deliver failed", err),
+            );
         };
 
         ctx.provide<PushService>("push", {
@@ -149,7 +148,7 @@ export const pushPlugin: Plugin = {
             const user = requireUser(conn);
             const { endpoint } = raw as unknown as { endpoint?: unknown };
             const value = String(endpoint ?? "").trim();
-            if (value) await pushes.remove(value);
+            if (value) await pushes.remove(user.id, value);
             return { subscriptions: (await pushes.ofUser(user.id)).length };
         });
 
@@ -159,7 +158,7 @@ export const pushPlugin: Plugin = {
             if (rows.length === 0) throw new Error("当前设备未开启推送");
             const results = await Promise.all(
                 rows.map((row) =>
-                    send(row.endpoint, row.p256dh, row.auth, {
+                    send(row, {
                         title: "plugim",
                         body: "推送测试成功",
                         session: "",
