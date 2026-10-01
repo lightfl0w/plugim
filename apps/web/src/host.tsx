@@ -384,6 +384,10 @@ export const mountHost = (ctx: Context): void => {
                 </main>
                 <AlertHost />
                 <ConfirmHost />
+                <Slot
+                    slot="global-overlay"
+                    className="pointer-events-none fixed inset-0 z-[80]"
+                />
             </div>
         );
     };

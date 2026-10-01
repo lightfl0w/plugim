@@ -4,6 +4,7 @@ import { uiAdminSetup } from "./ui-admin";
 import { uiAuthSetup } from "./ui-auth";
 import { uiCallSetup } from "./ui-call";
 import { uiComposerSetup } from "./ui-composer";
+import { uiForcedPasswordSetup } from "./ui-forced-password";
 import { uiFriendsPanelSetup } from "./ui-friends-panel";
 import { uiGroupCallSetup } from "./ui-group-call";
 import { uiGroupPanelSetup } from "./ui-group-panel";
@@ -12,6 +13,7 @@ import { uiInstallSetup } from "./ui-install";
 import { uiMediaViewerSetup } from "./ui-mediaviewer";
 import { uiMessagesSetup } from "./ui-messages";
 import { uiMomentsSetup } from "./ui-moments";
+import { uiOrgSetup } from "./ui-org";
 import { uiProfileSetup } from "./ui-profile";
 import { uiProfileCardSetup } from "./ui-profilecard";
 import { uiPwaSetup } from "./ui-pwa";
@@ -28,6 +30,7 @@ const SECTIONS: { name: string; setup: UiSetup }[] = [
     { name: "后台管理", setup: uiAdminSetup },
     { name: "设置中心", setup: uiSettingsSetup },
     { name: "登录注册", setup: uiAuthSetup },
+    { name: "强制改密", setup: uiForcedPasswordSetup },
     { name: "主界面布局", setup: uiShellSetup },
     { name: "会话列表", setup: uiSidebarSetup },
     { name: "顶部栏", setup: uiHeaderSetup },
@@ -37,6 +40,7 @@ const SECTIONS: { name: string; setup: UiSetup }[] = [
     { name: "媒体预览", setup: uiMediaViewerSetup },
     { name: "资料卡", setup: uiProfileCardSetup },
     { name: "好友面板", setup: uiFriendsPanelSetup },
+    { name: "通讯录", setup: uiOrgSetup },
     { name: "群面板", setup: uiGroupPanelSetup },
     { name: "朋友圈", setup: uiMomentsSetup },
     { name: "屏幕共享", setup: uiScreenSetup },

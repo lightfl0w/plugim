@@ -1,7 +1,7 @@
 import type { Plugin } from "@plugim/core";
 import type { AuthSuccess, User } from "@plugim/protocol";
 
-const TOKEN_KEY = "plugim_token";
+export const TOKEN_KEY = "plugim_token";
 
 export interface AuthService {
     token(): string | null;
@@ -15,6 +15,7 @@ export interface AuthService {
     ): Promise<User>;
     logout(): void;
     setToken(token: string): void;
+    refresh(): Promise<void>;
     onChange(cb: () => void): () => void;
 }
 
@@ -66,11 +67,7 @@ export const authPlugin: Plugin = {
                 });
                 const body = (await res.json()) as {
                     ok: boolean;
-                    result?: {
-                        id: string;
-                        username: string;
-                        createdAt: string;
-                    };
+                    result?: User;
                     message?: string;
                 };
                 if (body.ok && body.result) {
@@ -127,6 +124,29 @@ export const authPlugin: Plugin = {
                 currentToken = token;
                 localStorage.setItem(TOKEN_KEY, token);
                 notify();
+            },
+            async refresh() {
+                if (!currentToken) return;
+                try {
+                    const res = await fetch("/rpc/auth.me", {
+                        method: "POST",
+                        headers: {
+                            "content-type": "application/json",
+                            authorization: `Bearer ${currentToken}`,
+                        },
+                        body: JSON.stringify({ params: {} }),
+                    });
+                    const body = (await res.json()) as {
+                        ok: boolean;
+                        result?: User;
+                    };
+                    if (body.ok && body.result) {
+                        currentUser = body.result;
+                        notify();
+                    }
+                } catch {
+                    void 0;
+                }
             },
             onChange(cb) {
                 listeners.add(cb);

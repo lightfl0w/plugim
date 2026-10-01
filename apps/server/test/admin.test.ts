@@ -113,6 +113,42 @@ describe("admin rpc", () => {
         expect(await app.call("admin.groups", {}, root.user)).toHaveLength(0);
     });
 
+    it("switches site mode, audits it and reflects in install status", async () => {
+        const { app, root, victim } = await adminSetup();
+        expect(await app.call("admin.mode.get", {}, root.user)).toBe(
+            "enterprise",
+        );
+        await expect(
+            app.call("admin.mode.get", {}, victim.user),
+        ).rejects.toThrow("管理员");
+        await expect(
+            app.call("admin.mode.set", { mode: "bogus" }, root.user),
+        ).rejects.toThrow("无效的站点模式");
+        expect(
+            await app.call("admin.mode.set", { mode: "chat" }, root.user),
+        ).toBe("chat");
+        expect(await app.call("admin.mode.get", {}, root.user)).toBe("chat");
+        expect(await app.call("install.status")).toMatchObject({
+            mode: "chat",
+        });
+        expect(
+            await app.call("admin.mode.set", { mode: "enterprise" }, root.user),
+        ).toBe("enterprise");
+        const { rows } = (await app.call(
+            "admin.audit.list",
+            { category: "admin" },
+            root.user,
+        )) as { rows: { action: string; detail: string }[] };
+        const modeRows = rows.filter((row) => row.action === "admin.mode");
+        expect(modeRows).toHaveLength(2);
+        expect(
+            modeRows.some((row) => row.detail === "站点模式：聊天模式"),
+        ).toBe(true);
+        expect(
+            modeRows.some((row) => row.detail === "站点模式：企业模式"),
+        ).toBe(true);
+    });
+
     it("reports system stats", async () => {
         const { app, root } = await adminSetup();
         const stats = (await app.call("admin.stats", {}, root.user)) as {

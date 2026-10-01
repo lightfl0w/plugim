@@ -69,6 +69,47 @@ export interface User {
     id: string;
     username: string;
     createdAt: string;
+    deptId?: string | null;
+    title?: string | null;
+    mustChangePassword?: boolean;
+}
+
+export interface DepartmentInfo {
+    id: string;
+    name: string;
+    parentId: string | null;
+    sort: number;
+    groupId: string | null;
+    memberCount: number;
+    createdAt: string;
+}
+
+export interface DirectoryMember {
+    id: string;
+    username: string;
+    deptId: string | null;
+    title: string | null;
+    createdAt: string;
+    online: boolean;
+}
+
+export interface DirectoryResult {
+    departments: DepartmentInfo[];
+    members: DirectoryMember[];
+}
+
+export interface AuditEntry {
+    id: string;
+    actorId: string | null;
+    actor: string;
+    action: string;
+    detail: string;
+    createdAt: string;
+}
+
+export interface AuditListResult {
+    rows: AuditEntry[];
+    total: number;
 }
 
 export interface AuthSuccess {

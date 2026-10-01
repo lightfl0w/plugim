@@ -1,10 +1,14 @@
 import type { Context } from "@plugim/core";
 import { lazy } from "react";
+import { TOKEN_KEY } from "./auth";
 import type { UiService } from "./ui-types";
+
+export type AppMode = "chat" | "enterprise";
 
 export interface InstallStatus {
     installed: boolean;
     hasUsers: boolean;
+    mode: AppMode;
     dbDriver: string;
     dbFile: string;
     databaseUrlSet: boolean;
@@ -29,6 +33,7 @@ export interface InstallService {
     finish(opts: {
         allowRegister: boolean;
         inviteCode?: string;
+        mode?: AppMode;
     }): Promise<void>;
     onChange(cb: () => void): () => void;
 }
@@ -43,9 +48,13 @@ const callInstallRpc = async (
     method: string,
     params: Record<string, unknown>,
 ): Promise<unknown> => {
+    const token = localStorage.getItem(TOKEN_KEY);
     const res = await fetch(`/rpc/${method}`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+            "content-type": "application/json",
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ params }),
     });
     const body = (await res.json()) as RpcResponse;
@@ -81,12 +90,14 @@ export const uiInstallSetup = async (ctx: Context) => {
     const finish = async (opts: {
         allowRegister: boolean;
         inviteCode?: string;
+        mode?: AppMode;
     }) => {
         await callInstallRpc("install.finish", {
             allowRegister: opts.allowRegister,
             ...(opts.inviteCode !== undefined
                 ? { inviteCode: opts.inviteCode }
                 : {}),
+            ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
         });
         await reload();
     };

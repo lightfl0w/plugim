@@ -7,7 +7,7 @@ describe("auth rpc", () => {
         const { user, token } = await app.register("alice");
         expect(user.username).toBe("alice");
         const verified = await app.verify(token);
-        expect(verified).toEqual(user);
+        expect(verified).toMatchObject({ ...user, mustChange: false });
         const me = await app.call("auth.me", {}, user);
         expect(me).toMatchObject({ id: user.id, username: "alice" });
     });

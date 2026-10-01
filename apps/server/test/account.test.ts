@@ -20,9 +20,15 @@ describe("password change", () => {
         )) as { token: string };
         expect(result.token).not.toBe(token);
         await expect(app.verify(token)).resolves.toBeNull();
-        await expect(app.verify(result.token)).resolves.toEqual(user);
+        await expect(app.verify(result.token)).resolves.toMatchObject({
+            ...user,
+            mustChange: false,
+        });
         const relogin = await app.login("alice", "Fresh-Pass1");
-        await expect(app.verify(relogin.token)).resolves.toEqual(user);
+        await expect(app.verify(relogin.token)).resolves.toMatchObject({
+            ...user,
+            mustChange: false,
+        });
         await expect(app.login("alice", "Passw0rd!")).rejects.toThrow(
             "用户名或密码错误",
         );
@@ -102,7 +108,10 @@ describe("admin password reset", () => {
         );
         await expect(app.verify(token)).resolves.toBeNull();
         const relogin = await app.login("erin", "Reset-Pass9");
-        await expect(app.verify(relogin.token)).resolves.toEqual(user);
+        await expect(app.verify(relogin.token)).resolves.toMatchObject({
+            ...user,
+            mustChange: true,
+        });
     });
 
     it("rejects short passwords", async () => {

@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createTestApp } from "./helpers";
+import { asUser, createTestApp } from "./helpers";
 
 describe("install wizard", () => {
     it("tests and saves sqlite db config into install.json", async () => {
@@ -69,6 +69,7 @@ describe("install wizard", () => {
             installed: false,
             hasUsers: false,
             inviteRequired: false,
+            mode: "enterprise",
         });
         expect(await app.call("install.finish", {})).toBe(true);
         expect(await app.call("install.status")).toMatchObject({
@@ -77,6 +78,19 @@ describe("install wizard", () => {
         await expect(app.call("install.finish", {})).rejects.toThrow(
             "完成初始化",
         );
+    });
+
+    it("finish persists site mode and ignores invalid values", async () => {
+        const app = await createTestApp();
+        await app.call("install.finish", { mode: "chat" });
+        expect(await app.call("install.status")).toMatchObject({
+            mode: "chat",
+        });
+        const other = await createTestApp();
+        await other.call("install.finish", { mode: "bogus" });
+        expect(await other.call("install.status")).toMatchObject({
+            mode: "enterprise",
+        });
     });
 
     it("finish persists register policy that overrides env defaults", async () => {
@@ -107,6 +121,46 @@ describe("install wizard", () => {
         });
         await expect(
             app.call("install.finish", { allowRegister: false }),
+        ).rejects.toThrow("完成初始化");
+    });
+
+    it("lets only the oldest account complete the wizard after bootstrap", async () => {
+        const app = await createTestApp({ admins: ["boss"] });
+        const { user: first } = await app.register("boss");
+        const { user: second } = await app.register("mate");
+        await expect(
+            app.call(
+                "install.finish",
+                { allowRegister: false },
+                asUser(second),
+            ),
+        ).rejects.toThrow("完成初始化");
+        expect(
+            await app.call(
+                "install.finish",
+                { allowRegister: false, mode: "chat" },
+                asUser(first),
+            ),
+        ).toBe(true);
+        expect(await app.call("install.status")).toMatchObject({
+            installed: true,
+            mode: "chat",
+            allowRegister: false,
+        });
+        const { rows } = (await app.call(
+            "admin.audit.list",
+            { category: "admin" },
+            asUser(first),
+        )) as { rows: { action: string; detail: string }[] };
+        expect(
+            rows.some(
+                (row) =>
+                    row.action === "admin.mode" &&
+                    row.detail === "站点模式：聊天模式",
+            ),
+        ).toBe(true);
+        await expect(
+            app.call("install.finish", {}, asUser(first)),
         ).rejects.toThrow("完成初始化");
     });
 

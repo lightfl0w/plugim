@@ -33,6 +33,10 @@ export const uiProfileCardSetup = async (ctx: Context) => {
     const ProfileCard = () => {
         const [card, setCard] = useState<CardState | null>(null);
         const [createdAt, setCreatedAt] = useState<string | null>(null);
+        const [org, setOrg] = useState<{
+            dept: string | null;
+            title: string | null;
+        } | null>(null);
         const [busy, setBusy] = useState(false);
         const [hint, setHint] = useState("");
         const [remarkOpen, setRemarkOpen] = useState(false);
@@ -52,14 +56,23 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                 const data = payload as CardState;
                 setCard(data);
                 setCreatedAt(null);
+                setOrg(null);
                 setHint("");
                 setRemarkOpen(false);
                 setRemarkDraft(friends.remarkOf(data.username) ?? "");
                 void rpc
                     .call("user.info", { username: data.username })
                     .then((result) => {
-                        const info = result as { createdAt: string };
+                        const info = result as {
+                            createdAt: string;
+                            title?: string | null;
+                            deptName?: string | null;
+                        };
                         setCreatedAt(info.createdAt ?? null);
+                        setOrg({
+                            dept: info.deptName ?? null,
+                            title: info.title ?? null,
+                        });
                     })
                     .catch(() => undefined);
             });
@@ -194,6 +207,11 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                                 保存
                             </button>
                         </div>
+                    ) : null}
+                    {org && (org.dept || org.title) ? (
+                        <p className="text-xs text-muted-foreground">
+                            {[org.dept, org.title].filter(Boolean).join(" · ")}
+                        </p>
                     ) : null}
                     {registered ? (
                         <p className="text-xs text-muted-foreground">

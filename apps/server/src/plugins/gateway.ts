@@ -23,6 +23,19 @@ import type { AppConfig } from "./config";
 
 const nullVerifier: TokenVerifier = () => Promise.resolve(null);
 
+const MUST_CHANGE_ALLOWED = new Set([
+    "auth.password",
+    "auth.me",
+    "presence.list",
+    "presence.status",
+    "presence.status.set",
+]);
+
+export const mustChangeBlocked = (
+    user: AuthUser | null | undefined,
+    method: string,
+): boolean => Boolean(user?.mustChange) && !MUST_CHANGE_ALLOWED.has(method);
+
 const toStatus = (raw: unknown): PresenceStatus =>
     raw === "busy" || raw === "away" || raw === "dnd" || raw === "invisible"
         ? raw
@@ -130,6 +143,8 @@ export const gatewayPlugin: Plugin = {
         ) => {
             const handler = handlers.get(method);
             if (!handler) throw new Error(`未知方法: ${method}`);
+            if (mustChangeBlocked(conn.user, method))
+                throw new Error("请先修改初始密码后再使用");
             return handler(params, conn);
         };
 

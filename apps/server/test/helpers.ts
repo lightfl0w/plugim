@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { Context } from "@plugim/core";
 import { Hono } from "hono";
 import { adminPlugin } from "../src/plugins/admin";
+import { auditPlugin } from "../src/plugins/audit";
 import { authPlugin } from "../src/plugins/auth";
 import { chatPlugin } from "../src/plugins/chat";
 import type { AppConfig } from "../src/plugins/config";
@@ -14,6 +15,7 @@ import { groupFilesPlugin } from "../src/plugins/group-files";
 import { installPlugin } from "../src/plugins/install";
 import { linkPreviewPlugin } from "../src/plugins/link-preview";
 import { momentsPlugin } from "../src/plugins/moments";
+import { orgPlugin } from "../src/plugins/org";
 import { pushPlugin } from "../src/plugins/push";
 import { screenPlugin } from "../src/plugins/screen";
 import { storagePlugin } from "../src/plugins/storage";
@@ -132,6 +134,7 @@ export const createTestApp = async (
 
     ctx.plugin(storagePlugin);
     ctx.plugin(tasksPlugin);
+    ctx.plugin(auditPlugin);
     ctx.plugin(authPlugin);
     ctx.plugin(installPlugin);
     ctx.plugin(friendsPlugin);
@@ -142,6 +145,7 @@ export const createTestApp = async (
     ctx.plugin(linkPreviewPlugin);
     ctx.plugin(momentsPlugin);
     ctx.plugin(screenPlugin);
+    ctx.plugin(orgPlugin);
     ctx.plugin(adminPlugin);
     ctx.plugin(filesPlugin);
     await ctx.start();

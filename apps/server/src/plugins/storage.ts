@@ -46,6 +46,10 @@ import postgres from "postgres";
 import type {
     AccountsStore,
     AdminUserRow,
+    AuditRow,
+    AuditStore,
+    DepartmentRow,
+    DepartmentsStore,
     EssenceItemRow,
     EssencesStore,
     FriendEdge,
@@ -113,6 +117,11 @@ const usersSqlite = sqliteTable("users", {
     isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
     banned: integer("banned", { mode: "boolean" }).notNull().default(false),
     tokenVersion: integer("token_version").notNull().default(0),
+    deptId: sqliteText("dept_id"),
+    title: sqliteText("title"),
+    mustChangePassword: integer("must_change_password", { mode: "boolean" })
+        .notNull()
+        .default(false),
 });
 
 const usersPg = pgTable("users", {
@@ -125,6 +134,51 @@ const usersPg = pgTable("users", {
     isAdmin: pgBoolean("is_admin").notNull().default(false),
     banned: pgBoolean("banned").notNull().default(false),
     tokenVersion: pgInteger("token_version").notNull().default(0),
+    deptId: pgText("dept_id"),
+    title: pgText("title"),
+    mustChangePassword: pgBoolean("must_change_password")
+        .notNull()
+        .default(false),
+});
+
+const departmentsSqlite = sqliteTable("departments", {
+    id: sqliteText("id").primaryKey(),
+    name: sqliteText("name").notNull(),
+    parentId: sqliteText("parent_id"),
+    sort: integer("sort").notNull().default(0),
+    groupId: sqliteText("group_id"),
+    createdAt: integer("created_at").notNull(),
+});
+
+const departmentsPg = pgTable("departments", {
+    id: pgText("id").primaryKey(),
+    name: pgText("name").notNull(),
+    parentId: pgText("parent_id"),
+    sort: pgInteger("sort").notNull().default(0),
+    groupId: pgText("group_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+});
+
+const auditsSqlite = sqliteTable("audit_logs", {
+    id: sqliteText("id").primaryKey(),
+    actorId: sqliteText("actor_id"),
+    actor: sqliteText("actor").notNull(),
+    action: sqliteText("action").notNull(),
+    detail: sqliteText("detail").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+});
+
+const auditsPg = pgTable("audit_logs", {
+    id: pgText("id").primaryKey(),
+    actorId: pgText("actor_id"),
+    actor: pgText("actor").notNull(),
+    action: pgText("action").notNull(),
+    detail: pgText("detail").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
 });
 
 const groupsSqlite = sqliteTable("groups", {
@@ -550,8 +604,28 @@ CREATE TABLE IF NOT EXISTS users (
   created_at INTEGER NOT NULL,
   is_admin INTEGER NOT NULL DEFAULT 0,
   banned INTEGER NOT NULL DEFAULT 0,
-  token_version INTEGER NOT NULL DEFAULT 0
+  token_version INTEGER NOT NULL DEFAULT 0,
+  dept_id TEXT,
+  title TEXT,
+  must_change_password INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS departments (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  parent_id TEXT,
+  sort INTEGER NOT NULL DEFAULT 0,
+  group_id TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_id TEXT,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs (created_at);
 CREATE TABLE IF NOT EXISTS friendships (
   requester_id TEXT NOT NULL,
   addressee_id TEXT NOT NULL,
@@ -711,8 +785,28 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   is_admin BOOLEAN NOT NULL DEFAULT FALSE,
   banned BOOLEAN NOT NULL DEFAULT FALSE,
-  token_version INTEGER NOT NULL DEFAULT 0
+  token_version INTEGER NOT NULL DEFAULT 0,
+  dept_id TEXT,
+  title TEXT,
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE
 );
+CREATE TABLE IF NOT EXISTS departments (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  parent_id TEXT,
+  sort INTEGER NOT NULL DEFAULT 0,
+  group_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_id TEXT,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit_logs (created_at);
 CREATE TABLE IF NOT EXISTS friendships (
   requester_id TEXT NOT NULL,
   addressee_id TEXT NOT NULL,
@@ -1143,6 +1237,8 @@ export const storagePlugin: Plugin = {
         "groupFiles",
         "join-requests",
         "moments",
+        "departments",
+        "audits",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -1159,6 +1255,8 @@ export const storagePlugin: Plugin = {
         let joinRequests: JoinRequestsStore;
         let moments: MomentsStore;
         let essences: EssencesStore;
+        let departments: DepartmentsStore;
+        let audits: AuditStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -1203,6 +1301,15 @@ export const storagePlugin: Plugin = {
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0",
             );
             await client.unsafe(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS dept_id TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS title TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
+            );
+            await client.unsafe(
                 "ALTER TABLE moments ADD COLUMN IF NOT EXISTS video TEXT",
             );
             await client.unsafe(
@@ -1243,6 +1350,9 @@ export const storagePlugin: Plugin = {
                 isAdmin: row.isAdmin,
                 banned: row.banned,
                 tokenVersion: row.tokenVersion,
+                deptId: row.deptId,
+                title: row.title,
+                mustChangePassword: row.mustChangePassword,
             });
             const edgeToRow = (row: {
                 requesterId: string;
@@ -1499,6 +1609,8 @@ export const storagePlugin: Plugin = {
                             createdAt: toIso(row.createdAt),
                             isAdmin: row.isAdmin,
                             banned: row.banned,
+                            deptId: row.deptId,
+                            title: row.title,
                         }),
                     );
                 },
@@ -1525,11 +1637,177 @@ export const storagePlugin: Plugin = {
                         .where(eq(usersPg.id, id));
                     return version;
                 },
+                async setOrg(id, deptId, title) {
+                    await db
+                        .update(usersPg)
+                        .set({ deptId, title })
+                        .where(eq(usersPg.id, id));
+                },
+                async setMustChange(id, on) {
+                    await db
+                        .update(usersPg)
+                        .set({ mustChangePassword: on })
+                        .where(eq(usersPg.id, id));
+                },
                 async count() {
                     const rows = await db
                         .select({ id: usersPg.id })
                         .from(usersPg);
                     return rows.length;
+                },
+            };
+
+            departments = {
+                async create(name, parentId) {
+                    const id = crypto.randomUUID();
+                    const siblings = await db
+                        .select({ sort: departmentsPg.sort })
+                        .from(departmentsPg)
+                        .where(
+                            parentId === null
+                                ? isNull(departmentsPg.parentId)
+                                : eq(departmentsPg.parentId, parentId),
+                        );
+                    const sort =
+                        siblings.reduce(
+                            (max, row) => Math.max(max, row.sort),
+                            0,
+                        ) + 1;
+                    const rows = await db
+                        .insert(departmentsPg)
+                        .values({ id, name, parentId, sort })
+                        .returning();
+                    const row = rows[0];
+                    return {
+                        id: row.id,
+                        name: row.name,
+                        parentId: row.parentId,
+                        sort: row.sort,
+                        groupId: row.groupId,
+                        createdAt: toIso(row.createdAt),
+                    };
+                },
+                async byId(id) {
+                    const rows = await db
+                        .select()
+                        .from(departmentsPg)
+                        .where(eq(departmentsPg.id, id))
+                        .limit(1);
+                    const row = rows[0];
+                    return row
+                        ? {
+                              id: row.id,
+                              name: row.name,
+                              parentId: row.parentId,
+                              sort: row.sort,
+                              groupId: row.groupId,
+                              createdAt: toIso(row.createdAt),
+                          }
+                        : null;
+                },
+                async listAll() {
+                    const rows = await db
+                        .select()
+                        .from(departmentsPg)
+                        .orderBy(
+                            asc(departmentsPg.sort),
+                            asc(departmentsPg.createdAt),
+                        );
+                    return rows.map(
+                        (row): DepartmentRow => ({
+                            id: row.id,
+                            name: row.name,
+                            parentId: row.parentId,
+                            sort: row.sort,
+                            groupId: row.groupId,
+                            createdAt: toIso(row.createdAt),
+                        }),
+                    );
+                },
+                async rename(id, name) {
+                    await db
+                        .update(departmentsPg)
+                        .set({ name })
+                        .where(eq(departmentsPg.id, id));
+                },
+                async move(id, parentId) {
+                    await db
+                        .update(departmentsPg)
+                        .set({ parentId })
+                        .where(eq(departmentsPg.id, id));
+                },
+                async remove(id) {
+                    await db
+                        .delete(departmentsPg)
+                        .where(eq(departmentsPg.id, id));
+                },
+                async setGroup(id, groupId) {
+                    await db
+                        .update(departmentsPg)
+                        .set({ groupId })
+                        .where(eq(departmentsPg.id, id));
+                },
+                async memberCounts() {
+                    const rows = await db
+                        .select({ deptId: usersPg.deptId })
+                        .from(usersPg);
+                    const counts: Record<string, number> = {};
+                    for (const row of rows) {
+                        if (!row.deptId) continue;
+                        counts[row.deptId] = (counts[row.deptId] ?? 0) + 1;
+                    }
+                    return counts;
+                },
+            };
+
+            audits = {
+                async add(row) {
+                    await db.insert(auditsPg).values({
+                        id: crypto.randomUUID(),
+                        actorId: row.actorId,
+                        actor: row.actor,
+                        action: row.action,
+                        detail: row.detail,
+                    });
+                },
+                async list(query) {
+                    const conds = [];
+                    const keyword = query.keyword?.trim();
+                    if (keyword) {
+                        const like = `%${keyword}%`;
+                        conds.push(
+                            sql`(${auditsPg.actor} LIKE ${like} OR ${auditsPg.detail} LIKE ${like})`,
+                        );
+                    }
+                    if (query.category)
+                        conds.push(
+                            sql`${auditsPg.action} LIKE ${`${query.category}.%`}`,
+                        );
+                    const where = conds.length ? and(...conds) : undefined;
+                    const countRows = await db
+                        .select({ count: sql<number>`count(*)` })
+                        .from(auditsPg)
+                        .where(where);
+                    const rows = await db
+                        .select()
+                        .from(auditsPg)
+                        .where(where)
+                        .orderBy(desc(auditsPg.createdAt))
+                        .limit(query.limit)
+                        .offset(query.offset);
+                    return {
+                        total: Number(countRows[0]?.count ?? 0),
+                        rows: rows.map(
+                            (row): AuditRow => ({
+                                id: row.id,
+                                actorId: row.actorId,
+                                actor: row.actor,
+                                action: row.action,
+                                detail: row.detail,
+                                createdAt: toIso(row.createdAt),
+                            }),
+                        ),
+                    };
                 },
             };
 
@@ -2624,11 +2902,16 @@ export const storagePlugin: Plugin = {
             const userColumns = client.pragma("table_info(users)") as Array<{
                 name: string;
             }>;
-            for (const col of ["is_admin", "banned", "token_version"]) {
+            for (const [col, type] of [
+                ["is_admin", "INTEGER NOT NULL DEFAULT 0"],
+                ["banned", "INTEGER NOT NULL DEFAULT 0"],
+                ["token_version", "INTEGER NOT NULL DEFAULT 0"],
+                ["dept_id", "TEXT"],
+                ["title", "TEXT"],
+                ["must_change_password", "INTEGER NOT NULL DEFAULT 0"],
+            ]) {
                 if (!userColumns.some((item) => item.name === col)) {
-                    client.exec(
-                        `ALTER TABLE users ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 0`,
-                    );
+                    client.exec(`ALTER TABLE users ADD COLUMN ${col} ${type}`);
                 }
             }
             const groupColumns = client.pragma("table_info(groups)") as Array<{
@@ -2685,6 +2968,9 @@ export const storagePlugin: Plugin = {
                 isAdmin: row.isAdmin,
                 banned: row.banned,
                 tokenVersion: row.tokenVersion,
+                deptId: row.deptId,
+                title: row.title,
+                mustChangePassword: row.mustChangePassword,
             });
             const edgeToRow = (row: {
                 requesterId: string;
@@ -2979,6 +3265,8 @@ export const storagePlugin: Plugin = {
                             createdAt: toIso(row.createdAt),
                             isAdmin: row.isAdmin,
                             banned: row.banned,
+                            deptId: row.deptId,
+                            title: row.title,
                         }),
                     );
                 },
@@ -3005,11 +3293,181 @@ export const storagePlugin: Plugin = {
                         .where(eq(usersSqlite.id, id));
                     return version;
                 },
+                async setOrg(id, deptId, title) {
+                    await db
+                        .update(usersSqlite)
+                        .set({ deptId, title })
+                        .where(eq(usersSqlite.id, id));
+                },
+                async setMustChange(id, on) {
+                    await db
+                        .update(usersSqlite)
+                        .set({ mustChangePassword: on })
+                        .where(eq(usersSqlite.id, id));
+                },
                 async count() {
                     const rows = await db
                         .select({ id: usersSqlite.id })
                         .from(usersSqlite);
                     return rows.length;
+                },
+            };
+
+            departments = {
+                async create(name, parentId) {
+                    const id = crypto.randomUUID();
+                    const siblings = await db
+                        .select({ sort: departmentsSqlite.sort })
+                        .from(departmentsSqlite)
+                        .where(
+                            parentId === null
+                                ? isNull(departmentsSqlite.parentId)
+                                : eq(departmentsSqlite.parentId, parentId),
+                        );
+                    const sort =
+                        siblings.reduce(
+                            (max, row) => Math.max(max, row.sort),
+                            0,
+                        ) + 1;
+                    const now = Date.now();
+                    await db.insert(departmentsSqlite).values({
+                        id,
+                        name,
+                        parentId,
+                        sort,
+                        createdAt: now,
+                    });
+                    return {
+                        id,
+                        name,
+                        parentId,
+                        sort,
+                        groupId: null,
+                        createdAt: new Date(now).toISOString(),
+                    };
+                },
+                async byId(id) {
+                    const rows = await db
+                        .select()
+                        .from(departmentsSqlite)
+                        .where(eq(departmentsSqlite.id, id))
+                        .limit(1);
+                    const row = rows[0];
+                    return row
+                        ? {
+                              id: row.id,
+                              name: row.name,
+                              parentId: row.parentId,
+                              sort: row.sort,
+                              groupId: row.groupId,
+                              createdAt: toIso(row.createdAt),
+                          }
+                        : null;
+                },
+                async listAll() {
+                    const rows = await db
+                        .select()
+                        .from(departmentsSqlite)
+                        .orderBy(
+                            asc(departmentsSqlite.sort),
+                            asc(departmentsSqlite.createdAt),
+                        );
+                    return rows.map(
+                        (row): DepartmentRow => ({
+                            id: row.id,
+                            name: row.name,
+                            parentId: row.parentId,
+                            sort: row.sort,
+                            groupId: row.groupId,
+                            createdAt: toIso(row.createdAt),
+                        }),
+                    );
+                },
+                async rename(id, name) {
+                    await db
+                        .update(departmentsSqlite)
+                        .set({ name })
+                        .where(eq(departmentsSqlite.id, id));
+                },
+                async move(id, parentId) {
+                    await db
+                        .update(departmentsSqlite)
+                        .set({ parentId })
+                        .where(eq(departmentsSqlite.id, id));
+                },
+                async remove(id) {
+                    await db
+                        .delete(departmentsSqlite)
+                        .where(eq(departmentsSqlite.id, id));
+                },
+                async setGroup(id, groupId) {
+                    await db
+                        .update(departmentsSqlite)
+                        .set({ groupId })
+                        .where(eq(departmentsSqlite.id, id));
+                },
+                async memberCounts() {
+                    const rows = await db
+                        .select({ deptId: usersSqlite.deptId })
+                        .from(usersSqlite);
+                    const counts: Record<string, number> = {};
+                    for (const row of rows) {
+                        if (!row.deptId) continue;
+                        counts[row.deptId] = (counts[row.deptId] ?? 0) + 1;
+                    }
+                    return counts;
+                },
+            };
+
+            audits = {
+                async add(row) {
+                    await db.insert(auditsSqlite).values({
+                        id: crypto.randomUUID(),
+                        actorId: row.actorId,
+                        actor: row.actor,
+                        action: row.action,
+                        detail: row.detail,
+                        createdAt: Date.now(),
+                    });
+                },
+                async list(query) {
+                    const conds = [];
+                    const keyword = query.keyword?.trim();
+                    if (keyword) {
+                        const like = `%${keyword}%`;
+                        conds.push(
+                            sql`(${auditsSqlite.actor} LIKE ${like} OR ${auditsSqlite.detail} LIKE ${like})`,
+                        );
+                    }
+                    if (query.category)
+                        conds.push(
+                            sql`${auditsSqlite.action} LIKE ${`${query.category}.%`}`,
+                        );
+                    const where = conds.length ? and(...conds) : undefined;
+                    const countRows = await db
+                        .select({ count: sql<number>`count(*)` })
+                        .from(auditsSqlite)
+                        .where(where);
+                    const rows = await db
+                        .select()
+                        .from(auditsSqlite)
+                        .where(where)
+                        .orderBy(desc(auditsSqlite.createdAt))
+                        .limit(query.limit)
+                        .offset(query.offset);
+                    return {
+                        total: Number(countRows[0]?.count ?? 0),
+                        rows: rows.map(
+                            (row): AuditRow => ({
+                                id: row.id,
+                                actorId: row.actorId,
+                                actor: row.actor,
+                                action: row.action,
+                                detail: row.detail,
+                                createdAt: toIso(row.createdAt),
+                            }),
+                        ),
+                    };
                 },
             };
 
@@ -4167,6 +4625,8 @@ export const storagePlugin: Plugin = {
         ctx.provide<GroupFilesStore>("groupFiles", groupFiles);
         ctx.provide<JoinRequestsStore>("join-requests", joinRequests);
         ctx.provide<MomentsStore>("moments", moments);
+        ctx.provide<DepartmentsStore>("departments", departments);
+        ctx.provide<AuditStore>("audits", audits);
         return undefined;
     },
 };

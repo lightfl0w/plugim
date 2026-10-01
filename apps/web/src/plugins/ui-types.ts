@@ -9,7 +9,8 @@ export type UiSlot =
     | "composer"
     | "friends-list"
     | "friends-detail"
-    | "overlay";
+    | "overlay"
+    | "global-overlay";
 
 export interface UiService {
     Slot: FC<{ slot: UiSlot; className?: string }>;

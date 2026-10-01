@@ -4,14 +4,16 @@ import type { AuthSuccess, PresenceStatus, User } from "@plugim/protocol";
 import { jwtVerify, SignJWT } from "jose";
 import type {
     AccountsStore,
+    AuditService,
     AuthUser,
     ConnInfo,
+    DepartmentsStore,
     GatewayService,
     SettingsStore,
 } from "../types";
 import type { AppConfig } from "./config";
 
-const USERNAME_RE = /^[a-z0-9_]{2,24}$/;
+export const USERNAME_RE = /^[a-z0-9_]{2,24}$/;
 const TOKEN_TTL = "30d";
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_ATTEMPTS = 10;
@@ -27,12 +29,14 @@ export const authPlugin: Plugin = {
     name: "auth",
     description: "注册登录",
     provides: ["auth"],
-    inject: ["gateway", "store", "config", "settings"],
+    inject: ["gateway", "store", "config", "settings", "audit", "departments"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const accounts = ctx.get<AccountsStore>("accounts");
         const config = ctx.get<AppConfig>("config");
         const settings = ctx.get<SettingsStore>("settings");
+        const audit = ctx.get<AuditService>("audit");
+        const departments = ctx.get<DepartmentsStore>("departments");
         const secret = new TextEncoder().encode(config.jwtSecret);
 
         const loginAttempts = new Map<
@@ -91,7 +95,11 @@ export const authPlugin: Plugin = {
                     row.tokenVersion
                 )
                     return null;
-                return { id, username };
+                return {
+                    id,
+                    username,
+                    mustChange: row.mustChangePassword,
+                };
             } catch {
                 return null;
             }
@@ -159,6 +167,11 @@ export const authPlugin: Plugin = {
             const passwordHash = await hash(password);
             const user = await accounts.create(username, passwordHash);
             if (!hasUsers) await ensureBootstrapAdmin(username);
+            await audit.log({
+                actorId: user.id,
+                actor: user.username,
+                action: "auth.register",
+            });
             return toAuthSuccess(user, await signToken(user, 0));
         });
 
@@ -175,6 +188,12 @@ export const authPlugin: Plugin = {
             const row = await accounts.byUsername(username);
             if (!row) {
                 recordLoginFail(username);
+                await audit.log({
+                    actorId: null,
+                    actor: username || "未知",
+                    action: "auth.login.failed",
+                    detail: "用户名不存在",
+                });
                 throw new Error("用户名或密码错误");
             }
             const ok = await verify(
@@ -183,15 +202,37 @@ export const authPlugin: Plugin = {
             ).catch(() => false);
             if (!ok) {
                 recordLoginFail(username);
+                await audit.log({
+                    actorId: null,
+                    actor: username,
+                    action: "auth.login.failed",
+                    detail: "密码错误",
+                });
                 throw new Error("用户名或密码错误");
             }
-            if (row.banned) throw new Error("账号已被封禁");
+            if (row.banned) {
+                await audit.log({
+                    actorId: row.id,
+                    actor: username,
+                    action: "auth.login.failed",
+                    detail: "账号已封禁",
+                });
+                throw new Error("账号已被封禁");
+            }
             loginAttempts.delete(username);
             const user: User = {
                 id: row.id,
                 username: row.username,
                 createdAt: row.createdAt,
+                deptId: row.deptId,
+                title: row.title,
+                mustChangePassword: row.mustChangePassword,
             };
+            await audit.log({
+                actorId: row.id,
+                actor: username,
+                action: "auth.login",
+            });
             return toAuthSuccess(user, await signToken(user, row.tokenVersion));
         });
 
@@ -214,10 +255,16 @@ export const authPlugin: Plugin = {
             if (!ok) throw new Error("原密码不正确");
             const passwordHash = await hash(newPassword);
             const version = await accounts.setPassword(user.id, passwordHash);
+            await accounts.setMustChange(user.id, false);
             const token = await signToken(
                 { id: row.id, username: row.username },
                 version,
             );
+            await audit.log({
+                actorId: row.id,
+                actor: row.username,
+                action: "auth.password",
+            });
             setTimeout(() => gateway.kickUser(user.id), 1000);
             return { token };
         });
@@ -273,7 +320,14 @@ export const authPlugin: Plugin = {
             if (!username) throw new Error("缺少用户名");
             const row = await accounts.byUsername(username);
             if (!row) throw new Error("用户不存在");
-            return { username: row.username, createdAt: row.createdAt };
+            const dept = row.deptId ? await departments.byId(row.deptId) : null;
+            return {
+                username: row.username,
+                createdAt: row.createdAt,
+                deptId: row.deptId,
+                title: row.title,
+                deptName: dept?.name ?? null,
+            };
         });
 
         ctx.provide("auth", {

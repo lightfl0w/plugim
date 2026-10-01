@@ -10,6 +10,7 @@ import {
     BellIcon,
     BellOffIcon,
     CheckIcon,
+    ContactRoundIcon,
     LogOutIcon,
     MessageSquarePlusIcon,
     MessagesSquareIcon,
@@ -43,6 +44,7 @@ import type { MomentsService } from "./moments";
 import type { PresenceService } from "./presence";
 import type { AdminService } from "./ui-admin";
 import { draftKey, draftStore } from "./ui-drafts";
+import type { InstallService } from "./ui-install";
 import {
     clientSessionOf,
     currentChatTarget,
@@ -309,6 +311,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
     const rpc = ctx.get<RpcService>("rpc");
     const adminService = ctx.get<AdminService>("admin");
     const moments = ctx.get<MomentsService>("moments");
+    const install = ctx.get<InstallService>("install");
 
     const StatusMenu = ({ username }: { username: string }) => {
         const [open, setOpen] = useState(false);
@@ -390,6 +393,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
             (cb) => moments.onUpdate(cb),
             () => moments.state().unread.total,
         );
+        const mode = useSyncExternalStore(
+            (cb) => install.onChange(cb),
+            () => install.status()?.mode,
+        );
         return (
             <>
                 <NavIcon
@@ -404,6 +411,13 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     label="好友"
                     onOpen={() => setShellPane("list")}
                 />
+                {mode === "chat" ? null : (
+                    <NavIcon
+                        to="/org"
+                        icon={<ContactRoundIcon className="size-5" />}
+                        label="通讯录"
+                    />
+                )}
                 <NavIcon
                     to="/moments"
                     icon={<ApertureIcon className="size-5" />}

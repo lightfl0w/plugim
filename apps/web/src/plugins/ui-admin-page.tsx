@@ -1,20 +1,28 @@
 import type { Context } from "@plugim/core";
+import type { AuditEntry, DepartmentInfo } from "@plugim/protocol";
 import {
+    Building2Icon,
     ClockIcon,
     DownloadIcon,
     FileIcon,
+    FolderInputIcon,
+    FolderTreeIcon,
     HardDriveIcon,
     KeyRoundIcon,
+    PencilIcon,
     PlayIcon,
+    PlusIcon,
     ShieldIcon,
     Trash2Icon,
     UserCheckIcon,
+    UserPlusIcon,
     UsersIcon,
 } from "lucide-react";
 import type { FC } from "react";
 import {
     useCallback,
     useEffect,
+    useMemo,
     useRef,
     useState,
     useSyncExternalStore,
@@ -25,6 +33,7 @@ import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { RpcService } from "./connection";
 import type { AdminService } from "./ui-admin";
+import type { AppMode, InstallService } from "./ui-install";
 import { formatBytes, showAlert, showConfirm } from "./ui-shared";
 
 interface AdminUserRow {
@@ -34,6 +43,8 @@ interface AdminUserRow {
     isAdmin: boolean;
     banned: boolean;
     online: boolean;
+    deptId?: string | null;
+    title?: string | null;
 }
 
 interface AdminGroupRow {
@@ -116,6 +127,66 @@ interface TrendPoint {
     messages: number;
     senders: number;
 }
+
+interface RegisterPolicy {
+    allowRegister: boolean;
+    inviteCode: string;
+}
+
+interface DeptTreeNode extends DepartmentInfo {
+    children: DeptTreeNode[];
+}
+
+const buildDeptTree = (rows: DepartmentInfo[]): DeptTreeNode[] => {
+    const nodes = new Map<string, DeptTreeNode>();
+    for (const row of rows) nodes.set(row.id, { ...row, children: [] });
+    const roots: DeptTreeNode[] = [];
+    for (const node of nodes.values()) {
+        const parent = node.parentId ? nodes.get(node.parentId) : null;
+        if (parent) parent.children.push(node);
+        else roots.push(node);
+    }
+    const sortTree = (list: DeptTreeNode[]) => {
+        list.sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+        for (const node of list) sortTree(node.children);
+    };
+    sortTree(roots);
+    return roots;
+};
+
+const flattenDeptTree = (
+    nodes: DeptTreeNode[],
+    depth = 0,
+): { dept: DepartmentInfo; depth: number }[] => {
+    const out: { dept: DepartmentInfo; depth: number }[] = [];
+    for (const node of nodes) {
+        out.push({ dept: node, depth });
+        out.push(...flattenDeptTree(node.children, depth + 1));
+    }
+    return out;
+};
+
+const deptScopeOf = (rows: DepartmentInfo[], id: string): Set<string> => {
+    const scope = new Set<string>([id]);
+    const queue = [id];
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current) break;
+        for (const row of rows) {
+            if (row.parentId !== current || scope.has(row.id)) continue;
+            scope.add(row.id);
+            queue.push(row.id);
+        }
+    }
+    return scope;
+};
+
+const AUDIT_CATEGORIES = [
+    { value: "", label: "全部" },
+    { value: "auth", label: "登录认证" },
+    { value: "admin", label: "管理操作" },
+    { value: "org", label: "组织操作" },
+];
 
 const PAGE = 20;
 const TREND_DAYS = [7, 14, 30];
@@ -318,14 +389,26 @@ const Pager = ({
 
 export const createAdminPage = (ctx: Context): FC => {
     const rpc = ctx.get<RpcService>("rpc");
+    const install = ctx.get<InstallService>("install");
 
     const AdminPage = () => {
         const allowed = useSyncExternalStore(
             (cb) => ctx.get<AdminService>("admin").onChange(cb),
             () => ctx.get<AdminService>("admin").is(),
         );
+        const mode = useSyncExternalStore(
+            (cb) => install.onChange(cb),
+            () => install.status()?.mode,
+        );
         const [tab, setTab] = useState<
-            "users" | "groups" | "messages" | "files" | "tasks" | "system"
+            | "users"
+            | "org"
+            | "groups"
+            | "messages"
+            | "files"
+            | "tasks"
+            | "audit"
+            | "system"
         >("users");
         const [users, setUsers] = useState<AdminUserRow[]>([]);
         const [groups, setGroups] = useState<AdminGroupRow[]>([]);
@@ -350,7 +433,34 @@ export const createAdminPage = (ctx: Context): FC => {
         const [resetUser, setResetUser] = useState<AdminUserRow | null>(null);
         const [resetPassword, setResetPassword] = useState("");
         const [resetBusy, setResetBusy] = useState(false);
+        const [deptRows, setDeptRows] = useState<DepartmentInfo[]>([]);
+        const [selectedDept, setSelectedDept] = useState<string | null>(null);
+        const [deptDialog, setDeptDialog] = useState<{
+            kind: "create" | "rename" | "move";
+            dept: DepartmentInfo | null;
+            parentId: string;
+            name: string;
+        } | null>(null);
+        const [assignUser, setAssignUser] = useState<AdminUserRow | null>(null);
+        const [assignDept, setAssignDept] = useState("");
+        const [assignTitle, setAssignTitle] = useState("");
+        const [auditRows, setAuditRows] = useState<AuditEntry[]>([]);
+        const [auditTotal, setAuditTotal] = useState(0);
+        const [auditOffset, setAuditOffset] = useState(0);
+        const [auditCategory, setAuditCategory] = useState("");
+        const [auditKeyword, setAuditKeyword] = useState("");
+        const [newUserOpen, setNewUserOpen] = useState(false);
+        const [newUsername, setNewUsername] = useState("");
+        const [newPassword, setNewPassword] = useState("");
+        const [newDept, setNewDept] = useState("");
+        const [newTitle, setNewTitle] = useState("");
+        const [newUserBusy, setNewUserBusy] = useState(false);
+        const [registerPolicy, setRegisterPolicy] =
+            useState<RegisterPolicy | null>(null);
+        const [inviteDraft, setInviteDraft] = useState("");
+        const [modeBusy, setModeBusy] = useState(false);
         const msgFiltersRef = useRef({ keyword: "", sender: "" });
+        const auditFiltersRef = useRef({ keyword: "", category: "" });
 
         const refresh = useCallback(() => {
             void Promise.all([
@@ -448,15 +558,77 @@ export const createAdminPage = (ctx: Context): FC => {
                 );
         }, []);
 
+        const loadDepartments = useCallback(() => {
+            void rpc
+                .call("org.tree", {})
+                .then((result) => setDeptRows(result as DepartmentInfo[]))
+                .catch((err) =>
+                    setError(String(err instanceof Error ? err.message : err)),
+                );
+        }, []);
+
+        const loadAudit = useCallback((offset: number) => {
+            void rpc
+                .call("admin.audit.list", {
+                    keyword: auditFiltersRef.current.keyword || undefined,
+                    category: auditFiltersRef.current.category || undefined,
+                    offset,
+                    limit: PAGE,
+                })
+                .then((result) => {
+                    const data = result as {
+                        rows: AuditEntry[];
+                        total: number;
+                    };
+                    setAuditRows(data.rows);
+                    setAuditTotal(data.total);
+                    setAuditOffset(offset);
+                })
+                .catch((err) =>
+                    setError(String(err instanceof Error ? err.message : err)),
+                );
+        }, []);
+
+        const loadRegister = useCallback(() => {
+            void rpc
+                .call("admin.register.get", {})
+                .then((result) => {
+                    const policy = result as RegisterPolicy;
+                    setRegisterPolicy(policy);
+                    setInviteDraft(policy.inviteCode);
+                })
+                .catch((err) =>
+                    setError(String(err instanceof Error ? err.message : err)),
+                );
+        }, []);
+
         useEffect(() => {
             if (!allowed) return;
+            if (tab === "users" || tab === "org") loadDepartments();
             if (tab === "messages") loadMessages(0);
             if (tab === "files") {
                 loadFiles(0);
                 loadStorage();
             }
             if (tab === "tasks") loadTasks();
-        }, [tab, allowed, loadMessages, loadFiles, loadStorage, loadTasks]);
+            if (tab === "audit") loadAudit(0);
+            if (tab === "system") loadRegister();
+        }, [
+            tab,
+            allowed,
+            loadMessages,
+            loadFiles,
+            loadStorage,
+            loadTasks,
+            loadAudit,
+            loadDepartments,
+            loadRegister,
+        ]);
+
+        useEffect(() => {
+            if (mode === "chat" && (tab === "org" || tab === "audit"))
+                setTab("users");
+        }, [mode, tab]);
 
         useEffect(() => {
             if (allowed && tab === "system") loadTrend(trendDays);
@@ -585,6 +757,24 @@ export const createAdminPage = (ctx: Context): FC => {
             }
         };
 
+        const deptTree = useMemo(() => buildDeptTree(deptRows), [deptRows]);
+        const flatDepts = useMemo(() => flattenDeptTree(deptTree), [deptTree]);
+        const deptNameById = useMemo(
+            () => new Map(deptRows.map((row) => [row.id, row.name])),
+            [deptRows],
+        );
+        const selectedDeptRow = selectedDept
+            ? (deptRows.find((row) => row.id === selectedDept) ?? null)
+            : null;
+        const orgMembers = useMemo(() => {
+            const scope = selectedDept
+                ? deptScopeOf(deptRows, selectedDept)
+                : null;
+            return users.filter(
+                (user) => !scope || (user.deptId && scope.has(user.deptId)),
+            );
+        }, [users, deptRows, selectedDept]);
+
         if (!allowed) {
             return (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -626,14 +816,250 @@ export const createAdminPage = (ctx: Context): FC => {
             }
         };
 
+        const orgLabelOf = (user: AdminUserRow) =>
+            [user.deptId ? deptNameById.get(user.deptId) : null, user.title]
+                .filter(Boolean)
+                .join(" · ");
+
+        const submitDeptDialog = async () => {
+            if (!deptDialog) return;
+            const name = deptDialog.name.trim();
+            try {
+                if (deptDialog.kind === "create") {
+                    if (name.length < 2)
+                        throw new Error("部门名称至少 2 个字符");
+                    await rpc.call("admin.department.create", {
+                        name,
+                        parentId: deptDialog.parentId || undefined,
+                    });
+                } else if (deptDialog.kind === "rename") {
+                    if (name.length < 2)
+                        throw new Error("部门名称至少 2 个字符");
+                    await rpc.call("admin.department.rename", {
+                        id: deptDialog.dept?.id,
+                        name,
+                    });
+                } else {
+                    await rpc.call("admin.department.move", {
+                        id: deptDialog.dept?.id,
+                        parentId: deptDialog.parentId || undefined,
+                    });
+                }
+                setDeptDialog(null);
+                loadDepartments();
+                refresh();
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            }
+        };
+
+        const deleteDept = (dept: DepartmentInfo) => {
+            showConfirm(
+                `确定删除部门「${dept.name}」吗？`,
+                () => {
+                    void (async () => {
+                        try {
+                            await rpc.call("admin.department.delete", {
+                                id: dept.id,
+                            });
+                            if (selectedDept === dept.id) setSelectedDept(null);
+                            loadDepartments();
+                        } catch (err) {
+                            showAlert(
+                                String(
+                                    err instanceof Error ? err.message : err,
+                                ),
+                                "出错了",
+                            );
+                        }
+                    })();
+                },
+                "删除部门",
+            );
+        };
+
+        const createDeptGroup = async (dept: DepartmentInfo) => {
+            try {
+                const result = (await rpc.call("admin.department.group", {
+                    id: dept.id,
+                })) as { created: boolean };
+                showAlert(
+                    result.created
+                        ? `已创建「${dept.name}群」并拉入部门成员`
+                        : `部门「${dept.name}」已有部门群`,
+                );
+                loadDepartments();
+                refresh();
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            }
+        };
+
+        const syncDeptGroup = async (dept: DepartmentInfo) => {
+            try {
+                const result = (await rpc.call("admin.department.group.sync", {
+                    id: dept.id,
+                })) as { added: number };
+                showAlert(`已同步加入 ${result.added} 名成员`);
+                refresh();
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            }
+        };
+
+        const openAssign = (user: AdminUserRow) => {
+            setAssignUser(user);
+            setAssignDept(user.deptId ?? "");
+            setAssignTitle(user.title ?? "");
+        };
+
+        const submitAssign = async () => {
+            if (!assignUser) return;
+            try {
+                await rpc.call("admin.user.assign", {
+                    userId: assignUser.id,
+                    deptId: assignDept || undefined,
+                    title: assignTitle.trim() || undefined,
+                });
+                setAssignUser(null);
+                loadDepartments();
+                refresh();
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            }
+        };
+
+        const submitNewUser = async () => {
+            if (newUserBusy) return;
+            setNewUserBusy(true);
+            try {
+                await rpc.call("admin.user.create", {
+                    username: newUsername.trim(),
+                    password: newPassword,
+                    deptId: newDept || undefined,
+                    title: newTitle.trim() || undefined,
+                });
+                setNewUserOpen(false);
+                setNewUsername("");
+                setNewPassword("");
+                setNewDept("");
+                setNewTitle("");
+                loadDepartments();
+                refresh();
+                showAlert("账号已创建，首次登录需修改初始密码");
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            } finally {
+                setNewUserBusy(false);
+            }
+        };
+
+        const saveRegister = async (patch: {
+            allowRegister?: boolean;
+            inviteCode?: string;
+        }) => {
+            try {
+                const policy = (await rpc.call(
+                    "admin.register.set",
+                    patch,
+                )) as RegisterPolicy;
+                setRegisterPolicy(policy);
+                setInviteDraft(policy.inviteCode);
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            }
+        };
+
+        const saveMode = async (next: AppMode) => {
+            setModeBusy(true);
+            try {
+                await rpc.call("admin.mode.set", { mode: next });
+                await install.reload();
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            } finally {
+                setModeBusy(false);
+            }
+        };
+
+        const exportAudit = async () => {
+            try {
+                const limit = 100;
+                const rows: AuditEntry[] = [];
+                for (let offset = 0; ; offset += limit) {
+                    const result = (await rpc.call("admin.audit.list", {
+                        keyword: auditFiltersRef.current.keyword || undefined,
+                        category: auditFiltersRef.current.category || undefined,
+                        offset,
+                        limit,
+                    })) as { rows: AuditEntry[]; total: number };
+                    rows.push(...result.rows);
+                    if (rows.length >= result.total || result.rows.length === 0)
+                        break;
+                }
+                const escapeCell = (value: string) =>
+                    `"${value.replace(/"/g, '""')}"`;
+                const lines = [
+                    ["时间", "操作人", "操作", "详情"]
+                        .map(escapeCell)
+                        .join(","),
+                    ...rows.map((row) =>
+                        [row.createdAt, row.actor, row.action, row.detail]
+                            .map((value) => escapeCell(String(value ?? "")))
+                            .join(","),
+                    ),
+                ];
+                const blob = new Blob([`\uFEFF${lines.join("\r\n")}`], {
+                    type: "text/csv;charset=utf-8",
+                });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `plugim-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+                link.click();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            }
+        };
+
         const tabs = [
             { key: "users" as const, label: "用户管理" },
+            { key: "org" as const, label: "组织架构" },
             { key: "groups" as const, label: "群组管理" },
             { key: "messages" as const, label: "消息检索" },
             { key: "files" as const, label: "文件管理" },
             { key: "tasks" as const, label: "定时任务" },
+            { key: "audit" as const, label: "审计日志" },
             { key: "system" as const, label: "系统设置" },
-        ];
+        ].filter(
+            (item) =>
+                mode !== "chat" || (item.key !== "org" && item.key !== "audit"),
+        );
 
         return (
             <>
@@ -675,80 +1101,327 @@ export const createAdminPage = (ctx: Context): FC => {
                             </p>
                         ) : null}
                         {tab === "users" ? (
-                            <div className="flex flex-col gap-1">
-                                {users.map((user) => (
-                                    <div
-                                        key={user.id}
-                                        className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60"
+                            <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-2">
+                                    <p className="text-xs text-muted-foreground">
+                                        共 {users.length} 位成员
+                                    </p>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="ml-auto"
+                                        onClick={() => setNewUserOpen(true)}
                                     >
-                                        <UserAvatar
-                                            name={user.username}
-                                            size="sm"
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                            <p className="truncate text-sm font-medium">
-                                                {user.username}
-                                                {user.isAdmin ? (
-                                                    <span className="ml-1.5 text-xs text-primary">
-                                                        管理员
-                                                    </span>
-                                                ) : null}
-                                                {user.banned ? (
-                                                    <span className="ml-1.5 text-xs text-destructive">
-                                                        已封禁
-                                                    </span>
-                                                ) : null}
-                                            </p>
-                                            <p className="text-xs text-muted-foreground">
-                                                注册于{" "}
-                                                {user.createdAt.slice(0, 10)}{" "}
-                                                {user.online ? "在线" : "离线"}
-                                            </p>
+                                        <UserPlusIcon />
+                                        新建用户
+                                    </Button>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    {users.map((user) => (
+                                        <div
+                                            key={user.id}
+                                            className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60"
+                                        >
+                                            <UserAvatar
+                                                name={user.username}
+                                                size="sm"
+                                            />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-sm font-medium">
+                                                    {user.username}
+                                                    {user.isAdmin ? (
+                                                        <span className="ml-1.5 text-xs text-primary">
+                                                            管理员
+                                                        </span>
+                                                    ) : null}
+                                                    {user.banned ? (
+                                                        <span className="ml-1.5 text-xs text-destructive">
+                                                            已封禁
+                                                        </span>
+                                                    ) : null}
+                                                </p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {[
+                                                        `注册于 ${user.createdAt.slice(0, 10)}`,
+                                                        user.online
+                                                            ? "在线"
+                                                            : "离线",
+                                                        orgLabelOf(user) ||
+                                                            null,
+                                                    ]
+                                                        .filter(Boolean)
+                                                        .join(" · ")}
+                                                </p>
+                                            </div>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() =>
+                                                    void act("admin.grant", {
+                                                        userId: user.id,
+                                                        on: !user.isAdmin,
+                                                    })
+                                                }
+                                            >
+                                                {user.isAdmin
+                                                    ? "取消管理员"
+                                                    : "设为管理员"}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                title="重置密码"
+                                                onClick={() => {
+                                                    setResetUser(user);
+                                                    setResetPassword("");
+                                                }}
+                                            >
+                                                <KeyRoundIcon />
+                                                重置密码
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant={
+                                                    user.banned
+                                                        ? "outline"
+                                                        : "destructive"
+                                                }
+                                                onClick={() =>
+                                                    void act("admin.ban", {
+                                                        userId: user.id,
+                                                        on: !user.banned,
+                                                    })
+                                                }
+                                            >
+                                                {user.banned ? "解封" : "封禁"}
+                                            </Button>
                                         </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : null}
+                        {tab === "org" ? (
+                            <div className="flex flex-col gap-3 md:flex-row">
+                                <div className="flex w-full shrink-0 flex-col gap-1 rounded-xl border border-border bg-card p-2 md:w-64">
+                                    <div className="flex items-center gap-2 px-1 pb-1">
+                                        <FolderTreeIcon className="size-4 text-muted-foreground" />
+                                        <p className="text-sm font-medium">
+                                            部门
+                                        </p>
                                         <Button
                                             size="sm"
                                             variant="outline"
+                                            className="ml-auto h-7 px-2"
                                             onClick={() =>
-                                                void act("admin.grant", {
-                                                    userId: user.id,
-                                                    on: !user.isAdmin,
+                                                setDeptDialog({
+                                                    kind: "create",
+                                                    dept: null,
+                                                    parentId: "",
+                                                    name: "",
                                                 })
                                             }
                                         >
-                                            {user.isAdmin
-                                                ? "取消管理员"
-                                                : "设为管理员"}
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            title="重置密码"
-                                            onClick={() => {
-                                                setResetUser(user);
-                                                setResetPassword("");
-                                            }}
-                                        >
-                                            <KeyRoundIcon />
-                                            重置密码
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            variant={
-                                                user.banned
-                                                    ? "outline"
-                                                    : "destructive"
-                                            }
-                                            onClick={() =>
-                                                void act("admin.ban", {
-                                                    userId: user.id,
-                                                    on: !user.banned,
-                                                })
-                                            }
-                                        >
-                                            {user.banned ? "解封" : "封禁"}
+                                            <PlusIcon />
+                                            根部门
                                         </Button>
                                     </div>
-                                ))}
+                                    <div
+                                        className={cn(
+                                            "cursor-pointer rounded-md px-2 py-1.5 text-sm hover:bg-accent",
+                                            selectedDept === null &&
+                                                "bg-accent text-foreground",
+                                        )}
+                                        onClick={() => setSelectedDept(null)}
+                                    >
+                                        全部成员
+                                        <span className="ml-1 text-xs text-muted-foreground">
+                                            {users.length}
+                                        </span>
+                                    </div>
+                                    {flatDepts.length === 0 ? (
+                                        <p className="px-2 py-2 text-xs text-muted-foreground">
+                                            还没有部门，先创建根部门
+                                        </p>
+                                    ) : null}
+                                    {flatDepts.map(({ dept, depth }) => (
+                                        <div
+                                            key={dept.id}
+                                            className={cn(
+                                                "group flex cursor-pointer items-center gap-1 rounded-md pr-1 text-sm hover:bg-accent",
+                                                selectedDept === dept.id &&
+                                                    "bg-accent text-foreground",
+                                            )}
+                                            style={{
+                                                paddingLeft: `${depth * 12 + 8}px`,
+                                            }}
+                                            onClick={() =>
+                                                setSelectedDept(dept.id)
+                                            }
+                                        >
+                                            <span className="min-w-0 flex-1 truncate py-1.5">
+                                                {dept.name}
+                                            </span>
+                                            <span className="shrink-0 text-xs text-muted-foreground">
+                                                {dept.memberCount}
+                                            </span>
+                                            <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
+                                                <button
+                                                    type="button"
+                                                    title="新建子部门"
+                                                    className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setDeptDialog({
+                                                            kind: "create",
+                                                            dept: null,
+                                                            parentId: dept.id,
+                                                            name: "",
+                                                        });
+                                                    }}
+                                                >
+                                                    <PlusIcon className="size-3.5" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="重命名"
+                                                    className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setDeptDialog({
+                                                            kind: "rename",
+                                                            dept,
+                                                            parentId:
+                                                                dept.parentId ??
+                                                                "",
+                                                            name: dept.name,
+                                                        });
+                                                    }}
+                                                >
+                                                    <PencilIcon className="size-3.5" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="移动"
+                                                    className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setDeptDialog({
+                                                            kind: "move",
+                                                            dept,
+                                                            parentId:
+                                                                dept.parentId ??
+                                                                "",
+                                                            name: dept.name,
+                                                        });
+                                                    }}
+                                                >
+                                                    <FolderInputIcon className="size-3.5" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="删除"
+                                                    className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-destructive"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        deleteDept(dept);
+                                                    }}
+                                                >
+                                                    <Trash2Icon className="size-3.5" />
+                                                </button>
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex min-w-0 flex-1 flex-col gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <p className="text-sm font-medium">
+                                            {selectedDeptRow
+                                                ? selectedDeptRow.name
+                                                : "全部成员"}
+                                        </p>
+                                        <span className="text-xs text-muted-foreground">
+                                            共 {orgMembers.length} 人
+                                        </span>
+                                        {selectedDeptRow ? (
+                                            selectedDeptRow.groupId ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="ml-auto"
+                                                    onClick={() =>
+                                                        void syncDeptGroup(
+                                                            selectedDeptRow,
+                                                        )
+                                                    }
+                                                >
+                                                    <UsersIcon />
+                                                    同步部门群
+                                                </Button>
+                                            ) : (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="ml-auto"
+                                                    onClick={() =>
+                                                        void createDeptGroup(
+                                                            selectedDeptRow,
+                                                        )
+                                                    }
+                                                >
+                                                    <UsersIcon />
+                                                    创建部门群
+                                                </Button>
+                                            )
+                                        ) : null}
+                                    </div>
+                                    {orgMembers.length === 0 ? (
+                                        <p className="py-8 text-center text-xs text-muted-foreground">
+                                            该范围暂无成员
+                                        </p>
+                                    ) : null}
+                                    <div className="flex flex-col gap-1">
+                                        {orgMembers.map((user) => (
+                                            <div
+                                                key={user.id}
+                                                className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2"
+                                            >
+                                                <UserAvatar
+                                                    name={user.username}
+                                                    size="sm"
+                                                />
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="truncate text-sm font-medium">
+                                                        {user.username}
+                                                        {user.isAdmin ? (
+                                                            <span className="ml-1.5 text-xs text-primary">
+                                                                管理员
+                                                            </span>
+                                                        ) : null}
+                                                        {user.banned ? (
+                                                            <span className="ml-1.5 text-xs text-destructive">
+                                                                已封禁
+                                                            </span>
+                                                        ) : null}
+                                                    </p>
+                                                    <p className="truncate text-xs text-muted-foreground">
+                                                        {orgLabelOf(user) ||
+                                                            "未分配部门"}
+                                                    </p>
+                                                </div>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() =>
+                                                        openAssign(user)
+                                                    }
+                                                >
+                                                    <PencilIcon />
+                                                    编辑组织
+                                                </Button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
                         ) : null}
                         {tab === "groups" ? (
@@ -1255,6 +1928,100 @@ export const createAdminPage = (ctx: Context): FC => {
                                 ))}
                             </div>
                         ) : null}
+                        {tab === "audit" ? (
+                            <div className="mx-auto flex w-full max-w-4xl flex-col gap-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {AUDIT_CATEGORIES.map((item) => (
+                                        <button
+                                            key={item.value}
+                                            type="button"
+                                            className={cn(
+                                                "rounded-md px-2.5 py-1 text-xs",
+                                                auditCategory === item.value
+                                                    ? "bg-primary text-primary-foreground"
+                                                    : "text-muted-foreground hover:bg-accent",
+                                            )}
+                                            onClick={() => {
+                                                setAuditCategory(item.value);
+                                                auditFiltersRef.current.category =
+                                                    item.value;
+                                                loadAudit(0);
+                                            }}
+                                        >
+                                            {item.label}
+                                        </button>
+                                    ))}
+                                    <form
+                                        className="flex items-center gap-2"
+                                        onSubmit={(e) => {
+                                            e.preventDefault();
+                                            loadAudit(0);
+                                        }}
+                                    >
+                                        <Input
+                                            value={auditKeyword}
+                                            onChange={(e) => {
+                                                setAuditKeyword(e.target.value);
+                                                auditFiltersRef.current.keyword =
+                                                    e.target.value;
+                                            }}
+                                            placeholder="操作人或详情关键字"
+                                            className="h-8 w-44"
+                                        />
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            type="submit"
+                                        >
+                                            查询
+                                        </Button>
+                                    </form>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="ml-auto"
+                                        onClick={() => void exportAudit()}
+                                    >
+                                        <DownloadIcon />
+                                        导出 CSV
+                                    </Button>
+                                </div>
+                                <div className="overflow-x-auto rounded-xl border border-border bg-card">
+                                    {auditRows.length === 0 ? (
+                                        <p className="py-8 text-center text-xs text-muted-foreground">
+                                            暂无审计记录
+                                        </p>
+                                    ) : null}
+                                    {auditRows.map((row) => (
+                                        <div
+                                            key={row.id}
+                                            className="flex items-center gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0"
+                                        >
+                                            <span className="w-32 shrink-0 text-xs text-muted-foreground">
+                                                {row.createdAt
+                                                    .slice(5, 16)
+                                                    .replace("T", " ")}
+                                            </span>
+                                            <span className="w-24 shrink-0 truncate text-xs text-muted-foreground">
+                                                {row.actor}
+                                            </span>
+                                            <span className="w-36 shrink-0 truncate font-mono text-xs">
+                                                {row.action}
+                                            </span>
+                                            <span className="min-w-0 flex-1 truncate">
+                                                {row.detail || "—"}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <Pager
+                                    offset={auditOffset}
+                                    total={auditTotal}
+                                    page={PAGE}
+                                    onMove={loadAudit}
+                                />
+                            </div>
+                        ) : null}
                         {tab === "system" ? (
                             <div className="mx-auto flex w-full max-w-2xl flex-col gap-3 pt-4">
                                 <div className="flex items-center gap-2">
@@ -1371,6 +2138,98 @@ export const createAdminPage = (ctx: Context): FC => {
                                     </Button>
                                 </div>
                                 <div className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
+                                    <Building2Icon className="size-4 text-muted-foreground" />
+                                    <div className="min-w-0 flex-1">
+                                        <p>
+                                            站点模式 ·{" "}
+                                            {mode === "chat"
+                                                ? "聊天模式"
+                                                : "企业模式"}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {mode === "chat"
+                                                ? "仅保留聊天与好友，已隐藏通讯录与组织架构后台"
+                                                : "含通讯录、组织架构与审计日志"}
+                                        </p>
+                                    </div>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={modeBusy || !mode}
+                                        onClick={() =>
+                                            void saveMode(
+                                                mode === "chat"
+                                                    ? "enterprise"
+                                                    : "chat",
+                                            )
+                                        }
+                                    >
+                                        {mode === "chat"
+                                            ? "切换为企业模式"
+                                            : "切换为聊天模式"}
+                                    </Button>
+                                </div>
+                                <div className="flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm">
+                                    <div className="flex items-center gap-3">
+                                        <UserPlusIcon className="size-4 text-muted-foreground" />
+                                        <p className="flex-1">允许自助注册</p>
+                                        <span
+                                            className={cn(
+                                                "text-xs",
+                                                registerPolicy?.allowRegister
+                                                    ? "text-primary"
+                                                    : "text-muted-foreground",
+                                            )}
+                                        >
+                                            {registerPolicy
+                                                ? registerPolicy.allowRegister
+                                                    ? "已开启"
+                                                    : "已关闭"
+                                                : "读取中"}
+                                        </span>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={!registerPolicy}
+                                            onClick={() =>
+                                                void saveRegister({
+                                                    allowRegister:
+                                                        !registerPolicy?.allowRegister,
+                                                })
+                                            }
+                                        >
+                                            {registerPolicy?.allowRegister
+                                                ? "关闭注册"
+                                                : "开启注册"}
+                                        </Button>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <p className="flex-1 text-xs text-muted-foreground">
+                                            邀请码（设置后注册需提供邀请码）
+                                        </p>
+                                        <Input
+                                            value={inviteDraft}
+                                            placeholder="留空则不启用"
+                                            className="h-8 w-40"
+                                            onChange={(e) =>
+                                                setInviteDraft(e.target.value)
+                                            }
+                                        />
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={!registerPolicy}
+                                            onClick={() =>
+                                                void saveRegister({
+                                                    inviteCode: inviteDraft,
+                                                })
+                                            }
+                                        >
+                                            保存邀请码
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
                                     <UserCheckIcon className="size-4 text-muted-foreground" />
                                     <p className="flex-1">
                                         首位注册用户自动成为管理员
@@ -1424,6 +2283,216 @@ export const createAdminPage = (ctx: Context): FC => {
                                     onClick={() => void submitReset()}
                                 >
                                     确认重置
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
+                {newUserOpen ? (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                        <div
+                            role="dialog"
+                            aria-label="新建用户"
+                            className="w-full max-w-sm rounded-2xl bg-card p-4 shadow-xl"
+                        >
+                            <p className="text-sm font-semibold">新建用户</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                                账号创建后首次登录需修改初始密码
+                            </p>
+                            <div className="mt-3 flex flex-col gap-2">
+                                <Input
+                                    value={newUsername}
+                                    placeholder="用户名：2-24 位小写字母、数字或下划线"
+                                    onChange={(e) =>
+                                        setNewUsername(e.target.value)
+                                    }
+                                />
+                                <Input
+                                    type="password"
+                                    value={newPassword}
+                                    placeholder="初始密码，至少 6 位"
+                                    onChange={(e) =>
+                                        setNewPassword(e.target.value)
+                                    }
+                                />
+                                <select
+                                    value={newDept}
+                                    onChange={(e) => setNewDept(e.target.value)}
+                                    className="rounded-lg border border-border bg-card px-2 py-2 text-sm"
+                                >
+                                    <option value="">未分配部门</option>
+                                    {flatDepts.map(({ dept, depth }) => (
+                                        <option key={dept.id} value={dept.id}>
+                                            {"　".repeat(depth)}
+                                            {dept.name}
+                                        </option>
+                                    ))}
+                                </select>
+                                <Input
+                                    value={newTitle}
+                                    maxLength={20}
+                                    placeholder="职位（可选）"
+                                    onChange={(e) =>
+                                        setNewTitle(e.target.value)
+                                    }
+                                />
+                            </div>
+                            <div className="mt-3 flex justify-end gap-2">
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setNewUserOpen(false)}
+                                >
+                                    取消
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    disabled={
+                                        newUserBusy ||
+                                        newUsername.trim().length < 2 ||
+                                        newPassword.length < 6
+                                    }
+                                    onClick={() => void submitNewUser()}
+                                >
+                                    创建
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
+                {deptDialog ? (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                        <div
+                            role="dialog"
+                            aria-label="部门操作"
+                            className="w-full max-w-sm rounded-2xl bg-card p-4 shadow-xl"
+                        >
+                            <p className="text-sm font-semibold">
+                                {deptDialog.kind === "create"
+                                    ? deptDialog.parentId
+                                        ? `在「${deptNameById.get(deptDialog.parentId) ?? ""}」下新建子部门`
+                                        : "新建根部门"
+                                    : deptDialog.kind === "rename"
+                                      ? `重命名「${deptDialog.dept?.name ?? ""}」`
+                                      : `移动「${deptDialog.dept?.name ?? ""}」`}
+                            </p>
+                            {deptDialog.kind === "move" ? (
+                                <select
+                                    value={deptDialog.parentId}
+                                    onChange={(e) =>
+                                        setDeptDialog({
+                                            ...deptDialog,
+                                            parentId: e.target.value,
+                                        })
+                                    }
+                                    className="mt-3 w-full rounded-lg border border-border bg-card px-2 py-2 text-sm"
+                                >
+                                    <option value="">移动到根级</option>
+                                    {flatDepts
+                                        .filter(
+                                            ({ dept }) =>
+                                                !deptDialog.dept ||
+                                                !deptScopeOf(
+                                                    deptRows,
+                                                    deptDialog.dept.id,
+                                                ).has(dept.id),
+                                        )
+                                        .map(({ dept, depth }) => (
+                                            <option
+                                                key={dept.id}
+                                                value={dept.id}
+                                            >
+                                                {"　".repeat(depth)}
+                                                {dept.name}
+                                            </option>
+                                        ))}
+                                </select>
+                            ) : (
+                                <Input
+                                    value={deptDialog.name}
+                                    maxLength={30}
+                                    placeholder="部门名称"
+                                    className="mt-3"
+                                    onChange={(e) =>
+                                        setDeptDialog({
+                                            ...deptDialog,
+                                            name: e.target.value,
+                                        })
+                                    }
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter")
+                                            void submitDeptDialog();
+                                    }}
+                                />
+                            )}
+                            <div className="mt-3 flex justify-end gap-2">
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setDeptDialog(null)}
+                                >
+                                    取消
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    onClick={() => void submitDeptDialog()}
+                                >
+                                    {deptDialog.kind === "create"
+                                        ? "创建"
+                                        : "保存"}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
+                {assignUser ? (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                        <div
+                            role="dialog"
+                            aria-label="编辑组织信息"
+                            className="w-full max-w-sm rounded-2xl bg-card p-4 shadow-xl"
+                        >
+                            <p className="text-sm font-semibold">
+                                编辑 {assignUser.username} 的组织信息
+                            </p>
+                            <div className="mt-3 flex flex-col gap-2">
+                                <select
+                                    value={assignDept}
+                                    onChange={(e) =>
+                                        setAssignDept(e.target.value)
+                                    }
+                                    className="rounded-lg border border-border bg-card px-2 py-2 text-sm"
+                                >
+                                    <option value="">未分配部门</option>
+                                    {flatDepts.map(({ dept, depth }) => (
+                                        <option key={dept.id} value={dept.id}>
+                                            {"　".repeat(depth)}
+                                            {dept.name}
+                                        </option>
+                                    ))}
+                                </select>
+                                <Input
+                                    value={assignTitle}
+                                    maxLength={20}
+                                    placeholder="职位（可选）"
+                                    onChange={(e) =>
+                                        setAssignTitle(e.target.value)
+                                    }
+                                />
+                            </div>
+                            <div className="mt-3 flex justify-end gap-2">
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setAssignUser(null)}
+                                >
+                                    取消
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    onClick={() => void submitAssign()}
+                                >
+                                    保存
                                 </Button>
                             </div>
                         </div>

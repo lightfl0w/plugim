@@ -2,8 +2,11 @@ import { hash } from "@node-rs/argon2";
 import type { Plugin } from "@plugim/core";
 import type {
     AccountsStore,
+    AuditService,
+    AuditStore,
     AuthUser,
     ConnInfo,
+    DepartmentsStore,
     GatewayService,
     GroupFilesStore,
     GroupsStore,
@@ -12,10 +15,12 @@ import type {
     MessageStore,
     SettingsStore,
 } from "../types";
+import { USERNAME_RE } from "./auth";
+import type { AppConfig } from "./config";
 import type { FileService } from "./files";
 import type { TasksService } from "./tasks";
 
-const requireAdmin = async (
+export const requireAdmin = async (
     conn: ConnInfo,
     accounts: AccountsStore,
 ): Promise<AuthUser> => {
@@ -43,6 +48,10 @@ export const adminPlugin: Plugin = {
         "mediaFiles",
         "groupFiles",
         "tasks",
+        "audit",
+        "audits",
+        "departments",
+        "config",
     ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
@@ -54,6 +63,10 @@ export const adminPlugin: Plugin = {
         const mediaFiles = ctx.get<MediaFilesStore>("mediaFiles");
         const groupFiles = ctx.get<GroupFilesStore>("groupFiles");
         const tasks = ctx.get<TasksService>("tasks");
+        const audit = ctx.get<AuditService>("audit");
+        const audits = ctx.get<AuditStore>("audits");
+        const departments = ctx.get<DepartmentsStore>("departments");
+        const config = ctx.get<AppConfig>("config");
 
         const retentionDays = async () => {
             const raw = await settings.get(RETENTION_KEY);
@@ -113,23 +126,39 @@ export const adminPlugin: Plugin = {
                 on: boolean;
             };
             if (userId === me.id) throw new Error("不能封禁自己");
+            const target = await accounts.fullById(userId);
+            if (!target) throw new Error("用户不存在");
             await accounts.setFlag(userId, "banned", !!on);
             if (on) gateway.kickUser(userId);
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.ban",
+                detail: `${on ? "封禁" : "解封"}账号 ${target.username}`,
+            });
             return true;
         });
 
         gateway.rpc("admin.grant", async (raw, conn) => {
-            await requireAdmin(conn, accounts);
+            const me = await requireAdmin(conn, accounts);
             const { userId, on } = raw as unknown as {
                 userId: string;
                 on: boolean;
             };
+            const target = await accounts.fullById(userId);
+            if (!target) throw new Error("用户不存在");
             await accounts.setFlag(userId, "isAdmin", !!on);
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.grant",
+                detail: `${on ? "授予" : "取消"} ${target.username} 管理员`,
+            });
             return true;
         });
 
         gateway.rpc("admin.password", async (raw, conn) => {
-            await requireAdmin(conn, accounts);
+            const me = await requireAdmin(conn, accounts);
             const { userId, password } = raw as unknown as {
                 userId?: unknown;
                 password?: unknown;
@@ -141,8 +170,51 @@ export const adminPlugin: Plugin = {
             const row = await accounts.fullById(id);
             if (!row) throw new Error("用户不存在");
             await accounts.setPassword(id, await hash(next));
+            await accounts.setMustChange(id, true);
             gateway.kickUser(id);
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.password",
+                detail: `重置 ${row.username} 的密码`,
+            });
             return true;
+        });
+
+        gateway.rpc("admin.user.create", async (raw, conn) => {
+            const me = await requireAdmin(conn, accounts);
+            const params = raw as unknown as {
+                username?: unknown;
+                password?: unknown;
+                deptId?: unknown;
+                title?: unknown;
+            };
+            const username = String(params.username ?? "")
+                .trim()
+                .toLowerCase();
+            const password = String(params.password ?? "");
+            if (!USERNAME_RE.test(username))
+                throw new Error("用户名需为 2-24 位小写字母、数字或下划线");
+            if (password.length < 6) throw new Error("密码至少需要 6 位");
+            if (await accounts.byUsername(username))
+                throw new Error("用户名已被占用");
+            const deptId = params.deptId ? String(params.deptId) : null;
+            if (deptId && !(await departments.byId(deptId)))
+                throw new Error("部门不存在");
+            const title =
+                String(params.title ?? "")
+                    .trim()
+                    .slice(0, 20) || null;
+            const user = await accounts.create(username, await hash(password));
+            if (deptId || title) await accounts.setOrg(user.id, deptId, title);
+            await accounts.setMustChange(user.id, true);
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.user.create",
+                detail: `创建账号 ${username}`,
+            });
+            return user;
         });
 
         gateway.rpc("admin.groups", async (_raw, conn) => {
@@ -159,9 +231,17 @@ export const adminPlugin: Plugin = {
         });
 
         gateway.rpc("admin.group.delete", async (raw, conn) => {
-            await requireAdmin(conn, accounts);
+            const me = await requireAdmin(conn, accounts);
             const { groupId } = raw as unknown as { groupId: string };
+            const row = await groups.byId(groupId);
+            if (!row) throw new Error("群组不存在");
             await groups.remove(groupId);
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.group.delete",
+                detail: `解散群「${row.name}」`,
+            });
             return true;
         });
 
@@ -211,7 +291,7 @@ export const adminPlugin: Plugin = {
         });
 
         gateway.rpc("admin.files.delete", async (raw, conn) => {
-            await requireAdmin(conn, accounts);
+            const me = await requireAdmin(conn, accounts);
             const { key } = raw as unknown as { key: string };
             if (!/^[a-f0-9]{32}$/.test(String(key ?? "")))
                 throw new Error("文件不存在");
@@ -223,6 +303,12 @@ export const adminPlugin: Plugin = {
                 throw new Error("该文件仍被群文件引用，请先删除群文件");
             await files.remove(key);
             await mediaFiles.remove(key);
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.file.delete",
+                detail: `删除文件「${row.name}」`,
+            });
             return true;
         });
 
@@ -232,20 +318,33 @@ export const adminPlugin: Plugin = {
         });
 
         gateway.rpc("admin.retention.set", async (raw, conn) => {
-            await requireAdmin(conn, accounts);
+            const me = await requireAdmin(conn, accounts);
             const { days } = raw as unknown as { days: number };
             const value = Number(days);
             if (!Number.isInteger(value) || value < 0 || value > 3650)
                 throw new Error("保留天数需为 0 到 3650 之间的整数");
             await settings.set(RETENTION_KEY, String(value));
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.retention",
+                detail: `设置消息保留 ${value} 天`,
+            });
             return { days: value };
         });
 
         gateway.rpc("admin.cleanup", async (_raw, conn) => {
-            await requireAdmin(conn, accounts);
+            const me = await requireAdmin(conn, accounts);
             const days = await retentionDays();
             if (!days) throw new Error("尚未设置保留天数");
-            return runCleanup();
+            const result = await runCleanup();
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.cleanup",
+                detail: `手动清理：删除 ${result.deleted} 条消息、${result.files} 个文件`,
+            });
+            return result;
         });
 
         gateway.rpc("admin.stats", async (_raw, conn) => {
@@ -282,25 +381,126 @@ export const adminPlugin: Plugin = {
         });
 
         gateway.rpc("admin.task.run", async (raw, conn) => {
-            await requireAdmin(conn, accounts);
+            const me = await requireAdmin(conn, accounts);
             const { name } = raw as unknown as { name: string };
-            return tasks.run(String(name ?? ""));
+            const result = await tasks.run(String(name ?? ""));
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.task.run",
+                detail: `执行任务「${String(name ?? "")}」`,
+            });
+            return result;
         });
 
         gateway.rpc("admin.task.set", async (raw, conn) => {
-            await requireAdmin(conn, accounts);
+            const me = await requireAdmin(conn, accounts);
             const params = raw as unknown as {
                 name: string;
                 enabled?: boolean;
                 intervalMinutes?: number;
             };
-            return tasks.set(String(params.name ?? ""), {
+            const result = await tasks.set(String(params.name ?? ""), {
                 enabled:
                     params.enabled === undefined ? undefined : !!params.enabled,
                 intervalMinutes:
                     params.intervalMinutes === undefined
                         ? undefined
                         : Number(params.intervalMinutes),
+            });
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.task.set",
+                detail: `更新任务「${String(params.name ?? "")}」`,
+            });
+            return result;
+        });
+
+        const registerPolicyOf = async () => {
+            const rawInvite = await settings.get("invite_code");
+            const rawAllow = await settings.get("allow_register");
+            return {
+                inviteCode:
+                    rawInvite === null ? config.inviteCode : rawInvite.trim(),
+                allowRegister:
+                    rawAllow === null
+                        ? config.allowRegister
+                        : rawAllow !== "false",
+            };
+        };
+
+        gateway.rpc("admin.register.get", async (_raw, conn) => {
+            await requireAdmin(conn, accounts);
+            return registerPolicyOf();
+        });
+
+        gateway.rpc("admin.register.set", async (raw, conn) => {
+            const me = await requireAdmin(conn, accounts);
+            const params = raw as unknown as {
+                allowRegister?: unknown;
+                inviteCode?: unknown;
+            };
+            if (params.allowRegister !== undefined)
+                await settings.set(
+                    "allow_register",
+                    params.allowRegister ? "true" : "false",
+                );
+            if (params.inviteCode !== undefined)
+                await settings.set(
+                    "invite_code",
+                    String(params.inviteCode).trim().slice(0, 64),
+                );
+            const policy = await registerPolicyOf();
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.register",
+                detail: `注册策略：${policy.allowRegister ? "允许自助注册" : "关闭自助注册"}${policy.inviteCode ? "，已设邀请码" : ""}`,
+            });
+            return policy;
+        });
+
+        gateway.rpc("admin.mode.get", async (_raw, conn) => {
+            await requireAdmin(conn, accounts);
+            return (await settings.get("app_mode")) === "chat"
+                ? "chat"
+                : "enterprise";
+        });
+
+        gateway.rpc("admin.mode.set", async (raw, conn) => {
+            const me = await requireAdmin(conn, accounts);
+            const params = raw as unknown as { mode?: unknown };
+            if (params.mode !== "chat" && params.mode !== "enterprise")
+                throw new Error("无效的站点模式");
+            await settings.set("app_mode", params.mode);
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.mode",
+                detail: `站点模式：${params.mode === "chat" ? "聊天模式" : "企业模式"}`,
+            });
+            return params.mode;
+        });
+
+        gateway.rpc("admin.audit.list", async (raw, conn) => {
+            await requireAdmin(conn, accounts);
+            const params = raw as unknown as {
+                keyword?: string;
+                category?: string;
+                offset?: number;
+                limit?: number;
+            };
+            const category = ["auth", "admin", "org"].includes(
+                String(params.category ?? ""),
+            )
+                ? String(params.category)
+                : undefined;
+            return audits.list({
+                keyword: params.keyword?.slice(0, 100) || undefined,
+                category,
+                offset: Math.max(0, Number(params.offset) || 0),
+                limit: Math.min(Math.max(Number(params.limit) || 20, 1), 100),
             });
         });
 

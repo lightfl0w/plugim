@@ -30,6 +30,21 @@ const POLICY_OPTIONS = [
 
 type PolicyValue = (typeof POLICY_OPTIONS)[number]["value"];
 
+const MODE_OPTIONS = [
+    {
+        value: "enterprise",
+        label: "企业模式",
+        hint: "含通讯录、组织架构与审计日志，适合公司内部",
+    },
+    {
+        value: "chat",
+        label: "聊天模式",
+        hint: "仅保留聊天与好友，界面更简洁",
+    },
+] as const;
+
+type ModeValue = (typeof MODE_OPTIONS)[number]["value"];
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const staleGuard = async (
@@ -44,7 +59,7 @@ const staleGuard = async (
     return message;
 };
 
-const STEPS = ["数据库与日志", "创建管理员", "注册策略"];
+const STEPS = ["数据库与日志", "创建管理员", "注册与模式"];
 
 export const createInstallPage = (ctx: Context): FC => {
     const auth = ctx.get<AuthService>("auth");
@@ -70,6 +85,7 @@ export const createInstallPage = (ctx: Context): FC => {
         const [password, setPassword] = useState("");
         const [confirm, setConfirm] = useState("");
         const [policy, setPolicy] = useState<PolicyValue>("open");
+        const [mode, setMode] = useState<ModeValue>("enterprise");
         const [invite, setInvite] = useState("");
         const [error, setError] = useState("");
         const [busy, setBusy] = useState(false);
@@ -85,6 +101,7 @@ export const createInstallPage = (ctx: Context): FC => {
             if (s.dbDriver === "postgres" || s.dbDriver === "sqlite")
                 setDriver(s.dbDriver);
             if (s.dbFile) setDbFile(s.dbFile);
+            if (s.mode === "chat" || s.mode === "enterprise") setMode(s.mode);
             setLogDir(s.logDir ?? "");
         }, [s]);
 
@@ -169,6 +186,7 @@ export const createInstallPage = (ctx: Context): FC => {
                 await install.finish({
                     allowRegister: policy !== "closed",
                     inviteCode: policy === "invite" ? invite.trim() : undefined,
+                    mode,
                 });
                 navigate("/chat", { replace: true });
             } catch (err) {
@@ -195,6 +213,36 @@ export const createInstallPage = (ctx: Context): FC => {
             >
                 <span className="text-sm font-medium">{label}</span>
                 <span className="text-xs text-muted-foreground">{hint}</span>
+            </button>
+        );
+
+        const optionButton = (
+            active: boolean,
+            label: string,
+            hint: string,
+            onClick: () => void,
+        ) => (
+            <button
+                type="button"
+                onClick={onClick}
+                className={cn(
+                    "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left",
+                    active
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-accent/60",
+                )}
+            >
+                {active ? (
+                    <CheckCircle2Icon className="size-4 shrink-0 text-primary" />
+                ) : (
+                    <span className="size-4 shrink-0 rounded-full border border-muted-foreground/40" />
+                )}
+                <span className="min-w-0">
+                    <span className="block text-sm font-medium">{label}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                        {hint}
+                    </span>
+                </span>
             </button>
         );
 
@@ -390,36 +438,17 @@ export const createInstallPage = (ctx: Context): FC => {
                             <div className="flex flex-col gap-3">
                                 <p className="flex items-center gap-2 text-sm">
                                     <ShieldCheckIcon className="size-4 text-primary" />
-                                    设置注册策略后完成安装
+                                    设置注册策略与站点模式后完成安装
                                 </p>
                                 <div className="flex flex-col gap-2">
-                                    {POLICY_OPTIONS.map((opt) => (
-                                        <button
-                                            key={opt.value}
-                                            type="button"
-                                            onClick={() => setPolicy(opt.value)}
-                                            className={cn(
-                                                "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left",
-                                                policy === opt.value
-                                                    ? "border-primary bg-primary/5"
-                                                    : "border-border hover:bg-accent/60",
-                                            )}
-                                        >
-                                            {policy === opt.value ? (
-                                                <CheckCircle2Icon className="size-4 shrink-0 text-primary" />
-                                            ) : (
-                                                <span className="size-4 shrink-0 rounded-full border border-muted-foreground/40" />
-                                            )}
-                                            <span className="min-w-0">
-                                                <span className="block text-sm font-medium">
-                                                    {opt.label}
-                                                </span>
-                                                <span className="block truncate text-xs text-muted-foreground">
-                                                    {opt.hint}
-                                                </span>
-                                            </span>
-                                        </button>
-                                    ))}
+                                    {POLICY_OPTIONS.map((opt) =>
+                                        optionButton(
+                                            policy === opt.value,
+                                            opt.label,
+                                            opt.hint,
+                                            () => setPolicy(opt.value),
+                                        ),
+                                    )}
                                 </div>
                                 {policy === "invite" ? (
                                     <Field>
@@ -437,6 +466,17 @@ export const createInstallPage = (ctx: Context): FC => {
                                         />
                                     </Field>
                                 ) : null}
+                                <p className="text-sm font-medium">站点模式</p>
+                                <div className="flex flex-col gap-2">
+                                    {MODE_OPTIONS.map((opt) =>
+                                        optionButton(
+                                            mode === opt.value,
+                                            opt.label,
+                                            opt.hint,
+                                            () => setMode(opt.value),
+                                        ),
+                                    )}
+                                </div>
                                 {error ? (
                                     <FieldError>{error}</FieldError>
                                 ) : null}

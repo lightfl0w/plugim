@@ -11,12 +11,19 @@ import {
     respawnSelf,
     writeInstallConfig,
 } from "../installConfig";
-import type { AccountsStore, GatewayService, SettingsStore } from "../types";
+import type {
+    AccountsStore,
+    AdminUserRow,
+    AuditService,
+    GatewayService,
+    SettingsStore,
+} from "../types";
 import type { AppConfig } from "./config";
 
 interface InstallFinishParams {
     allowRegister?: unknown;
     inviteCode?: unknown;
+    mode?: unknown;
 }
 
 interface InstallDbParams {
@@ -80,16 +87,20 @@ export const installPlugin: Plugin = {
     name: "install",
     description: "安装向导(数据库/日志初始化与上锁)",
     provides: ["install-rpc"],
-    inject: ["gateway", "accounts", "settings", "config"],
+    inject: ["gateway", "accounts", "settings", "config", "audit"],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const accounts = ctx.get<AccountsStore>("accounts");
         const settings = ctx.get<SettingsStore>("settings");
         const config = ctx.get<AppConfig>("config");
+        const audit = ctx.get<AuditService>("audit");
 
         const isLocked = async () =>
             (await settings.get("installed")) === "true" ||
             (await accounts.count()) > 0;
+
+        const appModeOf = async () =>
+            (await settings.get("app_mode")) === "chat" ? "chat" : "enterprise";
 
         gateway.rpc("install.status", async () => {
             const allow = await settings.get("allow_register");
@@ -99,6 +110,7 @@ export const installPlugin: Plugin = {
             return {
                 installed: locked,
                 hasUsers: (await accounts.count()) > 0,
+                mode: await appModeOf(),
                 ...(locked
                     ? {}
                     : {
@@ -152,9 +164,22 @@ export const installPlugin: Plugin = {
             return true;
         });
 
-        gateway.rpc("install.finish", async (raw) => {
-            if (await isLocked()) throw new Error("系统已完成初始化");
-            const { allowRegister, inviteCode } =
+        gateway.rpc("install.finish", async (raw, conn) => {
+            if ((await settings.get("installed")) === "true")
+                throw new Error("系统已完成初始化");
+            if ((await accounts.count()) > 0) {
+                const users = await accounts.listAll();
+                const first = users.reduce<AdminUserRow | null>(
+                    (acc, user) =>
+                        acc === null || user.createdAt < acc.createdAt
+                            ? user
+                            : acc,
+                    null,
+                );
+                if (!conn.user || !first || conn.user.id !== first.id)
+                    throw new Error("系统已完成初始化");
+            }
+            const { allowRegister, inviteCode, mode } =
                 raw as unknown as InstallFinishParams;
             if (typeof allowRegister === "boolean")
                 await settings.set(
@@ -166,6 +191,15 @@ export const installPlugin: Plugin = {
                     "invite_code",
                     inviteCode.trim().slice(0, 64),
                 );
+            if (mode === "chat" || mode === "enterprise") {
+                await settings.set("app_mode", mode);
+                await audit.log({
+                    actorId: conn.user?.id ?? null,
+                    actor: conn.user?.username ?? "安装向导",
+                    action: "admin.mode",
+                    detail: `站点模式：${mode === "chat" ? "聊天模式" : "企业模式"}`,
+                });
+            }
             await settings.set("installed", "true");
             return true;
         });
