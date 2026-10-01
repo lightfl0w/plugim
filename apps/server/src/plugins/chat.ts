@@ -7,13 +7,15 @@ import type {
     LinkPreview,
     MergePayload,
     MessageKind,
+    MessageReactParams,
+    MessageReactions,
     MessageSearchParams,
     RecallParams,
     SendMessageParams,
     TypingEvent,
     TypingParams,
 } from "@plugim/protocol";
-import { MENTION_ALL } from "@plugim/protocol";
+import { MENTION_ALL, REACTION_EMOJIS } from "@plugim/protocol";
 import type {
     AccountsStore,
     AuthUser,
@@ -48,6 +50,7 @@ const KINDS: MessageKind[] = [
 
 const LINK_BUDGET_MS = 2000;
 const MERGE_LINK_MAX = 5;
+const REACTIONS_MAX = 8;
 const CONTENT_MAX = 8000;
 const MIME_RE = /^[\w.+-]+\/[\w.+-]+$/;
 const FILE_URL_RE = /^\/files\/[a-f0-9]{32}$/;
@@ -604,6 +607,76 @@ export const chatPlugin: Plugin = {
                 });
             }
             return { id, recalledAt };
+        });
+
+        gateway.rpc("message.react", async (raw, conn) => {
+            const user = requireUser(conn);
+            const { id, emoji } = raw as unknown as MessageReactParams;
+            if (
+                typeof emoji !== "string" ||
+                !(REACTION_EMOJIS as readonly string[]).includes(emoji)
+            )
+                throw new Error("不支持的回应表情");
+            const message = await store.byId(id);
+            if (!message) throw new Error("消息不存在");
+            if (message.recalledAt) throw new Error("消息已撤回");
+            const visible = message.session.startsWith("p2p:")
+                ? message.session
+                      .slice(4)
+                      .split("|")
+                      .includes(user.username)
+                : message.session.startsWith("g:")
+                  ? (
+                        await groups.memberIdsOf(message.session.slice(2))
+                    ).includes(user.id)
+                  : true;
+            if (!visible) throw new Error("无权回应该消息");
+            const reactions: MessageReactions = {};
+            for (const [key, users] of Object.entries(
+                message.reactions ?? {},
+            ))
+                reactions[key] = [...users];
+            const mine = reactions[emoji] ?? [];
+            const removing = mine.includes(user.username);
+            if (removing) {
+                const rest = mine.filter((name) => name !== user.username);
+                if (rest.length > 0) reactions[emoji] = rest;
+                else delete reactions[emoji];
+            } else {
+                if (
+                    !(emoji in reactions) &&
+                    Object.keys(reactions).length >= REACTIONS_MAX
+                )
+                    throw new Error("回应表情种类已达上限");
+                reactions[emoji] = [...mine, user.username];
+            }
+            const updated = await store.setReactions(
+                id,
+                Object.keys(reactions).length > 0 ? reactions : null,
+            );
+            if (!updated) throw new Error("消息不存在");
+            if (message.session.startsWith("p2p:")) {
+                const [a, b] = message.session.slice(4).split("|");
+                const userA = await accounts.byUsername(a);
+                const userB = await accounts.byUsername(b);
+                if (userA)
+                    gateway.emitToUser(userA.id, "message:update", {
+                        message: { ...updated, session: `p2p:${b}` },
+                    });
+                if (userB)
+                    gateway.emitToUser(userB.id, "message:update", {
+                        message: { ...updated, session: `p2p:${a}` },
+                    });
+            } else if (message.session.startsWith("g:")) {
+                const ids = await groups.memberIdsOf(message.session.slice(2));
+                for (const uid of ids)
+                    gateway.emitToUser(uid, "message:update", {
+                        message: updated,
+                    });
+            } else {
+                gateway.broadcast("message:update", { message: updated });
+            }
+            return { message: updated };
         });
 
         gateway.rpc("message.search", async (raw, conn) => {

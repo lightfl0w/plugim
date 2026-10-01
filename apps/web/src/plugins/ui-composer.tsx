@@ -92,6 +92,8 @@ export const uiComposerSetup = async (ctx: Context) => {
         const [canMentionAll, setCanMentionAll] = useState(false);
         const [muteReason, setMuteReason] = useState<string | null>(null);
         const [typers, setTypers] = useState<Record<string, number>>({});
+        const [dragOver, setDragOver] = useState(false);
+        const dragDepth = useRef(0);
         const textareaRef = useRef<HTMLTextAreaElement>(null);
         const fileRef = useRef<HTMLInputElement>(null);
         const recorderRef = useRef<MediaRecorder | null>(null);
@@ -333,6 +335,15 @@ export const uiComposerSetup = async (ctx: Context) => {
             }
         };
 
+        const deliverFiles = async (files: Iterable<File>) => {
+            for (const file of files) await sendFile(file);
+        };
+
+        const hasFiles = (types: DOMStringList | readonly string[]) => {
+            for (const type of types) if (type === "Files") return true;
+            return false;
+        };
+
         const toggleRecording = async () => {
             if (recording) {
                 recorderRef.current?.stop();
@@ -414,7 +425,33 @@ export const uiComposerSetup = async (ctx: Context) => {
         );
 
         return (
-            <div className="relative flex w-full flex-col">
+            <div
+                className={cn(
+                    "relative flex w-full flex-col",
+                    dragOver && "rounded-lg ring-2 ring-primary",
+                )}
+                onDragEnter={(e) => {
+                    if (!hasFiles(e.dataTransfer.types)) return;
+                    e.preventDefault();
+                    dragDepth.current += 1;
+                    setDragOver(true);
+                }}
+                onDragOver={(e) => {
+                    if (hasFiles(e.dataTransfer.types)) e.preventDefault();
+                }}
+                onDragLeave={() => {
+                    dragDepth.current = Math.max(0, dragDepth.current - 1);
+                    if (dragDepth.current === 0) setDragOver(false);
+                }}
+                onDrop={(e) => {
+                    const files = [...e.dataTransfer.files];
+                    if (files.length === 0) return;
+                    e.preventDefault();
+                    dragDepth.current = 0;
+                    setDragOver(false);
+                    void deliverFiles(files);
+                }}
+            >
                 {emojiOpen ? (
                     <div className="absolute bottom-full left-2 z-20 mb-1 grid w-72 grid-cols-8 gap-0.5 rounded-xl border border-border bg-popover p-2 shadow-lg">
                         {EMOJIS.map((emoji) => (
@@ -558,6 +595,12 @@ export const uiComposerSetup = async (ctx: Context) => {
                         writeDraft(e.target.value);
                         autoGrow();
                         notifyTyping(e.target.value);
+                    }}
+                    onPaste={(e) => {
+                        const files = [...e.clipboardData.files];
+                        if (files.length === 0) return;
+                        e.preventDefault();
+                        void deliverFiles(files);
                     }}
                     onKeyDown={(e) => {
                         if (candidates.length > 0) {

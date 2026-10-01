@@ -3,6 +3,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import type { Dispose, Plugin } from "@plugim/core";
 import type {
     Envelope,
+    PresenceStatus,
     RpcErr,
     RpcOk,
     ServerEventName,
@@ -14,19 +15,26 @@ import type {
     ConnInfo,
     GatewayService,
     RpcHandler,
+    SettingsStore,
     TokenVerifier,
 } from "../types";
 import type { AppConfig } from "./config";
 
 const nullVerifier: TokenVerifier = () => Promise.resolve(null);
 
+const toStatus = (raw: unknown): PresenceStatus =>
+    raw === "busy" || raw === "away" || raw === "dnd" || raw === "invisible"
+        ? raw
+        : "online";
+
 export const gatewayPlugin: Plugin = {
     name: "gateway",
     description: "WebSocket 网关与 RPC 注册表",
     provides: ["gateway"],
-    inject: ["config"],
+    inject: ["config", "settings"],
     async apply(ctx): Promise<Dispose> {
         const config = ctx.get<AppConfig>("config");
+        const settings = ctx.get<SettingsStore>("settings");
         const handlers = new Map<string, RpcHandler>();
         const sockets = new Set<NodeWebSocket>();
         const identities = new Map<NodeWebSocket, AuthUser | null>();
@@ -54,7 +62,19 @@ export const gatewayPlugin: Plugin = {
             app,
         });
 
-        const announcePresence = (user: AuthUser, online: boolean) => {
+        const announcePresence = async (user: AuthUser, online: boolean) => {
+            if (online) {
+                const status = toStatus(
+                    await settings.get(`presence:${user.id}`),
+                );
+                if (status === "invisible") return;
+                gatewayApi.broadcast("presence:update", {
+                    username: user.username,
+                    online,
+                    status,
+                });
+                return;
+            }
             gatewayApi.broadcast("presence:update", {
                 username: user.username,
                 online,
@@ -173,7 +193,7 @@ export const gatewayPlugin: Plugin = {
                         identities.set(connRaw, user);
                         if (user) {
                             lastSeen.set(user.id, user.username);
-                            if (!wasOnline) announcePresence(user, true);
+                            if (!wasOnline) void announcePresence(user, true);
                         }
                     })
                     .catch(() => undefined);
@@ -190,7 +210,8 @@ export const gatewayPlugin: Plugin = {
                         raw.on("pong", () => liveness.set(raw, true));
                         if (connUser) {
                             lastSeen.set(connUser.id, connUser.username);
-                            if (!wasOnline) announcePresence(connUser, true);
+                            if (!wasOnline)
+                                void announcePresence(connUser, true);
                         }
                     },
                     onMessage(evt, ws) {

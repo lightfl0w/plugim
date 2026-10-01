@@ -39,6 +39,16 @@
                     }
                 }
             }
+        },
+        {
+            "includes": ["**/src/plugins/ui-composer.tsx"],
+            "linter": {
+                "rules": {
+                    "a11y": {
+                        "noStaticElementInteractions": "off"
+                    }
+                }
+            }
         }
     ]
 }

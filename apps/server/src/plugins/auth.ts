@@ -1,6 +1,6 @@
 import { hash, verify } from "@node-rs/argon2";
 import type { Plugin } from "@plugim/core";
-import type { AuthSuccess, User } from "@plugim/protocol";
+import type { AuthSuccess, PresenceStatus, User } from "@plugim/protocol";
 import { jwtVerify, SignJWT } from "jose";
 import type {
     AccountsStore,
@@ -17,6 +17,11 @@ const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_ATTEMPTS = 10;
 
 const unauthorized = (): Error => new Error("未登录或登录已过期");
+
+const toStatus = (raw: unknown): PresenceStatus =>
+    raw === "busy" || raw === "away" || raw === "dnd" || raw === "invisible"
+        ? raw
+        : "online";
 
 export const authPlugin: Plugin = {
     name: "auth",
@@ -226,7 +231,36 @@ export const authPlugin: Plugin = {
         gateway.rpc("presence.list", async (_raw, conn) => {
             requireUser(conn);
             const users = await accounts.byIds(gateway.onlineUserIds());
-            return users.map((user) => user.username);
+            const online: string[] = [];
+            const statuses: Record<string, PresenceStatus> = {};
+            for (const user of users) {
+                const status = toStatus(
+                    await settings.get(`presence:${user.id}`),
+                );
+                if (status === "invisible") continue;
+                online.push(user.username);
+                statuses[user.username] = status;
+            }
+            return { online, statuses };
+        });
+
+        gateway.rpc("presence.status", async (_raw, conn) => {
+            const user = requireUser(conn);
+            const status = toStatus(await settings.get(`presence:${user.id}`));
+            return { status };
+        });
+
+        gateway.rpc("presence.status.set", async (raw, conn) => {
+            const user = requireUser(conn);
+            const status = toStatus((raw as { status?: unknown }).status);
+            await settings.set(`presence:${user.id}`, status);
+            if (status !== "invisible")
+                gateway.broadcast("presence:update", {
+                    username: user.username,
+                    online: true,
+                    status,
+                });
+            return { status };
         });
 
         gateway.rpc("user.info", async (raw, conn) => {

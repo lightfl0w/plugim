@@ -6,6 +6,7 @@ import type {
     GroupRole,
     LinkPreview,
     MessageQuote,
+    MessageReactions,
     MomentVisibility,
 } from "@plugim/protocol";
 import Database from "better-sqlite3";
@@ -84,6 +85,7 @@ const messagesSqlite = sqliteTable("messages", {
     kind: sqliteText("kind"),
     file: sqliteText("file"),
     link: sqliteText("link"),
+    reactions: sqliteText("reactions"),
 });
 
 const messagesPg = pgTable("messages", {
@@ -100,6 +102,7 @@ const messagesPg = pgTable("messages", {
     kind: pgText("kind"),
     file: pgText("file"),
     link: pgText("link"),
+    reactions: pgText("reactions"),
 });
 
 const usersSqlite = sqliteTable("users", {
@@ -188,6 +191,7 @@ const groupMembersSqlite = sqliteTable(
         role: sqliteText("role").notNull(),
         muted: integer("muted", { mode: "boolean" }).notNull().default(false),
         joinedAt: integer("joined_at").notNull(),
+        title: sqliteText("title"),
     },
     (table) => [primaryKey({ columns: [table.groupId, table.userId] })],
 );
@@ -202,6 +206,7 @@ const groupMembersPg = pgTable(
         joinedAt: timestamp("joined_at", { withTimezone: true })
             .notNull()
             .defaultNow(),
+        title: pgText("title"),
     },
     (table) => [pgPrimaryKey({ columns: [table.groupId, table.userId] })],
 );
@@ -272,6 +277,24 @@ const friendRemarksPg = pgTable(
         ownerId: pgText("owner_id").notNull(),
         friendId: pgText("friend_id").notNull(),
         remark: pgText("remark").notNull(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.ownerId, table.friendId] })],
+);
+
+const friendStarsSqlite = sqliteTable(
+    "friend_stars",
+    {
+        ownerId: sqliteText("owner_id").notNull(),
+        friendId: sqliteText("friend_id").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.ownerId, table.friendId] })],
+);
+
+const friendStarsPg = pgTable(
+    "friend_stars",
+    {
+        ownerId: pgText("owner_id").notNull(),
+        friendId: pgText("friend_id").notNull(),
     },
     (table) => [pgPrimaryKey({ columns: [table.ownerId, table.friendId] })],
 );
@@ -516,7 +539,8 @@ CREATE TABLE IF NOT EXISTS messages (
   mentions TEXT,
   kind TEXT,
   file TEXT,
-  link TEXT
+  link TEXT,
+  reactions TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -539,6 +563,11 @@ CREATE TABLE IF NOT EXISTS friend_remarks (
   owner_id TEXT NOT NULL,
   friend_id TEXT NOT NULL,
   remark TEXT NOT NULL,
+  PRIMARY KEY (owner_id, friend_id)
+);
+CREATE TABLE IF NOT EXISTS friend_stars (
+  owner_id TEXT NOT NULL,
+  friend_id TEXT NOT NULL,
   PRIMARY KEY (owner_id, friend_id)
 );
 CREATE TABLE IF NOT EXISTS friend_groups (
@@ -585,6 +614,7 @@ CREATE TABLE IF NOT EXISTS group_members (
   role TEXT NOT NULL,
   muted INTEGER NOT NULL DEFAULT 0,
   joined_at INTEGER NOT NULL,
+  title TEXT,
   PRIMARY KEY (group_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS reads (
@@ -670,7 +700,8 @@ CREATE TABLE IF NOT EXISTS messages (
   mentions TEXT,
   kind TEXT,
   file TEXT,
-  link TEXT
+  link TEXT,
+  reactions TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -693,6 +724,11 @@ CREATE TABLE IF NOT EXISTS friend_remarks (
   owner_id TEXT NOT NULL,
   friend_id TEXT NOT NULL,
   remark TEXT NOT NULL,
+  PRIMARY KEY (owner_id, friend_id)
+);
+CREATE TABLE IF NOT EXISTS friend_stars (
+  owner_id TEXT NOT NULL,
+  friend_id TEXT NOT NULL,
   PRIMARY KEY (owner_id, friend_id)
 );
 CREATE TABLE IF NOT EXISTS friend_groups (
@@ -739,6 +775,7 @@ CREATE TABLE IF NOT EXISTS group_members (
   role TEXT NOT NULL,
   muted BOOLEAN NOT NULL DEFAULT FALSE,
   joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  title TEXT,
   PRIMARY KEY (group_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS reads (
@@ -861,6 +898,40 @@ const parseFile = (raw: unknown): FileMeta | null => {
                     ? { mime: parsed.mime }
                     : {}),
             };
+    } catch {}
+    return null;
+};
+
+const serializeReactions = (
+    reactions?: MessageReactions | null,
+): string | null => {
+    if (!reactions) return null;
+    const entries = Object.entries(reactions).filter(
+        ([emoji, users]) =>
+            emoji.length > 0 &&
+            Array.isArray(users) &&
+            users.length > 0 &&
+            users.every((user) => typeof user === "string"),
+    );
+    if (entries.length === 0) return null;
+    return JSON.stringify(Object.fromEntries(entries));
+};
+
+const parseReactions = (raw: unknown): MessageReactions | null => {
+    if (typeof raw !== "string" || !raw) return null;
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+            return null;
+        const out: MessageReactions = {};
+        for (const [emoji, users] of Object.entries(parsed)) {
+            if (!Array.isArray(users) || emoji.length === 0) continue;
+            const list = users.filter(
+                (item): item is string => typeof item === "string",
+            );
+            if (list.length > 0) out[emoji] = list;
+        }
+        return Object.keys(out).length > 0 ? out : null;
     } catch {}
     return null;
 };
@@ -1038,6 +1109,7 @@ interface MessageDbRow {
     kind: string | null;
     file: string | null;
     link: string | null;
+    reactions: string | null;
 }
 
 const messageRowToChat = (row: MessageDbRow) => ({
@@ -1052,6 +1124,7 @@ const messageRowToChat = (row: MessageDbRow) => ({
     kind: (row.kind ?? "text") as "text",
     file: parseFile(row.file),
     link: parseLink(row.link),
+    reactions: parseReactions(row.reactions),
 });
 
 export const storagePlugin: Plugin = {
@@ -1134,6 +1207,12 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE moments ADD COLUMN IF NOT EXISTS link TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE group_members ADD COLUMN IF NOT EXISTS title TEXT",
             );
             const db = drizzlePg(client);
 
@@ -1264,6 +1343,15 @@ export const storagePlugin: Plugin = {
                     return rows[0]?.recalledAt
                         ? rows[0].recalledAt.toISOString()
                         : null;
+                },
+                async setReactions(id, reactions) {
+                    const rows = await db
+                        .update(messagesPg)
+                        .set({ reactions: serializeReactions(reactions) })
+                        .where(eq(messagesPg.id, id))
+                        .returning();
+                    const row = rows[0];
+                    return row ? messageRowToChat(row) : null;
                 },
                 async search(params) {
                     const conds = [isNull(messagesPg.recalledAt)];
@@ -1565,6 +1653,30 @@ export const storagePlugin: Plugin = {
                     for (const row of rows) result[row.friendId] = row.remark;
                     return result;
                 },
+                async starsOf(ownerId) {
+                    const rows = await db
+                        .select({ friendId: friendStarsPg.friendId })
+                        .from(friendStarsPg)
+                        .where(eq(friendStarsPg.ownerId, ownerId));
+                    return rows.map((row) => row.friendId);
+                },
+                async setStar(ownerId, friendId, on) {
+                    if (!on) {
+                        await db
+                            .delete(friendStarsPg)
+                            .where(
+                                and(
+                                    eq(friendStarsPg.ownerId, ownerId),
+                                    eq(friendStarsPg.friendId, friendId),
+                                ),
+                            );
+                        return;
+                    }
+                    await db
+                        .insert(friendStarsPg)
+                        .values({ ownerId, friendId })
+                        .onConflictDoNothing();
+                },
                 async groupListOf(ownerId) {
                     const rows = await db
                         .select()
@@ -1775,6 +1887,17 @@ export const storagePlugin: Plugin = {
                             ),
                         );
                 },
+                async setMemberTitle(groupId, userId, title) {
+                    await db
+                        .update(groupMembersPg)
+                        .set({ title })
+                        .where(
+                            and(
+                                eq(groupMembersPg.groupId, groupId),
+                                eq(groupMembersPg.userId, userId),
+                            ),
+                        );
+                },
                 async membersOf(groupId) {
                     const rows = await db
                         .select()
@@ -1786,6 +1909,7 @@ export const storagePlugin: Plugin = {
                             role: row.role as GroupRole,
                             muted: row.muted,
                             joinedAt: toIso(row.joinedAt),
+                            title: row.title,
                         }),
                     );
                 },
@@ -2486,6 +2610,7 @@ export const storagePlugin: Plugin = {
                 "kind",
                 "file",
                 "link",
+                "reactions",
             ]) {
                 if (!messageColumns.some((item) => item.name === col)) {
                     const type = col === "recalled_at" ? "INTEGER" : "TEXT";
@@ -2524,6 +2649,11 @@ export const storagePlugin: Plugin = {
                 client.exec("ALTER TABLE moments ADD COLUMN video TEXT");
             if (!momentColumns.some((item) => item.name === "link"))
                 client.exec("ALTER TABLE moments ADD COLUMN link TEXT");
+            const groupMemberColumns = client.pragma(
+                "table_info(group_members)",
+            ) as Array<{ name: string }>;
+            if (!groupMemberColumns.some((item) => item.name === "title"))
+                client.exec("ALTER TABLE group_members ADD COLUMN title TEXT");
             const db = drizzleSqlite(client);
 
             const messageCursor = async (id: string) => {
@@ -2681,6 +2811,15 @@ export const storagePlugin: Plugin = {
                     return rows[0]?.recalledAt
                         ? new Date(rows[0].recalledAt).toISOString()
                         : null;
+                },
+                async setReactions(id, reactions) {
+                    const rows = await db
+                        .update(messagesSqlite)
+                        .set({ reactions: serializeReactions(reactions) })
+                        .where(eq(messagesSqlite.id, id))
+                        .returning();
+                    const row = rows[0];
+                    return row ? messageRowToChat(row) : null;
                 },
                 async search(params) {
                     const conds = [isNull(messagesSqlite.recalledAt)];
@@ -2998,6 +3137,30 @@ export const storagePlugin: Plugin = {
                     for (const row of rows) result[row.friendId] = row.remark;
                     return result;
                 },
+                async starsOf(ownerId) {
+                    const rows = await db
+                        .select({ friendId: friendStarsSqlite.friendId })
+                        .from(friendStarsSqlite)
+                        .where(eq(friendStarsSqlite.ownerId, ownerId));
+                    return rows.map((row) => row.friendId);
+                },
+                async setStar(ownerId, friendId, on) {
+                    if (!on) {
+                        await db
+                            .delete(friendStarsSqlite)
+                            .where(
+                                and(
+                                    eq(friendStarsSqlite.ownerId, ownerId),
+                                    eq(friendStarsSqlite.friendId, friendId),
+                                ),
+                            );
+                        return;
+                    }
+                    await db
+                        .insert(friendStarsSqlite)
+                        .values({ ownerId, friendId })
+                        .onConflictDoNothing();
+                },
                 async groupListOf(ownerId) {
                     const rows = await db
                         .select()
@@ -3236,6 +3399,17 @@ export const storagePlugin: Plugin = {
                             ),
                         );
                 },
+                async setMemberTitle(groupId, userId, title) {
+                    await db
+                        .update(groupMembersSqlite)
+                        .set({ title })
+                        .where(
+                            and(
+                                eq(groupMembersSqlite.groupId, groupId),
+                                eq(groupMembersSqlite.userId, userId),
+                            ),
+                        );
+                },
                 async membersOf(groupId) {
                     const rows = await db
                         .select()
@@ -3247,6 +3421,7 @@ export const storagePlugin: Plugin = {
                             role: row.role as GroupRole,
                             muted: row.muted,
                             joinedAt: toIso(row.joinedAt),
+                            title: row.title,
                         }),
                     );
                 },

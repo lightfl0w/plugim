@@ -15,6 +15,7 @@ import {
     displayName,
     isPopupWindow,
     openDetachedChat,
+    presenceStatusMeta,
     setShellPane,
     useChatTarget,
     useShellPane,
@@ -87,6 +88,14 @@ export const uiHeaderSetup = async (ctx: Context) => {
         };
 
         const peerName = session.startsWith("p2p:") ? session.slice(4) : null;
+        const peerStatus = peerName
+            ? (presence.statusOf(peerName) ?? null)
+            : null;
+        const peerLabel = peerName
+            ? presence.isOnline(peerName) && peerStatus
+                ? presenceStatusMeta(peerStatus).label
+                : "离线"
+            : null;
         const popup = isPopupWindow();
         const groupName = session.startsWith("g:")
             ? groupInfo?.name
@@ -115,15 +124,15 @@ export const uiHeaderSetup = async (ctx: Context) => {
                         ({groupInfo.memberCount})
                     </span>
                 ) : null}
-                {peerName ? (
+                {peerLabel ? (
                     <span
                         className={
-                            presence.isOnline(peerName)
+                            presence.isOnline(peerName ?? "")
                                 ? "shrink-0 text-xs text-emerald-600"
                                 : "shrink-0 text-xs text-muted-foreground"
                         }
                     >
-                        {presence.isOnline(peerName) ? "在线" : "离线"}
+                        {peerLabel}
                     </span>
                 ) : null}
                 <div className="ml-auto flex shrink-0 items-center gap-1">

@@ -4,6 +4,7 @@ import type {
     FriendGroupParams,
     FriendListResult,
     FriendRemarkParams,
+    FriendStarParams,
     FriendTargetParams,
 } from "@plugim/protocol";
 import type {
@@ -63,6 +64,7 @@ export const friendsPlugin: Plugin = {
                 remarks: {},
                 groups: [],
                 friendGroups: {},
+                starred: [],
             };
             for (const edge of edges) {
                 const other =
@@ -98,6 +100,11 @@ export const friendsPlugin: Plugin = {
             const groupMap = await friendships.friendGroupMap(me.id);
             for (const user of users)
                 result.friendGroups[user.username] = groupMap[user.id] ?? null;
+            for (const friendId of await friendships.starsOf(me.id)) {
+                const name = nameById.get(friendId);
+                if (name && result.friends.includes(name))
+                    result.starred.push(name);
+            }
             return result;
         };
 
@@ -188,6 +195,25 @@ export const friendsPlugin: Plugin = {
                 typeof params.remark === "string" ? params.remark.trim() : "";
             if (remark.length > 24) throw new Error("备注不能超过 24 个字");
             await friendships.setRemark(me.id, target.id, remark);
+            return buildList(me);
+        });
+
+        gateway.rpc("friend.star", async (raw, conn) => {
+            const me = requireUser(conn);
+            const params = raw as unknown as FriendStarParams;
+            const target = await usernameToUser(String(params.username ?? ""));
+            if (target.id === me.id) throw new Error("不能特别关心自己");
+            const edges = await friendships.edgesOf(me.id);
+            const isFriend = edges.some(
+                (edge) =>
+                    edge.status === "accepted" &&
+                    ((edge.requesterId === me.id &&
+                        edge.addresseeId === target.id) ||
+                        (edge.requesterId === target.id &&
+                            edge.addresseeId === me.id)),
+            );
+            if (!isFriend) throw new Error("只能特别关心好友");
+            await friendships.setStar(me.id, target.id, params.on !== false);
             return buildList(me);
         });
 

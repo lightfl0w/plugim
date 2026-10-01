@@ -49,7 +49,21 @@ export interface ChatMessage {
     kind?: MessageKind;
     file?: FileMeta | null;
     link?: LinkPreview | null;
+    reactions?: MessageReactions | null;
 }
+
+export type MessageReactions = Record<string, string[]>;
+
+export const REACTION_EMOJIS = [
+    "👍",
+    "😂",
+    "❤️",
+    "🎉",
+    "😮",
+    "😢",
+    "😡",
+    "🙏",
+] as const;
 
 export interface User {
     id: string;
@@ -80,6 +94,7 @@ export interface FriendListResult {
     remarks: Record<string, string>;
     groups: FriendGroupInfo[];
     friendGroups: Record<string, string | null>;
+    starred: string[];
 }
 
 export interface MessageRecalledEvent {
@@ -129,11 +144,25 @@ export interface GroupMember {
     role: GroupRole;
     muted: boolean;
     joinedAt: string;
+    title?: string | null;
 }
+
+export type PresenceStatus =
+    | "online"
+    | "busy"
+    | "away"
+    | "dnd"
+    | "invisible";
 
 export interface PresenceUpdate {
     username: string;
     online: boolean;
+    status?: PresenceStatus;
+}
+
+export interface PresenceListResult {
+    online: string[];
+    statuses: Record<string, PresenceStatus>;
 }
 
 export interface ReceiptUpdate {
@@ -216,6 +245,7 @@ export interface GroupCallSignal {
 
 export type ServerEventName =
     | "message:new"
+    | "message:update"
     | "message:recalled"
     | "friend:update"
     | "group:update"
@@ -303,6 +333,26 @@ export interface FriendGroupParams {
 export interface FriendGroupMoveParams {
     username: string;
     groupId: string | null;
+}
+
+export interface FriendStarParams {
+    username: string;
+    on: boolean;
+}
+
+export interface PresenceStatusSetParams {
+    status: PresenceStatus;
+}
+
+export interface MessageReactParams {
+    id: string;
+    emoji: string;
+}
+
+export interface GroupMemberTitleParams {
+    groupId: string;
+    username: string;
+    title: string;
 }
 
 export interface GroupEssenceParams {

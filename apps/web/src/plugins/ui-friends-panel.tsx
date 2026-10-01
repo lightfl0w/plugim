@@ -1,8 +1,13 @@
 import type { Context } from "@plugim/core";
 import type { FriendListResult } from "@plugim/protocol";
-import { ArrowLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
+import {
+    ArrowLeftIcon,
+    ChevronRightIcon,
+    PlusIcon,
+    StarIcon,
+} from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -10,7 +15,13 @@ import { Separator } from "../components/ui/separator";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { FriendsService } from "./friends";
-import { displayName, openChat, setShellPane, showConfirm } from "./ui-shared";
+import {
+    displayName,
+    openChat,
+    setShellPane,
+    showConfirm,
+    usePopupClose,
+} from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 type DetailView =
@@ -53,20 +64,9 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
             text: string;
         } | null>(null);
         const [menu, setMenu] = useState<FriendMenu>(null);
+        const menuRef = useRef<HTMLDivElement>(null);
 
-        useEffect(() => {
-            if (!menu) return undefined;
-            const close = () => setMenu(null);
-            const onKey = (e: KeyboardEvent) => {
-                if (e.key === "Escape") setMenu(null);
-            };
-            window.addEventListener("click", close);
-            window.addEventListener("keydown", onKey);
-            return () => {
-                window.removeEventListener("click", close);
-                window.removeEventListener("keydown", onKey);
-            };
-        }, [menu]);
+        usePopupClose(menuRef, !!menu, () => setMenu(null));
 
         const groups = list?.groups ?? [];
         const groupOf = (name: string) => list?.friendGroups?.[name] ?? null;
@@ -160,6 +160,9 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                         </span>
                     ) : null}
                 </span>
+                {list?.starred?.includes(name) ? (
+                    <StarIcon className="ml-auto size-3.5 shrink-0 fill-amber-400 text-amber-400" />
+                ) : null}
             </button>
         );
 
@@ -409,6 +412,7 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                 </div>
                 {menu ? (
                     <div
+                        ref={menuRef}
                         role="menu"
                         className="fixed z-50 w-44 rounded-lg border border-border bg-popover py-1 text-sm shadow-lg"
                         style={{

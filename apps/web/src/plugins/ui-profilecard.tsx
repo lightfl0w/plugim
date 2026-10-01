@@ -3,6 +3,7 @@ import type { FriendListResult } from "@plugim/protocol";
 import {
     MessageSquareIcon,
     PencilIcon,
+    StarIcon,
     UserCheckIcon,
     UserPlusIcon,
 } from "lucide-react";
@@ -10,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { UserAvatar } from "../components/ui/user-avatar";
+import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
@@ -137,6 +139,7 @@ export const uiProfileCardSetup = async (ctx: Context) => {
         };
 
         const remark = relation?.remarks?.[card.username] ?? "";
+        const starred = relation?.starred.includes(card.username) ?? false;
         const registered = createdAt ? new Date(createdAt) : null;
 
         return (
@@ -197,6 +200,26 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                             注册于{" "}
                             {`${registered.getFullYear()}-${String(registered.getMonth() + 1).padStart(2, "0")}-${String(registered.getDate()).padStart(2, "0")}`}
                         </p>
+                    ) : null}
+                    {isFriend ? (
+                        <button
+                            type="button"
+                            disabled={busy}
+                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                            onClick={() =>
+                                void act(() =>
+                                    friends.setStar(card.username, !starred),
+                                )
+                            }
+                        >
+                            <StarIcon
+                                className={cn(
+                                    "size-3.5",
+                                    starred && "fill-amber-400 text-amber-400",
+                                )}
+                            />
+                            {starred ? "取消特别关心" : "特别关心"}
+                        </button>
                     ) : null}
                 </div>
                 {hint ? (

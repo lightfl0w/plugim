@@ -16,6 +16,7 @@ import {
     PictureInPicture2Icon,
     PlusIcon,
     ShieldIcon,
+    UserRoundIcon,
     UsersIcon,
     XIcon,
 } from "lucide-react";
@@ -49,8 +50,12 @@ import {
     messageLabel,
     openChat,
     openDetachedChat,
+    PRESENCE_STATUS_OPTIONS,
+    playBeep,
+    presenceStatusMeta,
     setShellPane,
     showAlert,
+    usePopupClose,
 } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
@@ -109,24 +114,6 @@ const GroupAvatar = ({ name }: { name: string }) => (
         {name.slice(0, 1).toUpperCase()}
     </span>
 );
-
-let audioCtx: AudioContext | undefined;
-const beep = () => {
-    try {
-        audioCtx ??= new AudioContext();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.frequency.value = 880;
-        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(
-            0.001,
-            audioCtx.currentTime + 0.18,
-        );
-        osc.connect(gain).connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.2);
-    } catch {}
-};
 
 const dndKey = (owner: string) => `plugim_dnd:${owner}`;
 
@@ -193,6 +180,73 @@ export const uiSidebarSetup = async (ctx: Context) => {
     const adminService = ctx.get<AdminService>("admin");
     const moments = ctx.get<MomentsService>("moments");
 
+    const StatusMenu = ({ username }: { username: string }) => {
+        const [open, setOpen] = useState(false);
+        const status = useSyncExternalStore(
+            (cb) => presence.onChange(cb),
+            () => presence.myStatus(),
+        );
+        const ref = useRef<HTMLDivElement>(null);
+        usePopupClose(ref, open, () => setOpen(false));
+        const meta = presenceStatusMeta(status);
+        return (
+            <div ref={ref} className="relative">
+                <button
+                    type="button"
+                    title={`状态：${meta.label}`}
+                    className="relative block rounded-full"
+                    onClick={() => setOpen((v) => !v)}
+                >
+                    <UserAvatar name={username} size="sm" />
+                    <span
+                        className={cn(
+                            "absolute right-0 bottom-0 size-2.5 rounded-full ring-2 ring-background",
+                            meta.dot,
+                        )}
+                    />
+                </button>
+                {open ? (
+                    <div className="absolute bottom-0 left-full z-50 ml-2 w-32 overflow-hidden rounded-lg border border-border bg-popover py-1 shadow-lg">
+                        {PRESENCE_STATUS_OPTIONS.map((option) => (
+                            <button
+                                key={option.value}
+                                type="button"
+                                className={cn(
+                                    "flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent",
+                                    status === option.value &&
+                                        "text-primary font-medium",
+                                )}
+                                onClick={() => {
+                                    void presence.setMyStatus(option.value);
+                                    setOpen(false);
+                                }}
+                            >
+                                <span
+                                    className={cn(
+                                        "size-2 rounded-full",
+                                        option.dot,
+                                    )}
+                                />
+                                {option.label}
+                            </button>
+                        ))}
+                        <div className="my-1 border-t border-border" />
+                        <NavLink
+                            to="/me"
+                            onClick={() => setOpen(false)}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
+                        >
+                            <span className="flex size-2 items-center justify-center">
+                                <UserRoundIcon className="size-3 text-muted-foreground" />
+                            </span>
+                            用户中心
+                        </NavLink>
+                    </div>
+                ) : null}
+            </div>
+        );
+    };
+
     const Nav = () => {
         const user = useSyncExternalStore(
             (cb) => auth.onChange(cb),
@@ -227,20 +281,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     badge={momentsUnread}
                 />
                 <div className="flex items-center gap-1 md:mt-auto md:flex-col">
-                    {user ? (
-                        <NavLink
-                            to="/me"
-                            title="用户中心"
-                            className={({ isActive }) =>
-                                cn(
-                                    "rounded-full",
-                                    isActive && "ring-2 ring-primary",
-                                )
-                            }
-                        >
-                            <UserAvatar name={user.username} size="sm" />
-                        </NavLink>
-                    ) : null}
+                    {user ? <StatusMenu username={user.username} /> : null}
                     {admin ? (
                         <NavLink
                             to="/admin"
@@ -308,6 +349,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const dndRef = useRef<string[]>([]);
         const plusWrapRef = useRef<HTMLDivElement>(null);
         const createCardRef = useRef<HTMLDivElement>(null);
+        const sessionMenuRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
         const searchTimerRef = useRef<
             ReturnType<typeof setTimeout> | undefined
@@ -439,14 +481,18 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         [message.session]: true,
                     }));
                 }
-                if (!dndRef.current.includes(message.session)) beep();
+                const starHit =
+                    message.session.startsWith("p2p:") &&
+                    (friends.cached()?.starred ?? []).includes(message.sender);
+                if (starHit || !dndRef.current.includes(message.session))
+                    playBeep();
                 if (message.session === activeRef.current) return;
                 applyUnread({
                     ...unreadRef.current,
                     [message.session]:
                         (unreadRef.current[message.session] ?? 0) + 1,
                 });
-                notifyInBackground(message, dndRef.current);
+                notifyInBackground(message, dndRef.current, starHit);
             });
             const disposeRecall = ctx.on(
                 "server:message:recalled",
@@ -465,10 +511,37 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     setPreviews(next);
                 },
             );
+            const disposePresence = ctx.on(
+                "server:presence:update",
+                (payload) => {
+                    const { username, online } = payload as {
+                        username: string;
+                        online: boolean;
+                    };
+                    if (!online) return;
+                    if (username === auth.user()?.username) return;
+                    if (!(friends.cached()?.starred ?? []).includes(username))
+                        return;
+                    playBeep();
+                    if (
+                        typeof Notification !== "undefined" &&
+                        Notification.permission === "granted" &&
+                        document.visibilityState === "hidden"
+                    ) {
+                        try {
+                            new Notification("特别关心", {
+                                body: `${username} 上线了`,
+                                tag: `presence:${username}`,
+                            });
+                        } catch {}
+                    }
+                },
+            );
             return () => {
                 void disposeOpen();
                 void disposeMsg();
                 void disposeRecall();
+                void disposePresence();
             };
         }, [applyUnread, applyPreview]);
 
@@ -483,48 +556,20 @@ export const uiSidebarSetup = async (ctx: Context) => {
             return groups.onUpdate(() => setGroupList(groups.cached()));
         }, []);
 
-        useEffect(() => {
-            if (!sessionMenu) return undefined;
-            const close = () => setSessionMenu(null);
-            const onKey = (e: KeyboardEvent) => {
-                if (e.key === "Escape") setSessionMenu(null);
-            };
-            window.addEventListener("click", close);
-            window.addEventListener("keydown", onKey);
-            window.addEventListener("wheel", close, { passive: true });
-            return () => {
-                window.removeEventListener("click", close);
-                window.removeEventListener("keydown", onKey);
-                window.removeEventListener("wheel", close);
-            };
-        }, [sessionMenu]);
-
-        useEffect(() => {
-            if (!plusOpen && !createOpen) return undefined;
-            const onDown = (e: MouseEvent) => {
-                const target = e.target as Node;
-                if (
-                    plusOpen &&
-                    !plusWrapRef.current?.contains(target) &&
-                    !createCardRef.current?.contains(target)
-                )
-                    setPlusOpen(false);
-                if (createOpen && !createCardRef.current?.contains(target))
-                    setCreateOpen(false);
-            };
-            const onKey = (e: KeyboardEvent) => {
-                if (e.key === "Escape") {
-                    setCreateOpen(false);
-                    setPlusOpen(false);
-                }
-            };
-            window.addEventListener("mousedown", onDown);
-            window.addEventListener("keydown", onKey);
-            return () => {
-                window.removeEventListener("mousedown", onDown);
-                window.removeEventListener("keydown", onKey);
-            };
-        }, [plusOpen, createOpen]);
+        usePopupClose(
+            sessionMenuRef,
+            !!sessionMenu,
+            () => setSessionMenu(null),
+            true,
+        );
+        usePopupClose(
+            [plusWrapRef, createCardRef],
+            plusOpen || createOpen,
+            () => {
+                setPlusOpen(false);
+                setCreateOpen(false);
+            },
+        );
 
         useEffect(() => {
             if (createOpen) nameInputRef.current?.focus();
@@ -575,10 +620,6 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 );
             return displayName(session.slice(4), list?.remarks);
         };
-
-        useEffect(() => {
-            openChat(ctx, { session: "general", title: "综合频道" });
-        }, []);
 
         const entries = [
             {
@@ -880,6 +921,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 </div>
                 {sessionMenu ? (
                     <div
+                        ref={sessionMenuRef}
                         role="menu"
                         className="fixed z-50 w-36 rounded-lg border border-border bg-popover py-1 text-sm shadow-lg"
                         style={{
@@ -1056,18 +1098,25 @@ const PinIconInline = () => (
     </svg>
 );
 
-const notifyInBackground = (message: ChatMessage, dnd: string[]) => {
+const notifyInBackground = (
+    message: ChatMessage,
+    dnd: string[],
+    starred = false,
+) => {
     if (document.visibilityState !== "hidden") return;
-    if (dnd.includes(message.session)) return;
+    if (!starred && dnd.includes(message.session)) return;
     if (
         typeof Notification === "undefined" ||
         Notification.permission !== "granted"
     )
         return;
     try {
-        new Notification(message.sender, {
-            body: previewText(message.content, message.kind).slice(0, 80),
-            tag: message.session,
-        });
+        new Notification(
+            starred ? `特别关心：${message.sender}` : message.sender,
+            {
+                body: previewText(message.content, message.kind).slice(0, 80),
+                tag: message.session,
+            },
+        );
     } catch {}
 };

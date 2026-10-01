@@ -5,6 +5,7 @@ import type {
     LinkPreview,
     MessageKind,
     MessageQuote,
+    MessageReactions,
     MomentVisibility,
     User,
 } from "@plugim/protocol";
@@ -67,6 +68,10 @@ export interface MessageStore {
     ): Promise<ChatMessage[]>;
     byId(id: string): Promise<ChatMessage | null>;
     markRecalled(id: string): Promise<string | null>;
+    setReactions(
+        id: string,
+        reactions: MessageReactions | null,
+    ): Promise<ChatMessage | null>;
     search(params: {
         keyword?: string;
         session?: string;
@@ -151,6 +156,7 @@ export interface GroupMemberRow {
     role: GroupRole;
     muted: boolean;
     joinedAt: string;
+    title: string | null;
 }
 
 export interface JoinRequestRow {
@@ -190,6 +196,11 @@ export interface GroupsStore {
     removeMember(groupId: string, userId: string): Promise<void>;
     setRole(groupId: string, userId: string, role: GroupRole): Promise<void>;
     setMuted(groupId: string, userId: string, muted: boolean): Promise<void>;
+    setMemberTitle(
+        groupId: string,
+        userId: string,
+        title: string | null,
+    ): Promise<void>;
     membersOf(groupId: string): Promise<GroupMemberRow[]>;
     memberIdsOf(groupId: string): Promise<string[]>;
     groupsOf(userId: string): Promise<GroupRow[]>;
@@ -361,6 +372,8 @@ export interface FriendsStore {
     edgesOf(userId: string): Promise<FriendEdge[]>;
     setRemark(ownerId: string, friendId: string, remark: string): Promise<void>;
     remarksOf(ownerId: string): Promise<Record<string, string>>;
+    starsOf(ownerId: string): Promise<string[]>;
+    setStar(ownerId: string, friendId: string, on: boolean): Promise<void>;
     groupListOf(ownerId: string): Promise<FriendGroupRow[]>;
     groupCreate(ownerId: string, name: string): Promise<FriendGroupRow>;
     groupRename(ownerId: string, groupId: string, name: string): Promise<void>;

@@ -1,9 +1,50 @@
 import type { Context } from "@plugim/core";
+import type { PresenceStatus } from "@plugim/protocol";
 import type {
     MouseEvent as ReactMouseEvent,
     TouchEvent as ReactTouchEvent,
+    RefObject,
 } from "react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+
+export interface PresenceStatusOption {
+    value: PresenceStatus;
+    label: string;
+    dot: string;
+}
+
+export const PRESENCE_STATUS_OPTIONS: PresenceStatusOption[] = [
+    { value: "online", label: "在线", dot: "bg-emerald-500" },
+    { value: "busy", label: "忙碌", dot: "bg-red-500" },
+    { value: "away", label: "离开", dot: "bg-amber-500" },
+    { value: "dnd", label: "请勿打扰", dot: "bg-sky-500" },
+    { value: "invisible", label: "隐身", dot: "bg-gray-400" },
+];
+
+export const presenceStatusMeta = (
+    status: PresenceStatus,
+): PresenceStatusOption =>
+    PRESENCE_STATUS_OPTIONS.find((item) => item.value === status) ??
+    PRESENCE_STATUS_OPTIONS[0];
+
+let audioCtx: AudioContext | undefined;
+
+export const playBeep = () => {
+    try {
+        audioCtx ??= new AudioContext();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+            0.001,
+            audioCtx.currentTime + 0.18,
+        );
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.2);
+    } catch {}
+};
 
 export interface ChatTarget {
     session: string;
@@ -129,6 +170,44 @@ export const longPressMenu = (open: (x: number, y: number) => void) => ({
         event.stopPropagation();
     },
 });
+
+export const usePopupClose = (
+    refs: RefObject<HTMLElement | null> | RefObject<HTMLElement | null>[],
+    open: boolean,
+    close: () => void,
+    wheel = false,
+) => {
+    const closeRef = useRef(close);
+    closeRef.current = close;
+    const refsRef = useRef(refs);
+    refsRef.current = refs;
+    useEffect(() => {
+        if (!open) return undefined;
+        const onDown = (e: MouseEvent) => {
+            const target = e.target as Node;
+            const inside = (r: RefObject<HTMLElement | null>) =>
+                r.current?.contains(target) ?? false;
+            const list = refsRef.current;
+            if (Array.isArray(list) ? list.some(inside) : inside(list)) return;
+            closeRef.current();
+        };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") closeRef.current();
+        };
+        window.addEventListener("mousedown", onDown);
+        window.addEventListener("keydown", onKey);
+        let onWheel: (() => void) | undefined;
+        if (wheel) {
+            onWheel = () => closeRef.current();
+            window.addEventListener("wheel", onWheel, { passive: true });
+        }
+        return () => {
+            window.removeEventListener("mousedown", onDown);
+            window.removeEventListener("keydown", onKey);
+            if (onWheel) window.removeEventListener("wheel", onWheel);
+        };
+    }, [open, wheel]);
+};
 
 export const messageLabel = (
     kind: string | undefined,

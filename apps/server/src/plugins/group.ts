@@ -207,6 +207,7 @@ export const groupPlugin: Plugin = {
                     role: m.role,
                     muted: m.muted,
                     joinedAt: m.joinedAt,
+                    title: m.title,
                 }))
                 .sort(
                     (a, b) =>
@@ -471,6 +472,28 @@ export const groupPlugin: Plugin = {
             if (!target) throw new Error("用户不存在");
             if (target.id === row.ownerId) throw new Error("不能调整群主角色");
             await groups.setRole(groupId, target.id, role);
+            await notifyMembers(groupId);
+            return true;
+        });
+
+        gateway.rpc("group.member.title", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { groupId, username, title } = raw as unknown as {
+                groupId: string;
+                username: string;
+                title: string;
+            };
+            const { row, mine: myRole } = await requireMembership(groupId, me);
+            if (myRole !== "owner") throw new Error("只有群主可以设置头衔");
+            const target = await accounts.byUsername(
+                String(username).toLowerCase(),
+            );
+            if (!target) throw new Error("用户不存在");
+            const members = await groups.membersOf(groupId);
+            if (!members.some((m) => m.userId === target.id))
+                throw new Error("该用户不在群中");
+            const clean = String(title ?? "").trim().slice(0, 12);
+            await groups.setMemberTitle(groupId, target.id, clean || null);
             await notifyMembers(groupId);
             return true;
         });

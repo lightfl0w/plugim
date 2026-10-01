@@ -17,6 +17,7 @@ import {
     PhoneIcon,
     PinOffIcon,
     ShieldIcon,
+    TagIcon,
     Trash2Icon,
     UploadIcon,
     UserMinusIcon,
@@ -27,7 +28,7 @@ import {
     VolumeXIcon,
     XIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { UserAvatar } from "../components/ui/user-avatar";
@@ -144,6 +145,8 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
         const [requests, setRequests] = useState<GroupJoinRequest[]>([]);
         const [essences, setEssences] = useState<GroupEssenceItem[]>([]);
         const [expiry, setExpiry] = useState<InviteExpiry>("never");
+        const [titleFor, setTitleFor] = useState<string | null>(null);
+        const [titleDraft, setTitleDraft] = useState("");
         const panelRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
         const fileRef = useRef<HTMLInputElement>(null);
@@ -303,6 +306,15 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 id: item.messageId,
                 at: item.createdAt,
             });
+        };
+
+        const submitTitle = async () => {
+            if (!titleFor || !groupId) return;
+            await act("group.member.title", {
+                username: titleFor,
+                title: titleDraft.trim(),
+            });
+            setTitleFor(null);
         };
 
         const uploadFile = async (file: File) => {
@@ -986,123 +998,205 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                             ) : null}
                             <div className="flex flex-col">
                                 {members.map((member) => (
-                                    <div
-                                        key={member.username}
-                                        className="flex items-center gap-2.5 rounded-lg px-1 py-2"
-                                    >
-                                        <span className="relative">
-                                            <UserAvatar
-                                                name={member.username}
-                                                size="sm"
-                                            />
-                                            {presence.isOnline(
-                                                member.username,
-                                            ) ? (
-                                                <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card" />
-                                            ) : null}
-                                        </span>
-                                        <div className="min-w-0 flex-1">
-                                            <p className="truncate text-sm">
-                                                {member.username}
-                                                {member.username === me ? (
-                                                    <span className="ml-1 text-xs text-muted-foreground">
-                                                        (我)
-                                                    </span>
+                                    <Fragment key={member.username}>
+                                        <div className="flex items-center gap-2.5 rounded-lg px-1 py-2">
+                                            <span className="relative">
+                                                <UserAvatar
+                                                    name={member.username}
+                                                    size="sm"
+                                                />
+                                                {presence.isOnline(
+                                                    member.username,
+                                                ) ? (
+                                                    <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card" />
                                                 ) : null}
-                                            </p>
-                                            {roleBadge(member)}
-                                        </div>
-                                        {info.myRole === "owner" &&
-                                        member.username !== me &&
-                                        member.role !== "owner" ? (
-                                            <button
-                                                type="button"
-                                                className={cn(
-                                                    "shrink-0 rounded-md border border-border px-2 py-1 text-xs",
-                                                    member.role === "admin"
-                                                        ? "text-muted-foreground hover:bg-accent"
-                                                        : "text-primary hover:bg-primary/5",
-                                                )}
-                                                disabled={busy}
-                                                onClick={() =>
-                                                    void act(
-                                                        "group.member.role",
-                                                        {
-                                                            username:
-                                                                member.username,
-                                                            role:
+                                            </span>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-sm">
+                                                    {member.username}
+                                                    {member.username === me ? (
+                                                        <span className="ml-1 text-xs text-muted-foreground">
+                                                            (我)
+                                                        </span>
+                                                    ) : null}
+                                                    {member.title ? (
+                                                        <span className="ml-1 rounded bg-primary/10 px-1 py-px text-[10px] font-medium text-primary">
+                                                            {member.title}
+                                                        </span>
+                                                    ) : null}
+                                                </p>
+                                                {roleBadge(member)}
+                                            </div>
+                                            {titleFor === member.username ? (
+                                                <div className="flex shrink-0 items-center gap-1">
+                                                    <input
+                                                        value={titleDraft}
+                                                        maxLength={12}
+                                                        placeholder="头衔"
+                                                        className="h-7 w-24 rounded-md border border-border bg-transparent px-2 text-xs outline-none focus:border-primary"
+                                                        onKeyDown={(e) => {
+                                                            if (
+                                                                e.key ===
+                                                                "Enter"
+                                                            )
+                                                                void submitTitle();
+                                                            if (
+                                                                e.key ===
+                                                                "Escape"
+                                                            )
+                                                                setTitleFor(
+                                                                    null,
+                                                                );
+                                                        }}
+                                                        onChange={(e) =>
+                                                            setTitleDraft(
+                                                                e.target.value,
+                                                            )
+                                                        }
+                                                    />
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        disabled={busy}
+                                                        onClick={() =>
+                                                            void submitTitle()
+                                                        }
+                                                    >
+                                                        保存
+                                                    </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        onClick={() =>
+                                                            setTitleFor(null)
+                                                        }
+                                                    >
+                                                        取消
+                                                    </Button>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    {info.myRole === "owner" &&
+                                                    member.username !== me &&
+                                                    member.role !== "owner" ? (
+                                                        <button
+                                                            type="button"
+                                                            title="设置头衔"
+                                                            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+                                                            disabled={busy}
+                                                            onClick={() => {
+                                                                setTitleFor(
+                                                                    member.username,
+                                                                );
+                                                                setTitleDraft(
+                                                                    member.title ??
+                                                                        "",
+                                                                );
+                                                            }}
+                                                        >
+                                                            <TagIcon className="size-4" />
+                                                        </button>
+                                                    ) : null}
+                                                    {info.myRole === "owner" &&
+                                                    member.username !== me &&
+                                                    member.role !== "owner" ? (
+                                                        <button
+                                                            type="button"
+                                                            className={cn(
+                                                                "shrink-0 rounded-md border border-border px-2 py-1 text-xs",
                                                                 member.role ===
-                                                                "admin"
-                                                                    ? "member"
-                                                                    : "admin",
-                                                        },
-                                                    )
-                                                }
-                                            >
-                                                {member.role === "admin"
-                                                    ? "取消管理员"
-                                                    : "设为管理员"}
-                                            </button>
-                                        ) : null}
-                                        {privileged &&
-                                        member.role === "member" &&
-                                        member.username !== me ? (
-                                            <button
-                                                type="button"
-                                                title={
-                                                    member.muted
-                                                        ? "解除禁言"
-                                                        : "禁言"
-                                                }
-                                                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
-                                                disabled={busy}
-                                                onClick={() =>
-                                                    void act(
-                                                        "group.member.mute",
-                                                        {
-                                                            username:
-                                                                member.username,
-                                                            muted:
-                                                                !member.muted,
-                                                        },
-                                                    )
-                                                }
-                                            >
-                                                {member.muted ? (
-                                                    <Volume2Icon className="size-4" />
-                                                ) : (
-                                                    <VolumeXIcon className="size-4" />
-                                                )}
-                                            </button>
-                                        ) : null}
-                                        {(info.myRole === "owner" &&
-                                            member.role !== "owner" &&
-                                            member.username !== me) ||
-                                        (info.myRole === "admin" &&
-                                            member.username === me) ? (
-                                            <button
-                                                type="button"
-                                                title={
-                                                    member.username === me
-                                                        ? "退出群聊"
-                                                        : "移出群聊"
-                                                }
-                                                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
-                                                disabled={busy}
-                                                onClick={() =>
-                                                    void act(
-                                                        "group.member.remove",
-                                                        {
-                                                            username:
-                                                                member.username,
-                                                        },
-                                                    )
-                                                }
-                                            >
-                                                <UserMinusIcon className="size-4" />
-                                            </button>
-                                        ) : null}
-                                    </div>
+                                                                    "admin"
+                                                                    ? "text-muted-foreground hover:bg-accent"
+                                                                    : "text-primary hover:bg-primary/5",
+                                                            )}
+                                                            disabled={busy}
+                                                            onClick={() =>
+                                                                void act(
+                                                                    "group.member.role",
+                                                                    {
+                                                                        username:
+                                                                            member.username,
+                                                                        role:
+                                                                            member.role ===
+                                                                            "admin"
+                                                                                ? "member"
+                                                                                : "admin",
+                                                                    },
+                                                                )
+                                                            }
+                                                        >
+                                                            {member.role ===
+                                                            "admin"
+                                                                ? "取消管理员"
+                                                                : "设为管理员"}
+                                                        </button>
+                                                    ) : null}
+                                                    {privileged &&
+                                                    member.role === "member" &&
+                                                    member.username !== me ? (
+                                                        <button
+                                                            type="button"
+                                                            title={
+                                                                member.muted
+                                                                    ? "解除禁言"
+                                                                    : "禁言"
+                                                            }
+                                                            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+                                                            disabled={busy}
+                                                            onClick={() =>
+                                                                void act(
+                                                                    "group.member.mute",
+                                                                    {
+                                                                        username:
+                                                                            member.username,
+                                                                        muted:
+                                                                            !member.muted,
+                                                                    },
+                                                                )
+                                                            }
+                                                        >
+                                                            {member.muted ? (
+                                                                <Volume2Icon className="size-4" />
+                                                            ) : (
+                                                                <VolumeXIcon className="size-4" />
+                                                            )}
+                                                        </button>
+                                                    ) : null}
+                                                    {(info.myRole === "owner" &&
+                                                        member.role !==
+                                                            "owner" &&
+                                                        member.username !==
+                                                            me) ||
+                                                    (info.myRole === "admin" &&
+                                                        member.username ===
+                                                            me) ? (
+                                                        <button
+                                                            type="button"
+                                                            title={
+                                                                member.username ===
+                                                                me
+                                                                    ? "退出群聊"
+                                                                    : "移出群聊"
+                                                            }
+                                                            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+                                                            disabled={busy}
+                                                            onClick={() =>
+                                                                void act(
+                                                                    "group.member.remove",
+                                                                    {
+                                                                        username:
+                                                                            member.username,
+                                                                    },
+                                                                )
+                                                            }
+                                                        >
+                                                            <UserMinusIcon className="size-4" />
+                                                        </button>
+                                                    ) : null}
+                                                </>
+                                            )}
+                                        </div>
+                                    </Fragment>
                                 ))}
                             </div>
                         </section>

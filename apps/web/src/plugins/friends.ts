@@ -13,6 +13,8 @@ export interface FriendsService {
     unblock(username: string): Promise<void>;
     remarkOf(username: string): string | null;
     setRemark(username: string, remark: string): Promise<void>;
+    isStarred(username: string): boolean;
+    setStar(username: string, on: boolean): Promise<void>;
     groupCreate(name: string): Promise<FriendListResult>;
     groupRename(groupId: string, name: string): Promise<FriendListResult>;
     groupRemove(groupId: string): Promise<FriendListResult>;
@@ -82,6 +84,13 @@ export const friendsPlugin: Plugin = {
             block: (u) => mutate("friend.block", u),
             unblock: (u) => mutate("friend.unblock", u),
             remarkOf: (username) => cache?.remarks?.[username] ?? null,
+            isStarred: (username) =>
+                cache?.starred?.includes(username) ?? false,
+            setStar: (username, on) =>
+                rpc.call("friend.star", { username, on }).then((result) => {
+                    cache = result as FriendListResult;
+                    emit();
+                }),
             setRemark: (username, remark) =>
                 rpc
                     .call("friend.remark", { username, remark })

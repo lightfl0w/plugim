@@ -5,7 +5,11 @@ import type {
     MergePayload,
     MomentShare,
 } from "@plugim/protocol";
-import { MENTION_ALL, MENTION_ALL_LABEL } from "@plugim/protocol";
+import {
+    MENTION_ALL,
+    MENTION_ALL_LABEL,
+    REACTION_EMOJIS,
+} from "@plugim/protocol";
 import {
     AlertCircleIcon,
     ArrowDownIcon,
@@ -18,6 +22,7 @@ import {
     ListChecksIcon,
     MegaphoneIcon,
     RotateCcwIcon,
+    SmilePlusIcon,
     StarIcon,
     XIcon,
 } from "lucide-react";
@@ -44,6 +49,7 @@ import {
     longPressMenu,
     messageLabel,
     useChatTarget,
+    usePopupClose,
 } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
@@ -224,6 +230,13 @@ export const uiMessagesSetup = async (ctx: Context) => {
             y: number;
             message: ChatMessage;
         } | null>(null);
+        const [reactFor, setReactFor] = useState<{
+            id: string;
+            x: number;
+            y: number;
+        } | null>(null);
+        const menuRef = useRef<HTMLDivElement>(null);
+        const paletteRef = useRef<HTMLDivElement>(null);
         const [pending, setPending] = useState<PendingMessage[]>([]);
         const [atBottom, setAtBottom] = useState(true);
         const [newCount, setNewCount] = useState(0);
@@ -248,6 +261,9 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [mergeView, setMergeView] = useState<MergePayload | null>(null);
         const [hint, setHint] = useState<string | null>(null);
         const [essenceIds, setEssenceIds] = useState<Set<string>>(new Set());
+        const [groupTitles, setGroupTitles] = useState<Record<string, string>>(
+            {},
+        );
         const [, bumpForward] = useReducer((n: number) => n + 1, 0);
         useEffect(() => {
             if (forwardIds.length === 0) return undefined;
@@ -478,6 +494,37 @@ export const uiMessagesSetup = async (ctx: Context) => {
         }, [session]);
 
         useEffect(() => {
+            if (!session.startsWith("g:")) {
+                setGroupTitles({});
+                return;
+            }
+            const groupId = session.slice(2);
+            const load = () => {
+                void rpc
+                    .call("group.members", { groupId })
+                    .then((result) => {
+                        const { members } = result as {
+                            members: {
+                                username: string;
+                                title?: string | null;
+                            }[];
+                        };
+                        const map: Record<string, string> = {};
+                        for (const member of members)
+                            if (member.title)
+                                map[member.username] = member.title;
+                        setGroupTitles(map);
+                    })
+                    .catch(() => setGroupTitles({}));
+            };
+            load();
+            const dispose = ctx.on("server:group:update", load);
+            return () => {
+                void dispose();
+            };
+        }, [session]);
+
+        useEffect(() => {
             if (!me || !session || status !== "open") return undefined;
             if (session.startsWith("p2p:")) {
                 void rpc
@@ -638,6 +685,20 @@ export const uiMessagesSetup = async (ctx: Context) => {
         }, [me, backToLatest]);
 
         useEffect(() => {
+            const dispose = ctx.on("server:message:update", (payload) => {
+                const message = (payload as { message: ChatMessage }).message;
+                if (message.session !== sessionRef.current) return;
+                setMessages((prev) => mergeById(prev, [message]));
+                void cache
+                    .putMessages(me, message.session, [message])
+                    .catch(() => undefined);
+            });
+            return () => {
+                void dispose();
+            };
+        }, [me]);
+
+        useEffect(() => {
             const dispose = ctx.on("server:message:recalled", (payload) => {
                 const {
                     id,
@@ -664,21 +725,9 @@ export const uiMessagesSetup = async (ctx: Context) => {
             };
         }, [me]);
 
-        useEffect(() => {
-            if (!menu) return undefined;
-            const close = () => setMenu(null);
-            const onKey = (e: KeyboardEvent) => {
-                if (e.key === "Escape") setMenu(null);
-            };
-            window.addEventListener("click", close);
-            window.addEventListener("keydown", onKey);
-            window.addEventListener("wheel", close, { passive: true });
-            return () => {
-                window.removeEventListener("click", close);
-                window.removeEventListener("keydown", onKey);
-                window.removeEventListener("wheel", close);
-            };
-        }, [menu]);
+        usePopupClose(menuRef, !!menu, () => setMenu(null), true);
+
+        usePopupClose(paletteRef, !!reactFor, () => setReactFor(null), true);
 
         const sessionPending = pending.filter(
             (item) => item.session === session,
@@ -913,6 +962,14 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     messageId: message.id,
                     on,
                 })
+                .catch((err) =>
+                    showHint(err instanceof Error ? err.message : String(err)),
+                );
+        };
+
+        const react = (id: string, emoji: string) => {
+            void rpc
+                .call("message.react", { id, emoji })
                 .catch((err) =>
                     showHint(err instanceof Error ? err.message : String(err)),
                 );
@@ -1277,6 +1334,18 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                     {!mine && !isP2p ? (
                                                         <MessageHeader>
                                                             {message.sender}
+                                                            {groupTitles[
+                                                                message.sender
+                                                            ] ? (
+                                                                <span className="rounded bg-primary/10 px-1 py-px text-[10px] font-medium text-primary">
+                                                                    {
+                                                                        groupTitles[
+                                                                            message
+                                                                                .sender
+                                                                        ]
+                                                                    }
+                                                                </span>
+                                                            ) : null}
                                                         </MessageHeader>
                                                     ) : null}
                                                     <Bubble
@@ -1629,6 +1698,64 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                                             ) : null}
                                                         </BubbleContent>
                                                     </Bubble>
+                                                    {message.reactions &&
+                                                    !message.recalledAt &&
+                                                    Object.keys(
+                                                        message.reactions,
+                                                    ).length > 0 ? (
+                                                        <div
+                                                            className={cn(
+                                                                "mt-0.5 flex w-fit max-w-full flex-wrap gap-1",
+                                                                mine
+                                                                    ? "self-end"
+                                                                    : "self-start",
+                                                            )}
+                                                        >
+                                                            {Object.entries(
+                                                                message.reactions,
+                                                            ).map(
+                                                                ([
+                                                                    emoji,
+                                                                    users,
+                                                                ]) => (
+                                                                    <button
+                                                                        key={
+                                                                            emoji
+                                                                        }
+                                                                        type="button"
+                                                                        title={users.join(
+                                                                            "、",
+                                                                        )}
+                                                                        className={cn(
+                                                                            "flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-xs",
+                                                                            users.includes(
+                                                                                me,
+                                                                            )
+                                                                                ? "border-primary/60 bg-primary/10"
+                                                                                : "border-border bg-background/60 hover:bg-accent",
+                                                                        )}
+                                                                        onClick={() =>
+                                                                            react(
+                                                                                message.id,
+                                                                                emoji,
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        <span>
+                                                                            {
+                                                                                emoji
+                                                                            }
+                                                                        </span>
+                                                                        <span className="tabular-nums">
+                                                                            {
+                                                                                users.length
+                                                                            }
+                                                                        </span>
+                                                                    </button>
+                                                                ),
+                                                            )}
+                                                        </div>
+                                                    ) : null}
                                                     {essenceIds.has(
                                                         message.id,
                                                     ) ? (
@@ -1783,6 +1910,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
 
                 {menu ? (
                     <div
+                        ref={menuRef}
                         role="menu"
                         className="fixed z-50 w-36 rounded-lg border border-border bg-popover py-1 text-sm shadow-lg"
                         style={{
@@ -1797,6 +1925,19 @@ export const uiMessagesSetup = async (ctx: Context) => {
                             "回复",
                             () => reply(menu.message),
                         )}
+                        {!menu.message.recalledAt
+                            ? menuItem(
+                                  "react",
+                                  <SmilePlusIcon className="size-4" />,
+                                  "回应",
+                                  () =>
+                                      setReactFor({
+                                          id: menu.message.id,
+                                          x: menu.x,
+                                          y: menu.y,
+                                      }),
+                              )
+                            : null}
                         {!menu.message.recalledAt
                             ? menuItem(
                                   "forward",
@@ -1856,6 +1997,32 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                       ),
                               )
                             : null}
+                    </div>
+                ) : null}
+
+                {reactFor ? (
+                    <div
+                        ref={paletteRef}
+                        className="fixed z-50 flex gap-0.5 rounded-full border border-border bg-popover px-1.5 py-1 shadow-lg"
+                        style={{
+                            left: Math.min(reactFor.x, window.innerWidth - 310),
+                            top: Math.max(8, reactFor.y - 52),
+                        }}
+                    >
+                        {REACTION_EMOJIS.map((emoji) => (
+                            <button
+                                key={emoji}
+                                type="button"
+                                title={`回应 ${emoji}`}
+                                className="rounded-full p-1 text-lg leading-none hover:bg-accent"
+                                onClick={() => {
+                                    react(reactFor.id, emoji);
+                                    setReactFor(null);
+                                }}
+                            >
+                                {emoji}
+                            </button>
+                        ))}
                     </div>
                 ) : null}
 
