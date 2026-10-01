@@ -22,8 +22,10 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import {
+    memo,
     useCallback,
     useEffect,
+    useMemo,
     useRef,
     useState,
     useSyncExternalStore,
@@ -168,6 +170,134 @@ function NavIcon({
         </NavLink>
     );
 }
+
+interface SessionRowMenuRequest {
+    x: number;
+    y: number;
+    session: string;
+    label: string;
+}
+
+interface SessionRowActions {
+    open: (session: string, label: string) => void;
+    openMenu: (request: SessionRowMenuRequest) => void;
+}
+
+interface SessionsRowProps {
+    session: string;
+    label: string;
+    isGroup: boolean;
+    pending: number;
+    active: boolean;
+    pinned: boolean;
+    muted: boolean;
+    mentioned: boolean;
+    count: number;
+    draftText: string;
+    preview: SessionPreview | undefined;
+    peerName: string | null;
+    peerOnline: boolean;
+    actions: SessionRowActions;
+}
+
+const SessionsRow = memo(function SessionsRow({
+    session,
+    label,
+    isGroup,
+    pending,
+    active,
+    pinned,
+    muted,
+    mentioned,
+    count,
+    draftText,
+    preview,
+    peerName,
+    peerOnline,
+    actions,
+}: SessionsRowProps) {
+    return (
+        <button
+            type="button"
+            onClick={() => actions.open(session, label)}
+            onContextMenu={(e) => {
+                e.preventDefault();
+                actions.openMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    session,
+                    label,
+                });
+            }}
+            {...longPressMenu((x, y) =>
+                actions.openMenu({ x, y, session, label }),
+            )}
+            className={cn(
+                "flex w-full shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors",
+                active ? "bg-chat-item-active" : "hover:bg-muted/70",
+            )}
+        >
+            {isGroup ? (
+                <GroupAvatar name={label} />
+            ) : (
+                <span className="relative shrink-0">
+                    <UserAvatar name={peerName ?? label} className="size-10" />
+                    {peerOnline ? (
+                        <span className="absolute right-0 bottom-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-background" />
+                    ) : null}
+                </span>
+            )}
+            <span className="min-w-0 flex-1">
+                <span className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium">
+                        {pinned ? <PinIconInline /> : null}
+                        {label}
+                        {muted ? (
+                            <BellOffIcon className="ml-1 inline size-3 text-muted-foreground" />
+                        ) : null}
+                    </span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">
+                        {preview ? previewTime(preview.at) : ""}
+                    </span>
+                </span>
+                <span className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-xs text-muted-foreground">
+                        {pending > 0 ? (
+                            <span className="mr-1 text-amber-600 dark:text-amber-400">
+                                [{pending} 条加群申请]
+                            </span>
+                        ) : null}
+                        {mentioned ? (
+                            <span className="mr-1 text-red-500">[@我]</span>
+                        ) : null}
+                        {draftText.trim() ? (
+                            <>
+                                <span className="mr-1 text-amber-600 dark:text-amber-400">
+                                    [草稿]
+                                </span>
+                                {draftText.replace(/\s+/g, " ")}
+                            </>
+                        ) : preview ? (
+                            previewText(preview.content, preview.kind)
+                        ) : (
+                            "暂无消息"
+                        )}
+                    </span>
+                    {count > 0 ? (
+                        <span
+                            className={cn(
+                                "flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full px-1 text-[11px] leading-none font-medium text-white",
+                                muted ? "bg-gray-400" : "bg-red-500",
+                            )}
+                        >
+                            {count > 99 ? "99+" : count}
+                        </span>
+                    ) : null}
+                </span>
+            </span>
+        </button>
+    );
+});
 
 export const uiSidebarSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
@@ -611,6 +741,20 @@ export const uiSidebarSetup = async (ctx: Context) => {
             navigate("/chat");
         };
 
+        const actionsRef = useRef<SessionRowActions | null>(null);
+        actionsRef.current = {
+            open: openSession,
+            openMenu: setSessionMenu,
+        };
+        const rowActions = useMemo<SessionRowActions>(
+            () => ({
+                open: (session, label) =>
+                    actionsRef.current?.open(session, label),
+                openMenu: (request) => actionsRef.current?.openMenu(request),
+            }),
+            [],
+        );
+
         const labelOf = (session: string) => {
             if (session === "general") return "综合频道";
             if (session.startsWith("g:"))
@@ -671,115 +815,6 @@ export const uiSidebarSetup = async (ctx: Context) => {
             } finally {
                 setCreating(false);
             }
-        };
-
-        const sessionItem = (entry: {
-            session: string;
-            label: string;
-            isGroup: boolean;
-            pending: number;
-        }) => {
-            const { session, label, isGroup, pending } = entry;
-            const preview = previews[session];
-            const draftText = draftMap[draftKey(me, session)] ?? "";
-            const count = unread[session] ?? 0;
-            const peerName = session.startsWith("p2p:")
-                ? session.slice(4)
-                : null;
-            const peerOnline = peerName !== null && presence.isOnline(peerName);
-            return (
-                <button
-                    key={session}
-                    type="button"
-                    onClick={() => openSession(session, label)}
-                    onContextMenu={(e) => {
-                        e.preventDefault();
-                        setSessionMenu({
-                            x: e.clientX,
-                            y: e.clientY,
-                            session,
-                            label,
-                        });
-                    }}
-                    {...longPressMenu((x, y) =>
-                        setSessionMenu({ x, y, session, label }),
-                    )}
-                    className={cn(
-                        "flex w-full shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors",
-                        active === session
-                            ? "bg-chat-item-active"
-                            : "hover:bg-muted/70",
-                    )}
-                >
-                    {isGroup ? (
-                        <GroupAvatar name={label} />
-                    ) : (
-                        <span className="relative shrink-0">
-                            <UserAvatar
-                                name={peerName ?? label}
-                                className="size-10"
-                            />
-                            {peerOnline ? (
-                                <span className="absolute right-0 bottom-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-background" />
-                            ) : null}
-                        </span>
-                    )}
-                    <span className="min-w-0 flex-1">
-                        <span className="flex items-baseline justify-between gap-2">
-                            <span className="min-w-0 truncate text-sm font-medium">
-                                {pinned.includes(session) ? (
-                                    <PinIconInline />
-                                ) : null}
-                                {label}
-                                {dnd.includes(session) ? (
-                                    <BellOffIcon className="ml-1 inline size-3 text-muted-foreground" />
-                                ) : null}
-                            </span>
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
-                                {preview ? previewTime(preview.at) : ""}
-                            </span>
-                        </span>
-                        <span className="flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate text-xs text-muted-foreground">
-                                {pending > 0 ? (
-                                    <span className="mr-1 text-amber-600 dark:text-amber-400">
-                                        [{pending} 条加群申请]
-                                    </span>
-                                ) : null}
-                                {mentioned[session] ? (
-                                    <span className="mr-1 text-red-500">
-                                        [@我]
-                                    </span>
-                                ) : null}
-                                {draftText.trim() ? (
-                                    <>
-                                        <span className="mr-1 text-amber-600 dark:text-amber-400">
-                                            [草稿]
-                                        </span>
-                                        {draftText.replace(/\s+/g, " ")}
-                                    </>
-                                ) : preview ? (
-                                    previewText(preview.content, preview.kind)
-                                ) : (
-                                    "暂无消息"
-                                )}
-                            </span>
-                            {count > 0 ? (
-                                <span
-                                    className={cn(
-                                        "flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full px-1 text-[11px] leading-none font-medium text-white",
-                                        dnd.includes(session)
-                                            ? "bg-gray-400"
-                                            : "bg-red-500",
-                                    )}
-                                >
-                                    {count > 99 ? "99+" : count}
-                                </span>
-                            ) : null}
-                        </span>
-                    </span>
-                </button>
-            );
         };
 
         const menuButton = (
@@ -910,7 +945,38 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         </>
                     ) : (
                         <>
-                            {entries.map(sessionItem)}
+                            {entries.map((entry) => (
+                                <SessionsRow
+                                    key={entry.session}
+                                    session={entry.session}
+                                    label={entry.label}
+                                    isGroup={entry.isGroup}
+                                    pending={entry.pending}
+                                    active={active === entry.session}
+                                    pinned={pinned.includes(entry.session)}
+                                    muted={dnd.includes(entry.session)}
+                                    mentioned={!!mentioned[entry.session]}
+                                    count={unread[entry.session] ?? 0}
+                                    draftText={
+                                        draftMap[draftKey(me, entry.session)] ??
+                                        ""
+                                    }
+                                    preview={previews[entry.session]}
+                                    peerName={
+                                        entry.session.startsWith("p2p:")
+                                            ? entry.session.slice(4)
+                                            : null
+                                    }
+                                    peerOnline={
+                                        entry.session.startsWith("p2p:")
+                                            ? presence.isOnline(
+                                                  entry.session.slice(4),
+                                              )
+                                            : false
+                                    }
+                                    actions={rowActions}
+                                />
+                            ))}
                             {entries.length === 0 ? (
                                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">
                                     还没有会话，去好友页添加好友或右上角新建群聊

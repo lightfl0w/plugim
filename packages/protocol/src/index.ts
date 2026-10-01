@@ -147,12 +147,7 @@ export interface GroupMember {
     title?: string | null;
 }
 
-export type PresenceStatus =
-    | "online"
-    | "busy"
-    | "away"
-    | "dnd"
-    | "invisible";
+export type PresenceStatus = "online" | "busy" | "away" | "dnd" | "invisible";
 
 export interface PresenceUpdate {
     username: string;

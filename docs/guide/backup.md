@@ -4,7 +4,7 @@
 
 ### SQLite
 
-所有数据都在一个文件里（默认 `data/plugim.db`，以安装向导里实际填的为准）。热备份用 sqlite3 的 backup API，不要直接拷正在写的文件：
+所有数据都在一个文件里（默认 `data/plugim.db`，以安装向导里实际填的为准）。数据库默认开启 WAL，目录里会出现同名的 `-wal`/`-shm` 文件，属正常现象。热备份用 sqlite3 的 backup API，不要直接拷正在写的文件：
 
 ```bash
 sqlite3 /opt/plugim/data/plugim.db ".backup '/backup/plugim-$(date +%F).db'"

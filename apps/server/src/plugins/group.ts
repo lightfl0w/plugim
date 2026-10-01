@@ -483,7 +483,7 @@ export const groupPlugin: Plugin = {
                 username: string;
                 title: string;
             };
-            const { row, mine: myRole } = await requireMembership(groupId, me);
+            const { mine: myRole } = await requireMembership(groupId, me);
             if (myRole !== "owner") throw new Error("只有群主可以设置头衔");
             const target = await accounts.byUsername(
                 String(username).toLowerCase(),
@@ -492,7 +492,9 @@ export const groupPlugin: Plugin = {
             const members = await groups.membersOf(groupId);
             if (!members.some((m) => m.userId === target.id))
                 throw new Error("该用户不在群中");
-            const clean = String(title ?? "").trim().slice(0, 12);
+            const clean = String(title ?? "")
+                .trim()
+                .slice(0, 12);
             await groups.setMemberTitle(groupId, target.id, clean || null);
             await notifyMembers(groupId);
             return true;

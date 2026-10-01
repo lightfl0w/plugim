@@ -2,11 +2,18 @@ import type { Context, PluginInfo } from "@plugim/core";
 import {
     ArrowLeftIcon,
     CircleAlertIcon,
+    LoaderCircleIcon,
     PuzzleIcon,
     SlidersIcon,
 } from "lucide-react";
 import type { FC } from "react";
-import { useEffect, useReducer, useRef, useSyncExternalStore } from "react";
+import {
+    Suspense,
+    useEffect,
+    useReducer,
+    useRef,
+    useSyncExternalStore,
+} from "react";
 import { createRoot } from "react-dom/client";
 import {
     BrowserRouter,
@@ -237,6 +244,12 @@ export const mountHost = (ctx: Context): void => {
         </div>
     );
 
+    const RouteFallback = () => (
+        <div className="flex h-full items-center justify-center">
+            <LoaderCircleIcon className="size-5 animate-spin text-muted-foreground" />
+        </div>
+    );
+
     const AlertHost = () => {
         const alert = useSyncExternalStore(onAlert, currentAlert, currentAlert);
         const okRef = useRef<HTMLButtonElement>(null);
@@ -348,24 +361,26 @@ export const mountHost = (ctx: Context): void => {
                     </aside>
                 ) : null}
                 <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-                    <Routes>
-                        <Route
-                            path="/settings/plugins"
-                            element={<PluginsPage />}
-                        />
-                        {[...routes.entries()].map(([path, component]) => {
-                            const Page = component;
-                            return (
-                                <Route
-                                    key={path}
-                                    path={path}
-                                    element={<Page />}
-                                />
-                            );
-                        })}
-                        <Route path="/" element={<Root />} />
-                        <Route path="*" element={<NoRoute />} />
-                    </Routes>
+                    <Suspense fallback={<RouteFallback />}>
+                        <Routes>
+                            <Route
+                                path="/settings/plugins"
+                                element={<PluginsPage />}
+                            />
+                            {[...routes.entries()].map(([path, component]) => {
+                                const Page = component;
+                                return (
+                                    <Route
+                                        key={path}
+                                        path={path}
+                                        element={<Page />}
+                                    />
+                                );
+                            })}
+                            <Route path="/" element={<Root />} />
+                            <Route path="*" element={<NoRoute />} />
+                        </Routes>
+                    </Suspense>
                 </main>
                 <AlertHost />
                 <ConfirmHost />

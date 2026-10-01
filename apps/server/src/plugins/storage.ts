@@ -2597,6 +2597,8 @@ export const storagePlugin: Plugin = {
             const file = resolve(process.cwd(), config.dbFile);
             mkdirSync(dirname(file), { recursive: true });
             const client = new Database(file);
+            client.pragma("journal_mode = WAL");
+            client.pragma("synchronous = NORMAL");
             client.exec(CREATE_SQLITE);
             const messageColumns = client.pragma(
                 "table_info(messages)",

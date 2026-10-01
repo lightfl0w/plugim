@@ -27,7 +27,15 @@ import {
     XIcon,
 } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+    memo,
+    useCallback,
+    useEffect,
+    useMemo,
+    useReducer,
+    useRef,
+    useState,
+} from "react";
 import { Bubble, BubbleContent } from "../components/ui/bubble";
 import {
     Message,
@@ -208,6 +216,527 @@ function toRows(messages: ChatMessage[], me: string): Row[] {
     }
     return rows;
 }
+
+const renderText = (message: ChatMessage, mine: boolean) => {
+    const mentions = message.mentions;
+    if (!mentions || mentions.length === 0) return message.content;
+    const labels = mentions.map((token) =>
+        token === MENTION_ALL ? MENTION_ALL_LABEL : token,
+    );
+    const re = new RegExp(`@(?:${labels.map(escapeRegExp).join("|")})`, "g");
+    const nodes: ReactNode[] = [];
+    let lastIndex = 0;
+    let seq = 0;
+    for (const match of message.content.matchAll(re)) {
+        if (match.index > lastIndex)
+            nodes.push(message.content.slice(lastIndex, match.index));
+        nodes.push(
+            <span
+                key={`mention-${seq++}`}
+                className={
+                    mine ? "font-medium text-white" : "font-medium text-primary"
+                }
+            >
+                {match[0]}
+            </span>,
+        );
+        lastIndex = match.index + match[0].length;
+    }
+    nodes.push(message.content.slice(lastIndex));
+    return nodes;
+};
+
+const sameItems = (a: ChatMessage[], b: ChatMessage[]) =>
+    a.length === b.length && a.every((message, index) => message === b[index]);
+
+interface MessageActions {
+    openMenu: (request: { x: number; y: number; message: ChatMessage }) => void;
+    avatarTap: (username: string, e: ReactMouseEvent) => void;
+    poke: (username: string) => void;
+    reEdit: (message: ChatMessage) => void;
+    toggleSelect: (message: ChatMessage) => void;
+    openMedia: (message: ChatMessage) => void;
+    react: (id: string, emoji: string) => void;
+    jumpToMessage: (id: string) => void;
+    openMerge: (payload: MergePayload) => void;
+    openMoment: (author: string) => void;
+}
+
+interface MessageGroupRowProps {
+    group: Group;
+    me: string;
+    isP2p: boolean;
+    highlightId: string | null;
+    selectMode: boolean;
+    selectedIds: Set<string>;
+    essenceIds: Set<string>;
+    groupTitles: Record<string, string>;
+    lastOwnId: string | undefined;
+    peerReadAt: string | null;
+    actions: MessageActions;
+}
+
+const MessageGroupRow = memo(
+    function MessageGroupRow({
+        group,
+        me,
+        isP2p,
+        highlightId,
+        selectMode,
+        selectedIds,
+        essenceIds,
+        groupTitles,
+        lastOwnId,
+        peerReadAt,
+        actions,
+    }: MessageGroupRowProps) {
+        return (
+            <MessageGroup>
+                {group.items.map((message) => {
+                    const mine = group.mine;
+                    if (message.recalledAt) {
+                        const reeditable =
+                            message.sender === me &&
+                            mediaKind(message) === "text";
+                        return (
+                            <p
+                                key={message.id}
+                                className="py-0.5 text-center text-xs text-muted-foreground/80"
+                            >
+                                「{message.sender}
+                                」撤回了一条消息
+                                {reeditable ? (
+                                    <button
+                                        type="button"
+                                        className="ml-1 text-primary hover:underline"
+                                        onClick={() => actions.reEdit(message)}
+                                    >
+                                        重新编辑
+                                    </button>
+                                ) : null}
+                            </p>
+                        );
+                    }
+                    const media = mediaKind(message);
+                    const share = parseMomentShare(message);
+                    const bare =
+                        media === "image" ||
+                        media === "video" ||
+                        media === "merge";
+                    return (
+                        <Message
+                            key={message.id}
+                            id={`msg-${message.id}`}
+                            align={mine ? "end" : "start"}
+                            className={cn(
+                                "py-0.5 transition-colors",
+                                highlightId === message.id &&
+                                    "rounded-xl bg-primary/10",
+                                selectMode &&
+                                    !message.recalledAt &&
+                                    "cursor-pointer",
+                                selectMode &&
+                                    selectedIds.has(message.id) &&
+                                    "rounded-xl bg-primary/10",
+                            )}
+                            onClick={
+                                selectMode
+                                    ? () => actions.toggleSelect(message)
+                                    : undefined
+                            }
+                        >
+                            <MessageAvatar>
+                                {selectMode ? (
+                                    <span
+                                        className={cn(
+                                            "flex size-7 items-center justify-center self-center rounded-full border-2 transition-colors",
+                                            selectedIds.has(message.id)
+                                                ? "border-primary bg-primary text-primary-foreground"
+                                                : "border-border bg-card",
+                                        )}
+                                    >
+                                        {selectedIds.has(message.id) ? (
+                                            <CheckIcon className="size-4" />
+                                        ) : null}
+                                    </span>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        title="查看资料"
+                                        className="rounded-full"
+                                        onClick={(e) =>
+                                            actions.avatarTap(message.sender, e)
+                                        }
+                                        onDoubleClick={() =>
+                                            void actions.poke(message.sender)
+                                        }
+                                    >
+                                        <UserAvatar name={message.sender} />
+                                    </button>
+                                )}
+                            </MessageAvatar>
+                            <MessageContent>
+                                {!mine && !isP2p ? (
+                                    <MessageHeader>
+                                        {message.sender}
+                                        {groupTitles[message.sender] ? (
+                                            <span className="rounded bg-primary/10 px-1 py-px text-[10px] font-medium text-primary">
+                                                {groupTitles[message.sender]}
+                                            </span>
+                                        ) : null}
+                                    </MessageHeader>
+                                ) : null}
+                                <Bubble
+                                    variant={
+                                        bare
+                                            ? "ghost"
+                                            : mine
+                                              ? "default"
+                                              : "outline"
+                                    }
+                                    align={mine ? "end" : "start"}
+                                    onContextMenu={(e) => {
+                                        e.preventDefault();
+                                        actions.openMenu({
+                                            x: e.clientX,
+                                            y: e.clientY,
+                                            message,
+                                        });
+                                    }}
+                                    {...longPressMenu((x, y) =>
+                                        actions.openMenu({
+                                            x,
+                                            y,
+                                            message,
+                                        }),
+                                    )}
+                                >
+                                    <BubbleContent
+                                        className={
+                                            bare
+                                                ? "p-0.5"
+                                                : mine
+                                                  ? "rounded-xl rounded-br-sm"
+                                                  : "rounded-xl rounded-bl-sm"
+                                        }
+                                    >
+                                        {media === "merge" ? (
+                                            (() => {
+                                                const payload =
+                                                    parseMerge(message);
+                                                if (!payload)
+                                                    return (
+                                                        <p className="whitespace-pre-wrap">
+                                                            {contentPreview(
+                                                                message,
+                                                            )}
+                                                        </p>
+                                                    );
+                                                return (
+                                                    <button
+                                                        type="button"
+                                                        title="点击查看合并的转发消息"
+                                                        className="flex w-56 flex-col gap-1 rounded-lg bg-card px-3 py-2.5 text-left text-foreground transition-colors hover:bg-accent/60"
+                                                        onClick={() =>
+                                                            actions.openMerge(
+                                                                payload,
+                                                            )
+                                                        }
+                                                    >
+                                                        <p className="truncate text-sm font-medium">
+                                                            {payload.title}
+                                                        </p>
+                                                        <p className="truncate text-xs text-muted-foreground">
+                                                            {payload.list
+                                                                .slice(0, 2)
+                                                                .map(
+                                                                    (item) =>
+                                                                        `${item.sender}: ${messageLabel(item.kind, item.content) ?? item.content}`,
+                                                                )
+                                                                .join(" \n")}
+                                                        </p>
+                                                        <p className="text-[10px] text-muted-foreground/80">
+                                                            点击查看
+                                                        </p>
+                                                    </button>
+                                                );
+                                            })()
+                                        ) : media === "image" ? (
+                                            <button
+                                                type="button"
+                                                title="点击查看大图"
+                                                className="cursor-zoom-in"
+                                                onClick={() =>
+                                                    actions.openMedia(message)
+                                                }
+                                            >
+                                                <img
+                                                    src={message.content}
+                                                    alt="图片"
+                                                    loading="lazy"
+                                                    className="max-h-80 w-auto max-w-full rounded-lg"
+                                                />
+                                            </button>
+                                        ) : media === "video" ? (
+                                            <button
+                                                type="button"
+                                                title="点击播放视频"
+                                                className="relative cursor-pointer"
+                                                onClick={() =>
+                                                    actions.openMedia(message)
+                                                }
+                                            >
+                                                <video
+                                                    src={message.content}
+                                                    preload="metadata"
+                                                    className="max-h-64 w-auto max-w-80 rounded-lg bg-black"
+                                                >
+                                                    <track
+                                                        kind="captions"
+                                                        src=""
+                                                        label="字幕"
+                                                    />
+                                                </video>
+                                            </button>
+                                        ) : media === "audio" ? (
+                                            <div className="flex min-w-52 items-center gap-2">
+                                                <audio
+                                                    src={message.content}
+                                                    controls
+                                                    className="h-8 w-full min-w-44"
+                                                >
+                                                    <track
+                                                        kind="captions"
+                                                        src=""
+                                                        label="字幕"
+                                                    />
+                                                </audio>
+                                            </div>
+                                        ) : media === "moment" ? (
+                                            share ? (
+                                                <button
+                                                    type="button"
+                                                    title="查看这条动态"
+                                                    className={cn(
+                                                        "flex w-60 flex-col gap-1.5 rounded-lg p-2 text-left",
+                                                        mine
+                                                            ? "bg-white/15"
+                                                            : "bg-black/5 dark:bg-white/10",
+                                                    )}
+                                                    onClick={() =>
+                                                        actions.openMoment(
+                                                            share.author,
+                                                        )
+                                                    }
+                                                >
+                                                    <span className="text-xs opacity-70">
+                                                        朋友圈 · {share.author}
+                                                    </span>
+                                                    {share.text ? (
+                                                        <span className="line-clamp-2 text-sm">
+                                                            {share.text}
+                                                        </span>
+                                                    ) : null}
+                                                    {share.image ? (
+                                                        <img
+                                                            src={`/files/${share.image}`}
+                                                            alt=""
+                                                            loading="lazy"
+                                                            className="max-h-40 w-full rounded object-cover"
+                                                        />
+                                                    ) : null}
+                                                </button>
+                                            ) : (
+                                                <p className="whitespace-pre-wrap">
+                                                    {message.content}
+                                                </p>
+                                            )
+                                        ) : media === "file" ? (
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    actions.openMedia(message)
+                                                }
+                                                className={cn(
+                                                    "flex w-60 items-center gap-2.5 rounded-lg p-2 text-left",
+                                                    mine
+                                                        ? "bg-white/15"
+                                                        : "bg-black/5 dark:bg-white/10",
+                                                )}
+                                            >
+                                                <FileIcon
+                                                    className={cn(
+                                                        "size-8 shrink-0",
+                                                        mine
+                                                            ? "text-white"
+                                                            : "text-primary",
+                                                    )}
+                                                />
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="block truncate text-sm">
+                                                        {message.file?.name ??
+                                                            "文件"}
+                                                    </span>
+                                                    <span
+                                                        className={cn(
+                                                            "text-xs",
+                                                            mine
+                                                                ? "text-white/70"
+                                                                : "text-muted-foreground",
+                                                        )}
+                                                    >
+                                                        {formatBytes(
+                                                            message.file
+                                                                ?.size ?? 0,
+                                                        )}
+                                                    </span>
+                                                </span>
+                                            </button>
+                                        ) : (
+                                            <p className="whitespace-pre-wrap">
+                                                {renderText(message, mine)}
+                                            </p>
+                                        )}
+                                        {message.link ? (
+                                            <a
+                                                href={message.link.url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                onClick={(event) =>
+                                                    event.stopPropagation()
+                                                }
+                                                className={cn(
+                                                    "mt-1.5 flex w-60 items-center gap-2.5 overflow-hidden rounded-lg p-2 text-left",
+                                                    mine
+                                                        ? "bg-white/15"
+                                                        : "bg-black/5 dark:bg-white/10",
+                                                )}
+                                            >
+                                                {message.link.image ? (
+                                                    <img
+                                                        src={message.link.image}
+                                                        alt=""
+                                                        loading="lazy"
+                                                        referrerPolicy="no-referrer"
+                                                        className="size-12 shrink-0 rounded object-cover"
+                                                    />
+                                                ) : null}
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="block truncate text-sm">
+                                                        {message.link.title}
+                                                    </span>
+                                                    <span
+                                                        className={cn(
+                                                            "mt-0.5 block truncate text-xs",
+                                                            mine
+                                                                ? "text-white/70"
+                                                                : "text-muted-foreground",
+                                                        )}
+                                                    >
+                                                        {message.link
+                                                            .description ||
+                                                            message.link.site}
+                                                    </span>
+                                                </span>
+                                            </a>
+                                        ) : null}
+                                        {message.quote ? (
+                                            <div
+                                                className={
+                                                    mine
+                                                        ? "mt-1 max-w-full truncate rounded-md bg-white/20 px-2 py-1 text-xs text-white/90"
+                                                        : "mt-1 max-w-full truncate rounded-md bg-black/5 px-2 py-1 text-xs text-muted-foreground dark:bg-white/10"
+                                                }
+                                            >
+                                                {message.quote.sender}:{" "}
+                                                {message.quote.content}
+                                            </div>
+                                        ) : null}
+                                    </BubbleContent>
+                                </Bubble>
+                                {message.reactions &&
+                                !message.recalledAt &&
+                                Object.keys(message.reactions).length > 0 ? (
+                                    <div
+                                        className={cn(
+                                            "mt-0.5 flex w-fit max-w-full flex-wrap gap-1",
+                                            mine ? "self-end" : "self-start",
+                                        )}
+                                    >
+                                        {Object.entries(message.reactions).map(
+                                            ([emoji, users]) => (
+                                                <button
+                                                    key={emoji}
+                                                    type="button"
+                                                    title={users.join("、")}
+                                                    className={cn(
+                                                        "flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-xs",
+                                                        users.includes(me)
+                                                            ? "border-primary/60 bg-primary/10"
+                                                            : "border-border bg-background/60 hover:bg-accent",
+                                                    )}
+                                                    onClick={() =>
+                                                        actions.react(
+                                                            message.id,
+                                                            emoji,
+                                                        )
+                                                    }
+                                                >
+                                                    <span>{emoji}</span>
+                                                    <span className="tabular-nums">
+                                                        {users.length}
+                                                    </span>
+                                                </button>
+                                            ),
+                                        )}
+                                    </div>
+                                ) : null}
+                                {essenceIds.has(message.id) ? (
+                                    <button
+                                        type="button"
+                                        title="定位原消息"
+                                        className={cn(
+                                            "mt-0.5 flex w-fit cursor-pointer items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400",
+                                            mine && "self-end",
+                                        )}
+                                        onClick={() =>
+                                            actions.jumpToMessage(message.id)
+                                        }
+                                    >
+                                        <StarIcon className="size-3" />
+                                        精华消息
+                                    </button>
+                                ) : null}
+                                {isP2p && mine && message.id === lastOwnId ? (
+                                    <p className="self-end px-1 text-[10px] text-muted-foreground">
+                                        {peerReadAt &&
+                                        message.createdAt <= peerReadAt
+                                            ? "已读"
+                                            : "未读"}
+                                    </p>
+                                ) : null}
+                            </MessageContent>
+                        </Message>
+                    );
+                })}
+            </MessageGroup>
+        );
+    },
+    (prev, next) =>
+        prev.group.sender === next.group.sender &&
+        prev.group.mine === next.group.mine &&
+        sameItems(prev.group.items, next.group.items) &&
+        prev.me === next.me &&
+        prev.isP2p === next.isP2p &&
+        prev.highlightId === next.highlightId &&
+        prev.selectMode === next.selectMode &&
+        prev.selectedIds === next.selectedIds &&
+        prev.essenceIds === next.essenceIds &&
+        prev.groupTitles === next.groupTitles &&
+        prev.lastOwnId === next.lastOwnId &&
+        prev.peerReadAt === next.peerReadAt &&
+        prev.actions === next.actions,
+);
 
 export const uiMessagesSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
@@ -1033,41 +1562,38 @@ export const uiMessagesSetup = async (ctx: Context) => {
             })),
         ];
 
-        const renderText = (message: ChatMessage, mine: boolean) => {
-            const mentions = message.mentions;
-            if (!mentions || mentions.length === 0) return message.content;
-            const labels = mentions.map((token) =>
-                token === MENTION_ALL ? MENTION_ALL_LABEL : token,
-            );
-            const re = new RegExp(
-                `@(?:${labels.map(escapeRegExp).join("|")})`,
-                "g",
-            );
-            const nodes: ReactNode[] = [];
-            let lastIndex = 0;
-            let seq = 0;
-            for (const match of message.content.matchAll(re)) {
-                if (match.index > lastIndex)
-                    nodes.push(message.content.slice(lastIndex, match.index));
-                nodes.push(
-                    <span
-                        key={`mention-${seq++}`}
-                        className={
-                            mine
-                                ? "font-medium text-white"
-                                : "font-medium text-primary"
-                        }
-                    >
-                        {match[0]}
-                    </span>,
-                );
-                lastIndex = match.index + match[0].length;
-            }
-            nodes.push(message.content.slice(lastIndex));
-            return nodes;
+        const actionsRef = useRef<MessageActions | null>(null);
+        actionsRef.current = {
+            openMenu: setMenu,
+            avatarTap,
+            poke,
+            reEdit,
+            toggleSelect,
+            openMedia,
+            react,
+            jumpToMessage,
+            openMerge: setMergeView,
+            openMoment: (author) => ctx.emit("ui:moments:open", { author }),
         };
+        const actions = useMemo<MessageActions>(
+            () => ({
+                openMenu: (request) => actionsRef.current?.openMenu(request),
+                avatarTap: (username, event) =>
+                    actionsRef.current?.avatarTap(username, event),
+                poke: (username) => actionsRef.current?.poke(username),
+                reEdit: (message) => actionsRef.current?.reEdit(message),
+                toggleSelect: (message) =>
+                    actionsRef.current?.toggleSelect(message),
+                openMedia: (message) => actionsRef.current?.openMedia(message),
+                react: (id, emoji) => actionsRef.current?.react(id, emoji),
+                jumpToMessage: (id) => actionsRef.current?.jumpToMessage(id),
+                openMerge: (payload) => actionsRef.current?.openMerge(payload),
+                openMoment: (author) => actionsRef.current?.openMoment(author),
+            }),
+            [],
+        );
 
-        const rows = toRows(messages, me);
+        const rows = useMemo(() => toRows(messages, me), [messages, me]);
         const lastOwnId = [...messages]
             .reverse()
             .find(
@@ -1225,574 +1751,20 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                     </span>
                                 </button>
                             ) : (
-                                <MessageGroup key={row.key}>
-                                    {row.group.items.map((message) => {
-                                        const mine = row.group.mine;
-                                        if (message.recalledAt) {
-                                            const reeditable =
-                                                message.sender === me &&
-                                                mediaKind(message) === "text";
-                                            return (
-                                                <p
-                                                    key={message.id}
-                                                    className="py-0.5 text-center text-xs text-muted-foreground/80"
-                                                >
-                                                    「{message.sender}
-                                                    」撤回了一条消息
-                                                    {reeditable ? (
-                                                        <button
-                                                            type="button"
-                                                            className="ml-1 text-primary hover:underline"
-                                                            onClick={() =>
-                                                                reEdit(message)
-                                                            }
-                                                        >
-                                                            重新编辑
-                                                        </button>
-                                                    ) : null}
-                                                </p>
-                                            );
-                                        }
-                                        const media = mediaKind(message);
-                                        const share = parseMomentShare(message);
-                                        const bare =
-                                            media === "image" ||
-                                            media === "video" ||
-                                            media === "merge";
-                                        return (
-                                            <Message
-                                                key={message.id}
-                                                id={`msg-${message.id}`}
-                                                align={mine ? "end" : "start"}
-                                                className={cn(
-                                                    "py-0.5 transition-colors",
-                                                    highlightId ===
-                                                        message.id &&
-                                                        "rounded-xl bg-primary/10",
-                                                    selectMode &&
-                                                        !message.recalledAt &&
-                                                        "cursor-pointer",
-                                                    selectMode &&
-                                                        selectedIds.has(
-                                                            message.id,
-                                                        ) &&
-                                                        "rounded-xl bg-primary/10",
-                                                )}
-                                                onClick={
-                                                    selectMode
-                                                        ? () =>
-                                                              toggleSelect(
-                                                                  message,
-                                                              )
-                                                        : undefined
-                                                }
-                                            >
-                                                <MessageAvatar>
-                                                    {selectMode ? (
-                                                        <span
-                                                            className={cn(
-                                                                "flex size-7 items-center justify-center self-center rounded-full border-2 transition-colors",
-                                                                selectedIds.has(
-                                                                    message.id,
-                                                                )
-                                                                    ? "border-primary bg-primary text-primary-foreground"
-                                                                    : "border-border bg-card",
-                                                            )}
-                                                        >
-                                                            {selectedIds.has(
-                                                                message.id,
-                                                            ) ? (
-                                                                <CheckIcon className="size-4" />
-                                                            ) : null}
-                                                        </span>
-                                                    ) : (
-                                                        <button
-                                                            type="button"
-                                                            title="查看资料"
-                                                            className="rounded-full"
-                                                            onClick={(e) =>
-                                                                avatarTap(
-                                                                    message.sender,
-                                                                    e,
-                                                                )
-                                                            }
-                                                            onDoubleClick={() =>
-                                                                void poke(
-                                                                    message.sender,
-                                                                )
-                                                            }
-                                                        >
-                                                            <UserAvatar
-                                                                name={
-                                                                    message.sender
-                                                                }
-                                                            />
-                                                        </button>
-                                                    )}
-                                                </MessageAvatar>
-                                                <MessageContent>
-                                                    {!mine && !isP2p ? (
-                                                        <MessageHeader>
-                                                            {message.sender}
-                                                            {groupTitles[
-                                                                message.sender
-                                                            ] ? (
-                                                                <span className="rounded bg-primary/10 px-1 py-px text-[10px] font-medium text-primary">
-                                                                    {
-                                                                        groupTitles[
-                                                                            message
-                                                                                .sender
-                                                                        ]
-                                                                    }
-                                                                </span>
-                                                            ) : null}
-                                                        </MessageHeader>
-                                                    ) : null}
-                                                    <Bubble
-                                                        variant={
-                                                            bare
-                                                                ? "ghost"
-                                                                : mine
-                                                                  ? "default"
-                                                                  : "outline"
-                                                        }
-                                                        align={
-                                                            mine
-                                                                ? "end"
-                                                                : "start"
-                                                        }
-                                                        onContextMenu={(e) => {
-                                                            e.preventDefault();
-                                                            setMenu({
-                                                                x: e.clientX,
-                                                                y: e.clientY,
-                                                                message,
-                                                            });
-                                                        }}
-                                                        {...longPressMenu(
-                                                            (x, y) =>
-                                                                setMenu({
-                                                                    x,
-                                                                    y,
-                                                                    message,
-                                                                }),
-                                                        )}
-                                                    >
-                                                        <BubbleContent
-                                                            className={
-                                                                bare
-                                                                    ? "p-0.5"
-                                                                    : mine
-                                                                      ? "rounded-xl rounded-br-sm"
-                                                                      : "rounded-xl rounded-bl-sm"
-                                                            }
-                                                        >
-                                                            {media ===
-                                                            "merge" ? (
-                                                                (() => {
-                                                                    const payload =
-                                                                        parseMerge(
-                                                                            message,
-                                                                        );
-                                                                    if (
-                                                                        !payload
-                                                                    )
-                                                                        return (
-                                                                            <p className="whitespace-pre-wrap">
-                                                                                {contentPreview(
-                                                                                    message,
-                                                                                )}
-                                                                            </p>
-                                                                        );
-                                                                    return (
-                                                                        <button
-                                                                            type="button"
-                                                                            title="点击查看合并的转发消息"
-                                                                            className="flex w-56 flex-col gap-1 rounded-lg bg-card px-3 py-2.5 text-left text-foreground transition-colors hover:bg-accent/60"
-                                                                            onClick={() =>
-                                                                                setMergeView(
-                                                                                    payload,
-                                                                                )
-                                                                            }
-                                                                        >
-                                                                            <p className="truncate text-sm font-medium">
-                                                                                {
-                                                                                    payload.title
-                                                                                }
-                                                                            </p>
-                                                                            <p className="truncate text-xs text-muted-foreground">
-                                                                                {payload.list
-                                                                                    .slice(
-                                                                                        0,
-                                                                                        2,
-                                                                                    )
-                                                                                    .map(
-                                                                                        (
-                                                                                            item,
-                                                                                        ) =>
-                                                                                            `${item.sender}: ${messageLabel(item.kind, item.content) ?? item.content}`,
-                                                                                    )
-                                                                                    .join(
-                                                                                        " \n",
-                                                                                    )}
-                                                                            </p>
-                                                                            <p className="text-[10px] text-muted-foreground/80">
-                                                                                点击查看
-                                                                            </p>
-                                                                        </button>
-                                                                    );
-                                                                })()
-                                                            ) : media ===
-                                                              "image" ? (
-                                                                <button
-                                                                    type="button"
-                                                                    title="点击查看大图"
-                                                                    className="cursor-zoom-in"
-                                                                    onClick={() =>
-                                                                        openMedia(
-                                                                            message,
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    <img
-                                                                        src={
-                                                                            message.content
-                                                                        }
-                                                                        alt="图片"
-                                                                        loading="lazy"
-                                                                        className="max-h-80 w-auto max-w-full rounded-lg"
-                                                                    />
-                                                                </button>
-                                                            ) : media ===
-                                                              "video" ? (
-                                                                <button
-                                                                    type="button"
-                                                                    title="点击播放视频"
-                                                                    className="relative cursor-pointer"
-                                                                    onClick={() =>
-                                                                        openMedia(
-                                                                            message,
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    <video
-                                                                        src={
-                                                                            message.content
-                                                                        }
-                                                                        preload="metadata"
-                                                                        className="max-h-64 w-auto max-w-80 rounded-lg bg-black"
-                                                                    >
-                                                                        <track
-                                                                            kind="captions"
-                                                                            src=""
-                                                                            label="字幕"
-                                                                        />
-                                                                    </video>
-                                                                </button>
-                                                            ) : media ===
-                                                              "audio" ? (
-                                                                <div className="flex min-w-52 items-center gap-2">
-                                                                    <audio
-                                                                        src={
-                                                                            message.content
-                                                                        }
-                                                                        controls
-                                                                        className="h-8 w-full min-w-44"
-                                                                    >
-                                                                        <track
-                                                                            kind="captions"
-                                                                            src=""
-                                                                            label="字幕"
-                                                                        />
-                                                                    </audio>
-                                                                </div>
-                                                            ) : media ===
-                                                              "moment" ? (
-                                                                share ? (
-                                                                    <button
-                                                                        type="button"
-                                                                        title="查看这条动态"
-                                                                        className={cn(
-                                                                            "flex w-60 flex-col gap-1.5 rounded-lg p-2 text-left",
-                                                                            mine
-                                                                                ? "bg-white/15"
-                                                                                : "bg-black/5 dark:bg-white/10",
-                                                                        )}
-                                                                        onClick={() =>
-                                                                            ctx.emit(
-                                                                                "ui:moments:open",
-                                                                                {
-                                                                                    author: share.author,
-                                                                                },
-                                                                            )
-                                                                        }
-                                                                    >
-                                                                        <span className="text-xs opacity-70">
-                                                                            朋友圈
-                                                                            ·{" "}
-                                                                            {
-                                                                                share.author
-                                                                            }
-                                                                        </span>
-                                                                        {share.text ? (
-                                                                            <span className="line-clamp-2 text-sm">
-                                                                                {
-                                                                                    share.text
-                                                                                }
-                                                                            </span>
-                                                                        ) : null}
-                                                                        {share.image ? (
-                                                                            <img
-                                                                                src={`/files/${share.image}`}
-                                                                                alt=""
-                                                                                loading="lazy"
-                                                                                className="max-h-40 w-full rounded object-cover"
-                                                                            />
-                                                                        ) : null}
-                                                                    </button>
-                                                                ) : (
-                                                                    <p className="whitespace-pre-wrap">
-                                                                        {
-                                                                            message.content
-                                                                        }
-                                                                    </p>
-                                                                )
-                                                            ) : media ===
-                                                              "file" ? (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() =>
-                                                                        openMedia(
-                                                                            message,
-                                                                        )
-                                                                    }
-                                                                    className={cn(
-                                                                        "flex w-60 items-center gap-2.5 rounded-lg p-2 text-left",
-                                                                        mine
-                                                                            ? "bg-white/15"
-                                                                            : "bg-black/5 dark:bg-white/10",
-                                                                    )}
-                                                                >
-                                                                    <FileIcon
-                                                                        className={cn(
-                                                                            "size-8 shrink-0",
-                                                                            mine
-                                                                                ? "text-white"
-                                                                                : "text-primary",
-                                                                        )}
-                                                                    />
-                                                                    <span className="min-w-0 flex-1">
-                                                                        <span className="block truncate text-sm">
-                                                                            {message
-                                                                                .file
-                                                                                ?.name ??
-                                                                                "文件"}
-                                                                        </span>
-                                                                        <span
-                                                                            className={cn(
-                                                                                "text-xs",
-                                                                                mine
-                                                                                    ? "text-white/70"
-                                                                                    : "text-muted-foreground",
-                                                                            )}
-                                                                        >
-                                                                            {formatBytes(
-                                                                                message
-                                                                                    .file
-                                                                                    ?.size ??
-                                                                                    0,
-                                                                            )}
-                                                                        </span>
-                                                                    </span>
-                                                                </button>
-                                                            ) : (
-                                                                <p className="whitespace-pre-wrap">
-                                                                    {renderText(
-                                                                        message,
-                                                                        mine,
-                                                                    )}
-                                                                </p>
-                                                            )}
-                                                            {message.link ? (
-                                                                <a
-                                                                    href={
-                                                                        message
-                                                                            .link
-                                                                            .url
-                                                                    }
-                                                                    target="_blank"
-                                                                    rel="noreferrer"
-                                                                    onClick={(
-                                                                        event,
-                                                                    ) =>
-                                                                        event.stopPropagation()
-                                                                    }
-                                                                    className={cn(
-                                                                        "mt-1.5 flex w-60 items-center gap-2.5 overflow-hidden rounded-lg p-2 text-left",
-                                                                        mine
-                                                                            ? "bg-white/15"
-                                                                            : "bg-black/5 dark:bg-white/10",
-                                                                    )}
-                                                                >
-                                                                    {message
-                                                                        .link
-                                                                        .image ? (
-                                                                        <img
-                                                                            src={
-                                                                                message
-                                                                                    .link
-                                                                                    .image
-                                                                            }
-                                                                            alt=""
-                                                                            loading="lazy"
-                                                                            referrerPolicy="no-referrer"
-                                                                            className="size-12 shrink-0 rounded object-cover"
-                                                                        />
-                                                                    ) : null}
-                                                                    <span className="min-w-0 flex-1">
-                                                                        <span className="block truncate text-sm">
-                                                                            {
-                                                                                message
-                                                                                    .link
-                                                                                    .title
-                                                                            }
-                                                                        </span>
-                                                                        <span
-                                                                            className={cn(
-                                                                                "mt-0.5 block truncate text-xs",
-                                                                                mine
-                                                                                    ? "text-white/70"
-                                                                                    : "text-muted-foreground",
-                                                                            )}
-                                                                        >
-                                                                            {message
-                                                                                .link
-                                                                                .description ||
-                                                                                message
-                                                                                    .link
-                                                                                    .site}
-                                                                        </span>
-                                                                    </span>
-                                                                </a>
-                                                            ) : null}
-                                                            {message.quote ? (
-                                                                <div
-                                                                    className={
-                                                                        mine
-                                                                            ? "mt-1 max-w-full truncate rounded-md bg-white/20 px-2 py-1 text-xs text-white/90"
-                                                                            : "mt-1 max-w-full truncate rounded-md bg-black/5 px-2 py-1 text-xs text-muted-foreground dark:bg-white/10"
-                                                                    }
-                                                                >
-                                                                    {
-                                                                        message
-                                                                            .quote
-                                                                            .sender
-                                                                    }
-                                                                    :{" "}
-                                                                    {
-                                                                        message
-                                                                            .quote
-                                                                            .content
-                                                                    }
-                                                                </div>
-                                                            ) : null}
-                                                        </BubbleContent>
-                                                    </Bubble>
-                                                    {message.reactions &&
-                                                    !message.recalledAt &&
-                                                    Object.keys(
-                                                        message.reactions,
-                                                    ).length > 0 ? (
-                                                        <div
-                                                            className={cn(
-                                                                "mt-0.5 flex w-fit max-w-full flex-wrap gap-1",
-                                                                mine
-                                                                    ? "self-end"
-                                                                    : "self-start",
-                                                            )}
-                                                        >
-                                                            {Object.entries(
-                                                                message.reactions,
-                                                            ).map(
-                                                                ([
-                                                                    emoji,
-                                                                    users,
-                                                                ]) => (
-                                                                    <button
-                                                                        key={
-                                                                            emoji
-                                                                        }
-                                                                        type="button"
-                                                                        title={users.join(
-                                                                            "、",
-                                                                        )}
-                                                                        className={cn(
-                                                                            "flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-xs",
-                                                                            users.includes(
-                                                                                me,
-                                                                            )
-                                                                                ? "border-primary/60 bg-primary/10"
-                                                                                : "border-border bg-background/60 hover:bg-accent",
-                                                                        )}
-                                                                        onClick={() =>
-                                                                            react(
-                                                                                message.id,
-                                                                                emoji,
-                                                                            )
-                                                                        }
-                                                                    >
-                                                                        <span>
-                                                                            {
-                                                                                emoji
-                                                                            }
-                                                                        </span>
-                                                                        <span className="tabular-nums">
-                                                                            {
-                                                                                users.length
-                                                                            }
-                                                                        </span>
-                                                                    </button>
-                                                                ),
-                                                            )}
-                                                        </div>
-                                                    ) : null}
-                                                    {essenceIds.has(
-                                                        message.id,
-                                                    ) ? (
-                                                        <button
-                                                            type="button"
-                                                            title="定位原消息"
-                                                            className={cn(
-                                                                "mt-0.5 flex w-fit cursor-pointer items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400",
-                                                                mine &&
-                                                                    "self-end",
-                                                            )}
-                                                            onClick={() =>
-                                                                jumpToMessage(
-                                                                    message.id,
-                                                                )
-                                                            }
-                                                        >
-                                                            <StarIcon className="size-3" />
-                                                            精华消息
-                                                        </button>
-                                                    ) : null}
-                                                    {isP2p &&
-                                                    mine &&
-                                                    message.id === lastOwnId ? (
-                                                        <p className="self-end px-1 text-[10px] text-muted-foreground">
-                                                            {peerReadAt &&
-                                                            message.createdAt <=
-                                                                peerReadAt
-                                                                ? "已读"
-                                                                : "未读"}
-                                                        </p>
-                                                    ) : null}
-                                                </MessageContent>
-                                            </Message>
-                                        );
-                                    })}
-                                </MessageGroup>
+                                <MessageGroupRow
+                                    key={row.key}
+                                    group={row.group}
+                                    me={me}
+                                    isP2p={isP2p}
+                                    highlightId={highlightId}
+                                    selectMode={selectMode}
+                                    selectedIds={selectedIds}
+                                    essenceIds={essenceIds}
+                                    groupTitles={groupTitles}
+                                    lastOwnId={lastOwnId}
+                                    peerReadAt={peerReadAt}
+                                    actions={actions}
+                                />
                             ),
                         )}
                         {sessionPending.map((item) => (

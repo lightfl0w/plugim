@@ -9,6 +9,7 @@ import type {
     ServerEventName,
 } from "@plugim/protocol";
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import type { WebSocket as NodeWebSocket } from "ws";
 import type {
     AuthUser,
@@ -44,6 +45,7 @@ export const gatewayPlugin: Plugin = {
         let verifyToken: TokenVerifier = nullVerifier;
 
         const app = new Hono();
+        app.use(compress());
         app.use("/ws", async (c, next) => {
             const origin = c.req.header("origin");
             if (origin) {

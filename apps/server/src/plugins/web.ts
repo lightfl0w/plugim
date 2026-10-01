@@ -60,6 +60,22 @@ export const webPlugin: Plugin = {
                 root: webDist,
                 rewriteRequestPath: (path) =>
                     path.includes("..") ? "/__blocked__" : path,
+                onFound: (_path, c) => {
+                    const p = c.req.path;
+                    if (p.startsWith("/assets/"))
+                        c.header(
+                            "Cache-Control",
+                            "public, max-age=31536000, immutable",
+                        );
+                    else if (
+                        p === "/" ||
+                        p.endsWith("/index.html") ||
+                        p === "/sw.js" ||
+                        p === "/manifest.webmanifest"
+                    )
+                        c.header("Cache-Control", "no-cache");
+                    else c.header("Cache-Control", "public, max-age=3600");
+                },
             }),
         );
         app.notFound((c) => {
@@ -73,6 +89,7 @@ export const webPlugin: Plugin = {
             )
                 return c.json({ ok: false, message: "not found" }, 404);
             try {
+                c.header("Cache-Control", "no-cache");
                 return c.html(
                     readFileSync(resolve(webDist, "index.html"), "utf8"),
                 );

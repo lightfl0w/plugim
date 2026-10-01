@@ -7,8 +7,8 @@ import type {
     LinkPreview,
     MergePayload,
     MessageKind,
-    MessageReactParams,
     MessageReactions,
+    MessageReactParams,
     MessageSearchParams,
     RecallParams,
     SendMessageParams,
@@ -621,10 +621,7 @@ export const chatPlugin: Plugin = {
             if (!message) throw new Error("消息不存在");
             if (message.recalledAt) throw new Error("消息已撤回");
             const visible = message.session.startsWith("p2p:")
-                ? message.session
-                      .slice(4)
-                      .split("|")
-                      .includes(user.username)
+                ? message.session.slice(4).split("|").includes(user.username)
                 : message.session.startsWith("g:")
                   ? (
                         await groups.memberIdsOf(message.session.slice(2))
@@ -632,9 +629,7 @@ export const chatPlugin: Plugin = {
                   : true;
             if (!visible) throw new Error("无权回应该消息");
             const reactions: MessageReactions = {};
-            for (const [key, users] of Object.entries(
-                message.reactions ?? {},
-            ))
+            for (const [key, users] of Object.entries(message.reactions ?? {}))
                 reactions[key] = [...users];
             const mine = reactions[emoji] ?? [];
             const removing = mine.includes(user.username);
