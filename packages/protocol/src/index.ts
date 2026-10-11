@@ -50,6 +50,9 @@ export interface ChatMessage {
     file?: FileMeta | null;
     link?: LinkPreview | null;
     reactions?: MessageReactions | null;
+    
+    redPacket?: RedPacketInfo | null;
+    transfer?: TransferInfo | null;
 }
 
 export type MessageReactions = Record<string, string[]>;
@@ -532,3 +535,102 @@ export interface MomentUnreadResult {
     interactions: number;
     total: number;
 }
+
+export interface RedPacketInfo {
+    id: string;           
+    senderId: string;   
+    sessionId: string;   
+    type: "normal" | "lucky";  
+    totalAmount: number;  
+    totalCount: number;  
+    status: "active" | "exhausted" | "expired";
+    remaining: number;  
+    remainCount: number;  
+    message?: string;    
+    createdAt: string;
+    expiredAt?: string;   
+}
+
+export interface RedPacketRecord {
+    id: string;
+    redPacketId: string;
+    claimerId: string;
+    amount: number;       
+    claimedAt: string;
+}
+
+export interface AABill {
+    id: string;
+    creatorId: string;
+    sessionId: string;
+    description: string;        
+    totalAmount: number;       
+    settledAmount: number;     
+    participantIds: string[];   
+    splitType: "equal" | "custom";
+    customSplits?: Record<string, number>; 
+    deadline: string;
+    status: "pending" | "settled" | "cancelled";
+    createdAt: string;
+}
+
+export interface AAPayment {
+    id: string;
+    billId: string;
+    payerId: string;
+    amount: number;
+    paidAt: string;
+}
+
+export interface TransferInfo {
+    id: string;
+    fromId: string;
+    toId: string;
+    amount: number;             
+    message?: string;      
+    state: "pending" | "accepted" | "rejected" | "refunded";
+    createdAt: string;
+    expiredAt: string;         
+}
+
+export interface RedPacketCreateParams {
+    sessionId: string;
+    type: "normal" | "lucky";
+    totalAmount: number;
+    totalCount: number;
+    message?: string;
+}
+
+export interface RedPacketClaimParams {
+    redPacketId: string;
+}
+
+export interface AABillCreateParams {
+    sessionId: string;
+    description: string;
+    totalAmount: number;
+    participantIds?: string[];  
+    splitType: "equal" | "custom";
+    customSplits?: Record<string, number>;
+}
+
+export interface AAPayBillParams {
+    billId: string;
+    amount: number;
+}
+
+export interface TransferCreateParams {
+    targetUserId: string;
+    amount: number;
+    message?: string;
+}
+
+export interface TransferAcceptParams {
+    transferId: string;
+}
+
+export interface TransferRejectParams {
+    transferId: string;
+    reason?: string;
+}
+
