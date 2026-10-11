@@ -2,6 +2,10 @@
     "name": "@plugim/server",
     "version": "0.1.0",
     "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./types": "./src/types/index.ts"
+    },
     "scripts": {
         "dev": "tsx watch src/index.ts",
         "start": "tsx src/index.ts",
