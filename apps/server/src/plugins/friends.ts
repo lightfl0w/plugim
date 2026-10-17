@@ -6,6 +6,8 @@ import type {
     FriendRemarkParams,
     FriendStarParams,
     FriendTargetParams,
+    UserRelation,
+    UserSearchResult,
 } from "@plugim/protocol";
 import type {
     AccountsStore,
@@ -107,6 +109,45 @@ export const friendsPlugin: Plugin = {
             }
             return result;
         };
+
+        gateway.rpc("user.search", async (raw, conn) => {
+            const me = requireUser(conn);
+            const keyword = String(
+                (raw as { keyword?: unknown } | null)?.keyword ?? "",
+            )
+                .trim()
+                .toLowerCase()
+                .slice(0, 32);
+            if (!keyword) return { users: [] } satisfies UserSearchResult;
+            const all = await accounts.listAll();
+            const hits = all
+                .filter(
+                    (u) =>
+                        u.id !== me.id &&
+                        !u.banned &&
+                        u.username.toLowerCase().includes(keyword),
+                )
+                .sort((a, b) => a.username.localeCompare(b.username))
+                .slice(0, 20);
+            const edges = await friendships.edgesOf(me.id);
+            const relationOf = (userId: string): UserRelation => {
+                const edge = edges.find(
+                    (e) =>
+                        (e.requesterId === userId && e.addresseeId === me.id) ||
+                        (e.requesterId === me.id && e.addresseeId === userId),
+                );
+                if (!edge) return "none";
+                if (edge.status === "accepted") return "friend";
+                if (edge.status === "blocked") return "blocked";
+                return edge.requesterId === me.id ? "outgoing" : "incoming";
+            };
+            return {
+                users: hits.map((u) => ({
+                    name: u.username,
+                    relation: relationOf(u.id),
+                })),
+            } satisfies UserSearchResult;
+        });
 
         gateway.rpc("friend.request", async (raw, conn) => {
             const me = requireUser(conn);

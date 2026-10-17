@@ -18,6 +18,7 @@ import {
     PlusIcon,
     ShieldIcon,
     UserRoundIcon,
+    UserRoundPlusIcon,
     UsersIcon,
     XIcon,
 } from "lucide-react";
@@ -493,6 +494,13 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const [groupName, setGroupName] = useState("");
         const [invitees, setInvitees] = useState<string[]>([]);
         const [creating, setCreating] = useState(false);
+        const [addTab, setAddTab] = useState<"friend" | "group">("friend");
+        const [searchKey, setSearchKey] = useState("");
+        const [searchHits, setSearchHits] = useState<
+            { name: string; relation: string }[]
+        >([]);
+        const [searchLoading, setSearchLoading] = useState(false);
+        const [addingName, setAddingName] = useState("");
         const activeRef = useRef(active);
         const unreadRef = useRef<Record<string, number>>({});
         const previewsRef = useRef<Record<string, SessionPreview>>({});
@@ -501,6 +509,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const createCardRef = useRef<HTMLDivElement>(null);
         const sessionMenuRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
+        const searchInputRef = useRef<HTMLInputElement>(null);
         const searchTimerRef = useRef<
             ReturnType<typeof setTimeout> | undefined
         >(undefined);
@@ -727,8 +736,11 @@ export const uiSidebarSetup = async (ctx: Context) => {
         );
 
         useEffect(() => {
-            if (createOpen) nameInputRef.current?.focus();
-        }, [createOpen]);
+            if (createOpen) {
+                if (addTab === "friend") searchInputRef.current?.focus();
+                else nameInputRef.current?.focus();
+            }
+        }, [createOpen, addTab]);
 
         useEffect(() => {
             const keyword = query.trim();
@@ -811,6 +823,70 @@ export const uiSidebarSetup = async (ctx: Context) => {
             const atB = previews[b.session]?.at ?? 0;
             return atB - atA;
         });
+
+        useEffect(() => {
+            const disposeAdd = ctx.on("ui:contacts:add", () => {
+                setCreateOpen(true);
+                setAddTab("friend");
+                setSearchKey("");
+                setSearchHits([]);
+                setAddingName("");
+            });
+            return () => {
+                void disposeAdd();
+            };
+        }, []);
+
+        useEffect(() => {
+            const keyword = searchKey.trim();
+            clearTimeout(searchTimerRef.current);
+            if (!keyword) {
+                setSearchHits([]);
+                setSearchLoading(false);
+                return undefined;
+            }
+            setSearchLoading(true);
+            searchTimerRef.current = setTimeout(() => {
+                void rpc
+                    .call("user.search", { keyword })
+                    .then((result) =>
+                        setSearchHits(
+                            (
+                                result as {
+                                    users: {
+                                        name: string;
+                                        relation: string;
+                                    }[];
+                                }
+                            ).users,
+                        ),
+                    )
+                    .catch(() => setSearchHits([]))
+                    .finally(() => setSearchLoading(false));
+            }, 250);
+            return () => clearTimeout(searchTimerRef.current);
+        }, [searchKey]);
+
+        const sendFriendRequest = async (name: string) => {
+            setAddingName(name);
+            try {
+                await friends.request(name);
+                setSearchHits((prev) =>
+                    prev.map((hit) =>
+                        hit.name === name
+                            ? { ...hit, relation: "outgoing" }
+                            : hit,
+                    ),
+                );
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            } finally {
+                setAddingName("");
+            }
+        };
 
         const submitCreate = async () => {
             const name = groupName.trim();
@@ -898,11 +974,26 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-accent"
                                     onClick={() => {
                                         setPlusOpen(false);
+                                        setAddTab("friend");
+                                        setSearchKey("");
+                                        setSearchHits([]);
+                                        setCreateOpen(true);
+                                    }}
+                                >
+                                    <UserRoundPlusIcon className="size-4" />
+                                    添加好友
+                                </button>
+                                <button
+                                    type="button"
+                                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-accent"
+                                    onClick={() => {
+                                        setPlusOpen(false);
+                                        setAddTab("group");
                                         setCreateOpen(true);
                                     }}
                                 >
                                     <MessageSquarePlusIcon className="size-4" />
-                                    新建群聊
+                                    发起群聊
                                 </button>
                             </div>
                         ) : null}
@@ -1069,12 +1160,14 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         <div
                             ref={createCardRef}
                             role="dialog"
-                            aria-label="新建群聊"
+                            aria-label="添加好友或发起群聊"
                             className="flex max-h-[80vh] w-full max-w-sm flex-col overflow-hidden rounded-2xl bg-card shadow-xl"
                         >
                             <div className="flex items-center border-b border-border px-4 py-3">
                                 <p className="flex-1 text-sm font-semibold">
-                                    新建群聊
+                                    {addTab === "friend"
+                                        ? "添加好友"
+                                        : "发起群聊"}
                                 </p>
                                 <button
                                     type="button"
@@ -1085,74 +1178,186 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                     <XIcon className="size-4" />
                                 </button>
                             </div>
-                            <div className="flex flex-col gap-3 p-4">
-                                <input
-                                    ref={nameInputRef}
-                                    value={groupName}
-                                    placeholder="群名称（至少 2 个字符）"
-                                    maxLength={32}
-                                    className="h-9 rounded-lg border border-border bg-transparent px-3 text-sm outline-none focus:border-primary"
-                                    onChange={(e) =>
-                                        setGroupName(e.target.value)
-                                    }
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                    邀请好友
-                                </p>
-                                <div className="max-h-56 overflow-y-auto rounded-lg border border-border">
-                                    {(list?.friends ?? []).length === 0 ? (
-                                        <p className="p-3 text-xs text-muted-foreground">
-                                            暂无好友可邀请
-                                        </p>
-                                    ) : null}
-                                    {(list?.friends ?? []).map((name) => (
-                                        <label
-                                            key={name}
-                                            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/60"
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={invitees.includes(
-                                                    name,
+                            <div className="flex gap-1 border-b border-border px-3 pt-2">
+                                {(
+                                    [
+                                        ["friend", "加好友"],
+                                        ["group", "发起群聊"],
+                                    ] as const
+                                ).map(([key, label]) => (
+                                    <button
+                                        key={key}
+                                        type="button"
+                                        className={cn(
+                                            "rounded-t-md px-3 py-1.5 text-sm",
+                                            addTab === key
+                                                ? "border-b-2 border-primary font-medium text-foreground"
+                                                : "text-muted-foreground hover:text-foreground",
+                                        )}
+                                        onClick={() => setAddTab(key)}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                            {addTab === "friend" ? (
+                                <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
+                                    <input
+                                        ref={searchInputRef}
+                                        value={searchKey}
+                                        placeholder="搜索用户名"
+                                        className="h-9 rounded-lg border border-border bg-transparent px-3 text-sm outline-none focus:border-primary"
+                                        onChange={(e) =>
+                                            setSearchKey(e.target.value)
+                                        }
+                                    />
+                                    <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
+                                        {searchLoading ? (
+                                            <p className="p-3 text-xs text-muted-foreground">
+                                                正在搜索...
+                                            </p>
+                                        ) : null}
+                                        {!searchLoading && !searchKey.trim() ? (
+                                            <p className="p-3 text-xs text-muted-foreground">
+                                                输入用户名搜索站内用户
+                                            </p>
+                                        ) : null}
+                                        {!searchLoading &&
+                                        searchKey.trim() &&
+                                        searchHits.length === 0 ? (
+                                            <p className="p-3 text-xs text-muted-foreground">
+                                                没有找到用户
+                                            </p>
+                                        ) : null}
+                                        {searchHits.map((hit) => (
+                                            <div
+                                                key={hit.name}
+                                                className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/60"
+                                            >
+                                                <UserAvatar
+                                                    name={hit.name}
+                                                    size="sm"
+                                                />
+                                                <span className="min-w-0 flex-1 truncate">
+                                                    {hit.name}
+                                                </span>
+                                                {hit.relation === "friend" ? (
+                                                    <span className="shrink-0 text-xs text-muted-foreground">
+                                                        已是好友
+                                                    </span>
+                                                ) : hit.relation ===
+                                                  "outgoing" ? (
+                                                    <span className="shrink-0 text-xs text-muted-foreground">
+                                                        已发送申请
+                                                    </span>
+                                                ) : hit.relation ===
+                                                  "incoming" ? (
+                                                    <span className="shrink-0 text-xs text-muted-foreground">
+                                                        对方申请中，去好友页处理
+                                                    </span>
+                                                ) : (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 px-2 text-xs"
+                                                        disabled={
+                                                            addingName ===
+                                                            hit.name
+                                                        }
+                                                        onClick={() =>
+                                                            void sendFriendRequest(
+                                                                hit.name,
+                                                            )
+                                                        }
+                                                    >
+                                                        {addingName === hit.name
+                                                            ? "发送中"
+                                                            : "加好友"}
+                                                    </Button>
                                                 )}
-                                                onChange={(e) =>
-                                                    setInvitees((prev) =>
-                                                        e.target.checked
-                                                            ? [...prev, name]
-                                                            : prev.filter(
-                                                                  (x) =>
-                                                                      x !==
-                                                                      name,
-                                                              ),
-                                                    )
-                                                }
-                                            />
-                                            <UserAvatar name={name} size="sm" />
-                                            <span className="truncate">
-                                                {name}
-                                            </span>
-                                        </label>
-                                    ))}
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="flex justify-end gap-2 border-t border-border p-3">
-                                <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => setCreateOpen(false)}
-                                >
-                                    取消
-                                </Button>
-                                <Button
-                                    size="sm"
-                                    disabled={
-                                        groupName.trim().length < 2 || creating
-                                    }
-                                    onClick={() => void submitCreate()}
-                                >
-                                    {creating ? "创建中" : "创建"}
-                                </Button>
-                            </div>
+                            ) : (
+                                <div className="flex flex-col gap-3 p-4">
+                                    <input
+                                        ref={nameInputRef}
+                                        value={groupName}
+                                        placeholder="群名称（至少 2 个字符）"
+                                        maxLength={32}
+                                        className="h-9 rounded-lg border border-border bg-transparent px-3 text-sm outline-none focus:border-primary"
+                                        onChange={(e) =>
+                                            setGroupName(e.target.value)
+                                        }
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        邀请好友
+                                    </p>
+                                    <div className="max-h-56 overflow-y-auto rounded-lg border border-border">
+                                        {(list?.friends ?? []).length === 0 ? (
+                                            <p className="p-3 text-xs text-muted-foreground">
+                                                暂无好友可邀请
+                                            </p>
+                                        ) : null}
+                                        {(list?.friends ?? []).map((name) => (
+                                            <label
+                                                key={name}
+                                                className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/60"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={invitees.includes(
+                                                        name,
+                                                    )}
+                                                    onChange={(e) =>
+                                                        setInvitees((prev) =>
+                                                            e.target.checked
+                                                                ? [
+                                                                      ...prev,
+                                                                      name,
+                                                                  ]
+                                                                : prev.filter(
+                                                                      (x) =>
+                                                                          x !==
+                                                                          name,
+                                                                  ),
+                                                        )
+                                                    }
+                                                />
+                                                <UserAvatar
+                                                    name={name}
+                                                    size="sm"
+                                                />
+                                                <span className="truncate">
+                                                    {name}
+                                                </span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {addTab === "group" ? (
+                                <div className="flex justify-end gap-2 border-t border-border p-3">
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => setCreateOpen(false)}
+                                    >
+                                        取消
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        disabled={
+                                            groupName.trim().length < 2 ||
+                                            creating
+                                        }
+                                        onClick={() => void submitCreate()}
+                                    >
+                                        {creating ? "创建中" : "创建"}
+                                    </Button>
+                                </div>
+                            ) : null}
                         </div>
                     </div>
                 ) : null}

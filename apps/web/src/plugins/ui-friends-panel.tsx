@@ -54,7 +54,6 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
 
     const FriendsList = () => {
         const list = useFriendList();
-        const [addName, setAddName] = useState("");
         const [error, setError] = useState("");
         const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
         const [creating, setCreating] = useState(false);
@@ -77,7 +76,6 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
             setError("");
             try {
                 await fn();
-                setAddName("");
             } catch (err) {
                 setError(err instanceof Error ? err.message : "failed");
             }
@@ -254,25 +252,12 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                     </button>
                 </div>
                 <div className="flex gap-1 px-2 pb-1">
-                    <Input
-                        placeholder="输入用户名"
-                        value={addName}
-                        className="h-9"
-                        onChange={(e) => setAddName(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter" && addName.trim())
-                                void run(() => friends.request(addName.trim()));
-                        }}
-                    />
                     <Button
-                        size="sm"
-                        className="h-9 shrink-0"
-                        disabled={!addName.trim()}
-                        onClick={() =>
-                            void run(() => friends.request(addName.trim()))
-                        }
+                        variant="outline"
+                        className="h-9 w-full"
+                        onClick={() => ctx.emit("ui:contacts:add", {})}
                     >
-                        添加
+                        添加好友
                     </Button>
                 </div>
                 {creating ? (

@@ -141,6 +141,22 @@ export interface FriendListResult {
     starred: string[];
 }
 
+export type UserRelation =
+    | "none"
+    | "friend"
+    | "outgoing"
+    | "incoming"
+    | "blocked";
+
+export interface UserSearchHit {
+    name: string;
+    relation: UserRelation;
+}
+
+export interface UserSearchResult {
+    users: UserSearchHit[];
+}
+
 export interface MessageRecalledEvent {
     id: string;
     session: string;
