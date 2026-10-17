@@ -510,6 +510,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const sessionMenuRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
         const searchInputRef = useRef<HTMLInputElement>(null);
+        const openSessionRef = useRef<(session: string, label: string) => void>(
+            () => {},
+        );
+        const labelOfRef = useRef<(session: string) => string>((s) => s);
         const searchTimerRef = useRef<
             ReturnType<typeof setTimeout> | undefined
         >(undefined);
@@ -533,6 +537,14 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 );
                 const base = currentSiteName();
                 document.title = total > 0 ? `(${total}) ${base}` : base;
+                const badge = navigator as Navigator & {
+                    setAppBadge?: (count?: number) => Promise<void>;
+                    clearAppBadge?: () => Promise<void>;
+                };
+                try {
+                    if (total > 0) void badge.setAppBadge?.(total);
+                    else void badge.clearAppBadge?.();
+                } catch {}
             },
             [me],
         );
@@ -656,7 +668,17 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     [message.session]:
                         (unreadRef.current[message.session] ?? 0) + 1,
                 });
-                notifyInBackground(message, dndRef.current, starHit);
+                notifyInBackground(
+                    message,
+                    dndRef.current,
+                    () => {
+                        openSessionRef.current(
+                            message.session,
+                            labelOfRef.current(message.session),
+                        );
+                    },
+                    starHit,
+                );
             });
             const disposeRecall = ctx.on(
                 "server:message:recalled",
@@ -693,10 +715,17 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         document.visibilityState === "hidden"
                     ) {
                         try {
-                            new Notification("特别关心", {
+                            const notification = new Notification("特别关心", {
                                 body: `${username} 上线了`,
                                 tag: `presence:${username}`,
                             });
+                            notification.onclick = () => {
+                                window.focus();
+                                openSessionRef.current(
+                                    `p2p:${username}`,
+                                    username,
+                                );
+                            };
                         } catch {}
                     }
                 },
@@ -777,6 +806,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
             setShellPane("chat");
             navigate("/chat");
         };
+        openSessionRef.current = openSession;
 
         const actionsRef = useRef<SessionRowActions | null>(null);
         actionsRef.current = {
@@ -800,6 +830,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 );
             return displayName(session.slice(4), list?.remarks);
         };
+        labelOfRef.current = labelOf;
 
         const entries = [
             ...(groupList ?? []).map((group) => ({
@@ -1391,6 +1422,7 @@ const PinIconInline = () => (
 const notifyInBackground = (
     message: ChatMessage,
     dnd: string[],
+    onOpen: () => void,
     starred = false,
 ) => {
     if (document.visibilityState !== "hidden") return;
@@ -1401,12 +1433,16 @@ const notifyInBackground = (
     )
         return;
     try {
-        new Notification(
+        const notification = new Notification(
             starred ? `特别关心：${message.sender}` : message.sender,
             {
                 body: previewText(message.content, message.kind).slice(0, 80),
                 tag: message.session,
             },
         );
+        notification.onclick = () => {
+            window.focus();
+            onOpen();
+        };
     } catch {}
 };
