@@ -1,6 +1,7 @@
 import type { Plugin } from "@plugim/core";
 import type { Envelope } from "@plugim/protocol";
 import type { AuthService } from "./auth";
+import { fetchSiteMeta } from "./ui-shared";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
@@ -40,9 +41,12 @@ export const connectionPlugin: Plugin = {
             const token = auth.token();
             const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
             socket = new WebSocket(`${proto}://${location.host}/ws${suffix}`);
+            let firstOpen = true;
             socket.onopen = () => {
                 retryDelay = 1000;
                 setStatus("open");
+                if (!firstOpen) fetchSiteMeta();
+                firstOpen = false;
             };
             socket.onclose = () => {
                 setStatus("closed");

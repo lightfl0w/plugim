@@ -277,11 +277,17 @@ export const applySiteMeta = (meta: {
     name?: unknown;
     icon?: unknown;
 }): void => {
+    const oldName = siteNameValue;
     const name =
         typeof meta.name === "string" && meta.name.trim()
             ? meta.name.trim()
             : "plugim";
     siteNameValue = name;
+    const match = /^\((\d+)\) /.exec(document.title);
+    const base = match ? document.title.slice(match[0].length) : document.title;
+    if (base === oldName || base === "plugim") {
+        document.title = match ? `(${match[1]}) ${name}` : name;
+    }
     if (typeof meta.icon === "string") {
         const href = meta.icon.trim() || "/icons/icon-192.png";
         for (const rel of ["icon", "apple-touch-icon"]) {
@@ -294,13 +300,17 @@ export const applySiteMeta = (meta: {
     for (const cb of siteNameListeners) cb();
 };
 
-export const initSiteMeta = (ctx: Context): void => {
+export const fetchSiteMeta = (): void => {
     void fetch("/site/meta")
         .then((res) => res.json())
         .then((meta) =>
             applySiteMeta(meta as { name?: unknown; icon?: unknown }),
         )
         .catch(() => undefined);
+};
+
+export const initSiteMeta = (ctx: Context): void => {
+    fetchSiteMeta();
     ctx.on("server:site:meta", (payload) => {
         applySiteMeta(payload as { name?: unknown; icon?: unknown });
     });

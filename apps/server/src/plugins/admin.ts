@@ -361,7 +361,9 @@ export const adminPlugin: Plugin = {
                 action: "admin.site",
                 detail: `更新站点信息（名称：${name || "默认"}）`,
             });
-            return siteInfo();
+            const meta = siteInfo();
+            gateway.broadcast("site:meta", meta);
+            return meta;
         });
 
         gateway.rpc("admin.cleanup", async (_raw, conn) => {
