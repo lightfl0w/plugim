@@ -20,6 +20,17 @@
 | `PLUGIM_DB_FILE` | `data/plugim.db` | SQLite 文件路径，相对进程工作目录 |
 | `DATABASE_URL` | `postgres://localhost:5432/plugim` | PostgreSQL 连接串，仅 `dbDriver=postgres` 时使用 |
 
+## 运行时与备份
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PLUGIM_LOG_MAX_MB` | `8` | 单个日志文件上限，超过切成 `server-YYYY-MM-DD.N.log` |
+| `PLUGIM_LOG_KEEP_DAYS` | `14` | 日志保留天数，超期文件在启动和切分时删除 |
+| `PLUGIM_LOG_KEEP_FILES` | `200` | 日志文件总份数上限，超出时按日期删最旧的 |
+| `PLUGIM_SHUTDOWN_TIMEOUT_MS` | `15000` | 收到 `SIGTERM`/`SIGINT` 后等待插件关闭的最长时间，到点强制退出 |
+| `PLUGIM_BACKUP_DIR` | `data/backups` | 自动备份目录，相对进程工作目录 |
+| `PLUGIM_BACKUP_KEEP` | `7` | 自动备份保留份数，1 到 365 |
+
 ## 认证与注册
 
 | 变量 | 默认值 | 说明 |

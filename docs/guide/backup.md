@@ -2,6 +2,16 @@
 
 ## 备份
 
+### 自动备份
+
+用 SQLite 时自带备份任务：
+
+- 位置：`data/backups/plugim-YYYY-MM-DD-HH-MM-SS.db`，同时留一份最新的 `install.json`
+- 保留份数：`PLUGIM_BACKUP_KEEP`，默认 7
+- 备份目录：`PLUGIM_BACKUP_DIR`，默认 `data/backups`
+
+在后台「定时任务」页能看到 `数据库备份` 这条，可以改执行周期、停用或立即执行一次，页面显示上次执行时间和结果。用 PostgreSQL 时这条任务会直接跳过。
+
 ### SQLite
 
 所有数据都在一个文件里（默认 `data/plugim.db`，以安装向导里实际填的为准）。数据库默认开启 WAL，目录里会出现同名的 `-wal`/`-shm` 文件，属正常现象。热备份用 sqlite3 的 backup API，不要直接拷正在写的文件：

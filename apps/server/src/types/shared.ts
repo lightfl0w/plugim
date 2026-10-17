@@ -1,6 +1,5 @@
 import type {
     FileMeta,
-    GroupRole,
     LinkPreview,
     MessageKind,
     MessageQuote,

@@ -1,11 +1,14 @@
-import { createWriteStream, existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { autoDiscoverPlugins, Context } from "@plugim/core";
 import { readInstallConfig } from "./installConfig";
+import { installLifecycle } from "./lifecycle";
+import { installFileLogger } from "./logger";
 import { adminPlugin } from "./plugins/admin";
 import { auditPlugin } from "./plugins/audit";
 import { authPlugin } from "./plugins/auth";
+import { backupPlugin } from "./plugins/backup";
 import { chatPlugin } from "./plugins/chat";
 import { configPlugin } from "./plugins/config";
 import { containerPlugin } from "./plugins/container";
@@ -45,35 +48,41 @@ for (const candidate of [
     }
 }
 
+const envInt = (name: string): number | undefined => {
+    const raw = Number(process.env[name]);
+    return Number.isFinite(raw) && raw > 0 ? raw : undefined;
+};
+
 const logDir =
     readInstallConfig().logDir || (process.env.PLUGIM_LOG_DIR ?? "").trim();
-if (logDir) {
-    mkdirSync(resolve(process.cwd(), logDir), { recursive: true });
-    const stream = createWriteStream(
-        resolve(
-            process.cwd(),
-            logDir,
-            `server-${new Date().toISOString().slice(0, 10)}.log`,
-        ),
-        { flags: "a" },
-    );
-    for (const level of ["log", "info", "warn", "error"] as const) {
-        const original = console[level].bind(console);
-        console[level] = (...args: unknown[]) => {
-            original(...args);
-            stream.write(
-                `${new Date().toISOString()} [${level}] ${args.map(String).join(" ")}\n`,
-            );
-        };
-    }
-}
+const logMaxMb = envInt("PLUGIM_LOG_MAX_MB");
+const fileLogger = logDir
+    ? installFileLogger({
+          dir: logDir,
+          maxBytes: logMaxMb ? logMaxMb * 1024 * 1024 : undefined,
+          keepDays: envInt("PLUGIM_LOG_KEEP_DAYS"),
+          keepFiles: envInt("PLUGIM_LOG_KEEP_FILES"),
+      })
+    : null;
 
 const ctx = new Context();
+
+const lifecycle = installLifecycle({
+    log: ctx.log,
+    timeoutMs: envInt("PLUGIM_SHUTDOWN_TIMEOUT_MS"),
+    async stop() {
+        await ctx.stop();
+    },
+    async dispose() {
+        await fileLogger?.close();
+    },
+});
 
 await autoDiscoverPlugins(ctx, [
     adminPlugin,
     auditPlugin,
     authPlugin,
+    backupPlugin,
     chatPlugin,
     configPlugin,
     filesPlugin,
@@ -95,10 +104,5 @@ await autoDiscoverPlugins(ctx, [
 
 ctx.start().catch((err) => {
     ctx.log.error("failed to start:", err);
-    process.exit(1);
-});
-
-process.on("SIGINT", async () => {
-    await ctx.stop();
-    process.exit(0);
+    void lifecycle.shutdown(1, "start failure");
 });

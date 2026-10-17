@@ -57,6 +57,10 @@ EnvironmentFile=/opt/plugim/.env
 ExecStart=/usr/bin/node apps/server/dist/index.js
 Restart=always
 RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=25
+KillMode=mixed
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -72,6 +76,22 @@ journalctl -u plugim -f
 
 安装向导里点「保存并继续」会让进程自己退出，systemd 的 `Restart=always` 负责把它拉起来，属正常现象。
 
+## pm2 托管
+
+不用 systemd 时可以用 pm2：
+
+```bash
+pnpm install -g pm2
+cd /opt/plugim && pnpm install && pnpm build
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup
+```
+
+`ecosystem.config.cjs` 里已经配好单实例 fork 模式、崩溃自动重启、`kill_timeout` 15 秒等待、内存超过 512 MB 重启。改完配置用 `pm2 reload plugim` 生效，日志默认走 `data/logs/pm2-*.log`。
+
+`instances` 必须是 1：WebSocket 连接和 SQLite 都绑在单进程上，开 cluster 会各有各的内存状态。
+
 ## 前端产物路径
 
 服务端按顺序探测静态目录，找到含 `index.html` 的第一个就用：
@@ -84,11 +104,15 @@ journalctl -u plugim -f
 ## 日志
 
 - 不配置日志目录：日志走 stdout，交给 journald 或容器日志驱动。
-- 配置了日志目录（向导里填的，或 `PLUGIM_LOG_DIR`）：额外按天写一份到 `<logDir>/server-YYYY-MM-DD.log`。
+- 配置了日志目录（向导里填的，或 `PLUGIM_LOG_DIR`）：额外按天写一份到 `<logDir>/server-YYYY-MM-DD.log`，跨天自动切到新文件，进程不用重启。
+- 单文件超过 `PLUGIM_LOG_MAX_MB`（默认 8 MB）切成 `server-YYYY-MM-DD.1.log`、`.2.log`，避免一份日志无限涨。
+- 超过 `PLUGIM_LOG_KEEP_DAYS`（默认 14 天）和超过 `PLUGIM_LOG_KEEP_FILES`（默认 200 份）的旧文件，在启动和每次切分时清掉。
 
 ## 数据库
 
 个人或 50 人以下的内网环境用 SQLite 就够，数据全在一个文件里，备份就是拷文件。多人、公网环境建议 PostgreSQL，连接串形如 `postgres://user:pass@host:5432/db`。
+
+SQLite 默认开 WAL、`synchronous=NORMAL`、`busy_timeout=5000`，写入不会因为备份或读操作直接报 `database is locked`。备份走 SQLite 的在线备份接口，见[备份与升级](/guide/backup#自动备份)。
 
 表结构在启动时自动创建和补齐，不用手工跑迁移。
 
