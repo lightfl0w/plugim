@@ -56,6 +56,7 @@ import {
     openDetachedChat,
     PRESENCE_STATUS_OPTIONS,
     playBeep,
+    presenceDotClass,
     presenceStatusMeta,
     setShellPane,
     showAlert,
@@ -198,7 +199,7 @@ interface SessionsRowProps {
     draftText: string;
     preview: SessionPreview | undefined;
     peerName: string | null;
-    peerOnline: boolean;
+    peerDot: string | null;
     actions: SessionRowActions;
 }
 
@@ -215,7 +216,7 @@ const SessionsRow = memo(function SessionsRow({
     draftText,
     preview,
     peerName,
-    peerOnline,
+    peerDot,
     actions,
 }: SessionsRowProps) {
     return (
@@ -244,8 +245,13 @@ const SessionsRow = memo(function SessionsRow({
             ) : (
                 <span className="relative shrink-0">
                     <UserAvatar name={peerName ?? label} className="size-10" />
-                    {peerOnline ? (
-                        <span className="absolute right-0 bottom-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-background" />
+                    {peerDot ? (
+                        <span
+                            className={cn(
+                                "absolute right-0 bottom-0 size-2.5 rounded-full ring-2 ring-background",
+                                peerDot,
+                            )}
+                        />
                     ) : null}
                 </span>
             )}
@@ -981,12 +987,13 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                             ? entry.session.slice(4)
                                             : null
                                     }
-                                    peerOnline={
+                                    peerDot={
                                         entry.session.startsWith("p2p:")
-                                            ? presence.isOnline(
+                                            ? presenceDotClass(
+                                                  presence,
                                                   entry.session.slice(4),
                                               )
-                                            : false
+                                            : null
                                     }
                                     actions={rowActions}
                                 />

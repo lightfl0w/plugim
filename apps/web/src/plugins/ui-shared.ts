@@ -11,14 +11,40 @@ export interface PresenceStatusOption {
     value: PresenceStatus;
     label: string;
     dot: string;
+    text: string;
 }
 
 export const PRESENCE_STATUS_OPTIONS: PresenceStatusOption[] = [
-    { value: "online", label: "在线", dot: "bg-emerald-500" },
-    { value: "busy", label: "忙碌", dot: "bg-red-500" },
-    { value: "away", label: "离开", dot: "bg-amber-500" },
-    { value: "dnd", label: "请勿打扰", dot: "bg-sky-500" },
-    { value: "invisible", label: "隐身", dot: "bg-gray-400" },
+    {
+        value: "online",
+        label: "在线",
+        dot: "bg-emerald-500",
+        text: "text-emerald-600",
+    },
+    {
+        value: "busy",
+        label: "忙碌",
+        dot: "bg-red-500",
+        text: "text-red-600",
+    },
+    {
+        value: "away",
+        label: "离开",
+        dot: "bg-amber-500",
+        text: "text-amber-600",
+    },
+    {
+        value: "dnd",
+        label: "请勿打扰",
+        dot: "bg-sky-500",
+        text: "text-sky-600",
+    },
+    {
+        value: "invisible",
+        label: "隐身",
+        dot: "bg-gray-400",
+        text: "text-gray-400",
+    },
 ];
 
 export const presenceStatusMeta = (
@@ -26,6 +52,20 @@ export const presenceStatusMeta = (
 ): PresenceStatusOption =>
     PRESENCE_STATUS_OPTIONS.find((item) => item.value === status) ??
     PRESENCE_STATUS_OPTIONS[0];
+
+export interface PresenceLike {
+    isOnline(username: string): boolean;
+    statusOf(username: string): PresenceStatus | null;
+}
+
+export const presenceDotClass = (
+    presence: PresenceLike,
+    username: string,
+): string | null => {
+    if (!presence.isOnline(username)) return null;
+    const status = presence.statusOf(username);
+    return status ? presenceStatusMeta(status).dot : "bg-emerald-500";
+};
 
 let audioCtx: AudioContext | undefined;
 

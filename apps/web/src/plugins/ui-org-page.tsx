@@ -27,8 +27,14 @@ import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
+import type { PresenceService } from "./presence";
 import type { InstallService } from "./ui-install";
-import { displayName, openChat, setShellPane } from "./ui-shared";
+import {
+    displayName,
+    openChat,
+    presenceDotClass,
+    setShellPane,
+} from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const UNASSIGNED = "__unassigned__";
@@ -73,6 +79,7 @@ export const createOrgPage = (ctx: Context): FC => {
     const rpc = ctx.get<RpcService>("rpc");
     const friends = ctx.get<FriendsService>("friends");
     const install = ctx.get<InstallService>("install");
+    const presence = ctx.get<PresenceService>("presence");
 
     const OrgPage = () => {
         const me = useSyncExternalStore(
@@ -88,6 +95,7 @@ export const createOrgPage = (ctx: Context): FC => {
             () => install.status()?.mode,
         );
         const [, setFriendTick] = useState(0);
+        const [, setPresenceTick] = useState(0);
         const [data, setData] = useState<DirectoryResult | null>(null);
         const [error, setError] = useState("");
         const [loading, setLoading] = useState(true);
@@ -98,6 +106,11 @@ export const createOrgPage = (ctx: Context): FC => {
 
         useEffect(
             () => friends.onUpdate(() => setFriendTick((t) => t + 1)),
+            [],
+        );
+
+        useEffect(
+            () => presence.onChange(() => setPresenceTick((t) => t + 1)),
             [],
         );
 
@@ -290,8 +303,11 @@ export const createOrgPage = (ctx: Context): FC => {
                             title={member.online ? "在线" : "离线"}
                             className={cn(
                                 "absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2 ring-background",
-                                member.online
-                                    ? "bg-emerald-500"
+                                presence.isOnline(member.username)
+                                    ? (presenceDotClass(
+                                          presence,
+                                          member.username,
+                                      ) ?? "bg-emerald-500")
                                     : "bg-gray-300",
                             )}
                         />

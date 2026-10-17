@@ -127,8 +127,10 @@ export const uiHeaderSetup = async (ctx: Context) => {
                 {peerLabel ? (
                     <span
                         className={
-                            presence.isOnline(peerName ?? "")
-                                ? "shrink-0 text-xs text-emerald-600"
+                            peerName &&
+                            presence.isOnline(peerName) &&
+                            peerStatus
+                                ? `shrink-0 text-xs ${presenceStatusMeta(peerStatus).text}`
                                 : "shrink-0 text-xs text-muted-foreground"
                         }
                     >

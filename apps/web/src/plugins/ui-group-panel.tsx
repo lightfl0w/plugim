@@ -39,7 +39,13 @@ import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { PresenceService } from "./presence";
 import type { SenderService } from "./sender";
-import { formatBytes, messageLabel, showAlert, showConfirm } from "./ui-shared";
+import {
+    formatBytes,
+    messageLabel,
+    presenceDotClass,
+    showAlert,
+    showConfirm,
+} from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 interface MembersResult {
@@ -1005,11 +1011,21 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                                     name={member.username}
                                                     size="sm"
                                                 />
-                                                {presence.isOnline(
-                                                    member.username,
-                                                ) ? (
-                                                    <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card" />
-                                                ) : null}
+                                                {(() => {
+                                                    const dot =
+                                                        presenceDotClass(
+                                                            presence,
+                                                            member.username,
+                                                        );
+                                                    return dot ? (
+                                                        <span
+                                                            className={cn(
+                                                                "absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2 ring-card",
+                                                                dot,
+                                                            )}
+                                                        />
+                                                    ) : null;
+                                                })()}
                                             </span>
                                             <div className="min-w-0 flex-1">
                                                 <p className="truncate text-sm">
