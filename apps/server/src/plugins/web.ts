@@ -47,6 +47,42 @@ export const webPlugin: Plugin = {
         } catch {}
 
         const app = gateway.hono();
+
+        const renderIndex = async (): Promise<string> => {
+            const [name, icon] = await Promise.all([
+                settings.get("site_name"),
+                settings.get("site_icon"),
+            ]);
+            const siteName = name?.trim() || "plugim";
+            let html = readFileSync(resolve(webDist, "index.html"), "utf8");
+            html = html.replace(
+                "<title>plugim</title>",
+                `<title>${siteName}</title>`,
+            );
+            html = html.replace('content="plugim"', `content="${siteName}"`);
+            const iconHref = icon?.trim();
+            if (iconHref) {
+                html = html.replaceAll(
+                    'href="/icons/icon-192.png"',
+                    `href="${iconHref}"`,
+                );
+                html = html.replaceAll(
+                    'href="/icons/apple-touch-icon.png"',
+                    `href="${iconHref}"`,
+                );
+            }
+            return html;
+        };
+
+        app.get("/", (c) =>
+            renderIndex()
+                .then((html) => {
+                    c.header("Cache-Control", "no-cache");
+                    return c.html(html);
+                })
+                .catch(() => c.text("server error", 500)),
+        );
+
         app.get("/site/meta", async (c) => {
             const [name, icon] = await Promise.all([
                 settings.get("site_name"),
@@ -89,7 +125,7 @@ export const webPlugin: Plugin = {
                 },
             }),
         );
-        app.notFound((c) => {
+        app.notFound(async (c) => {
             const path = c.req.path;
             if (
                 c.req.method !== "GET" ||
@@ -101,9 +137,7 @@ export const webPlugin: Plugin = {
                 return c.json({ ok: false, message: "not found" }, 404);
             try {
                 c.header("Cache-Control", "no-cache");
-                return c.html(
-                    readFileSync(resolve(webDist, "index.html"), "utf8"),
-                );
+                return c.html(await renderIndex());
             } catch {
                 return c.json({ ok: false, message: "not found" }, 404);
             }
