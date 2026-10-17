@@ -332,11 +332,18 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                                 key={name}
                                 className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 hover:bg-accent/60"
                             >
-                                <span className="flex min-w-0 items-center gap-2">
-                                    <UserAvatar name={name} size="sm" />
-                                    <span className="truncate text-sm">
-                                        {name}
+                                <span className="flex min-w-0 flex-col">
+                                    <span className="flex min-w-0 items-center gap-2">
+                                        <UserAvatar name={name} size="sm" />
+                                        <span className="truncate text-sm">
+                                            {name}
+                                        </span>
                                     </span>
+                                    {list?.incomingMessages?.[name] ? (
+                                        <span className="ml-6 truncate text-[11px] text-muted-foreground">
+                                            留言：{list.incomingMessages[name]}
+                                        </span>
+                                    ) : null}
                                 </span>
                                 <div className="flex shrink-0 gap-1">
                                     <Button

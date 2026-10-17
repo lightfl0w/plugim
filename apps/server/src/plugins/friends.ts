@@ -67,6 +67,7 @@ export const friendsPlugin: Plugin = {
                 groups: [],
                 friendGroups: {},
                 starred: [],
+                incomingMessages: {},
             };
             for (const edge of edges) {
                 const other =
@@ -80,7 +81,11 @@ export const friendsPlugin: Plugin = {
                     if (edge.requesterId === me.id) result.blocked.push(name);
                 } else if (edge.requesterId === me.id)
                     result.outgoing.push(name);
-                else result.incoming.push(name);
+                else {
+                    result.incoming.push(name);
+                    if (edge.message && result.incomingMessages)
+                        result.incomingMessages[name] = edge.message;
+                }
             }
             for (const list of [
                 result.friends,
@@ -145,14 +150,19 @@ export const friendsPlugin: Plugin = {
                 users: hits.map((u) => ({
                     name: u.username,
                     relation: relationOf(u.id),
+                    title: u.title ?? null,
                 })),
             } satisfies UserSearchResult;
         });
 
         gateway.rpc("friend.request", async (raw, conn) => {
             const me = requireUser(conn);
-            const target = await usernameToUser(requireParams(raw).username);
+            const params = requireParams(raw);
+            const target = await usernameToUser(params.username);
             if (target.id === me.id) throw new Error("不能添加自己为好友");
+            const message = String(params.message ?? "")
+                .trim()
+                .slice(0, 50);
             if (await groups.friendAddBlocked(me.id, target.id))
                 throw new Error("对方所在的群设置了禁止互加好友");
             const edges = await friendships.edgesOf(me.id);
@@ -174,7 +184,7 @@ export const friendsPlugin: Plugin = {
                 await notify(target.id);
                 return buildList(me);
             }
-            await friendships.request(me.id, target.id);
+            await friendships.request(me.id, target.id, message);
             await notify(target.id);
             return buildList(me);
         });

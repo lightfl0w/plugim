@@ -292,6 +292,7 @@ const friendshipsSqlite = sqliteTable(
         addresseeId: sqliteText("addressee_id").notNull(),
         status: sqliteText("status").notNull(),
         createdAt: integer("created_at").notNull(),
+        message: sqliteText("message"),
     },
     (table) => [
         primaryKey({ columns: [table.requesterId, table.addresseeId] }),
@@ -307,6 +308,7 @@ const friendshipsPg = pgTable(
         createdAt: timestamp("created_at", { withTimezone: true })
             .notNull()
             .defaultNow(),
+        message: pgText("message"),
     },
     (table) => [
         pgPrimaryKey({
@@ -631,6 +633,7 @@ CREATE TABLE IF NOT EXISTS friendships (
   addressee_id TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at INTEGER NOT NULL,
+  message TEXT,
   PRIMARY KEY (requester_id, addressee_id)
 );
 CREATE TABLE IF NOT EXISTS friend_remarks (
@@ -812,6 +815,7 @@ CREATE TABLE IF NOT EXISTS friendships (
   addressee_id TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  message TEXT,
   PRIMARY KEY (requester_id, addressee_id)
 );
 CREATE TABLE IF NOT EXISTS friend_remarks (
@@ -1321,6 +1325,9 @@ export const storagePlugin: Plugin = {
             await client.unsafe(
                 "ALTER TABLE group_members ADD COLUMN IF NOT EXISTS title TEXT",
             );
+            await client.unsafe(
+                "ALTER TABLE friendships ADD COLUMN IF NOT EXISTS message TEXT",
+            );
             const db = drizzlePg(client);
 
             const messageCursor = async (id: string) => {
@@ -1359,11 +1366,13 @@ export const storagePlugin: Plugin = {
                 addresseeId: string;
                 status: string;
                 createdAt: Date;
+                message: string | null;
             }): FriendEdge => ({
                 requesterId: row.requesterId,
                 addresseeId: row.addresseeId,
                 status: row.status as FriendEdge["status"],
                 createdAt: toIso(row.createdAt),
+                message: row.message ?? null,
             });
             const groupToRow = (
                 row: typeof groupsPg.$inferSelect,
@@ -1812,7 +1821,7 @@ export const storagePlugin: Plugin = {
             };
 
             friends = {
-                async request(requesterId, addresseeId) {
+                async request(requesterId, addresseeId, message) {
                     await db
                         .insert(friendshipsPg)
                         .values({
@@ -1820,6 +1829,7 @@ export const storagePlugin: Plugin = {
                             addresseeId,
                             status: "pending",
                             createdAt: new Date(),
+                            message: message ?? null,
                         })
                         .onConflictDoNothing();
                 },
@@ -2929,6 +2939,12 @@ export const storagePlugin: Plugin = {
                     client.exec(`ALTER TABLE groups ADD COLUMN ${col} ${type}`);
                 }
             }
+            const friendshipColumns = client.pragma(
+                "table_info(friendships)",
+            ) as Array<{ name: string }>;
+            if (!friendshipColumns.some((item) => item.name === "message")) {
+                client.exec("ALTER TABLE friendships ADD COLUMN message TEXT");
+            }
             const momentColumns = client.pragma(
                 "table_info(moments)",
             ) as Array<{ name: string }>;
@@ -2979,11 +2995,13 @@ export const storagePlugin: Plugin = {
                 addresseeId: string;
                 status: string;
                 createdAt: number;
+                message: string | null;
             }): FriendEdge => ({
                 requesterId: row.requesterId,
                 addresseeId: row.addresseeId,
                 status: row.status as FriendEdge["status"],
                 createdAt: toIso(row.createdAt),
+                message: row.message ?? null,
             });
             const groupToRow = (
                 row: typeof groupsSqlite.$inferSelect,
@@ -3474,7 +3492,7 @@ export const storagePlugin: Plugin = {
             };
 
             friends = {
-                async request(requesterId, addresseeId) {
+                async request(requesterId, addresseeId, message) {
                     await db
                         .insert(friendshipsSqlite)
                         .values({
@@ -3482,6 +3500,7 @@ export const storagePlugin: Plugin = {
                             addresseeId,
                             status: "pending",
                             createdAt: Date.now(),
+                            message: message ?? null,
                         })
                         .onConflictDoNothing();
                 },

@@ -18,7 +18,9 @@ export interface MergedChat {
     sender: string;
     content: string;
     kind?: MessageKind;
+    file?: FileMeta | null;
     link?: LinkPreview | null;
+    merge?: MergePayload | null;
     createdAt: string;
 }
 
@@ -139,6 +141,7 @@ export interface FriendListResult {
     groups: FriendGroupInfo[];
     friendGroups: Record<string, string | null>;
     starred: string[];
+    incomingMessages?: Record<string, string>;
 }
 
 export type UserRelation =
@@ -151,6 +154,7 @@ export type UserRelation =
 export interface UserSearchHit {
     name: string;
     relation: UserRelation;
+    title?: string | null;
 }
 
 export interface UserSearchResult {
@@ -384,6 +388,7 @@ export interface RecallParams {
 
 export interface FriendTargetParams {
     username: string;
+    message?: string | null;
 }
 
 export interface FriendRemarkParams {

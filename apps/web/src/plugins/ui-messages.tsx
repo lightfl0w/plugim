@@ -2,6 +2,7 @@ import type { Context } from "@plugim/core";
 import type {
     ChatMessage,
     GroupInfo,
+    MergedChat,
     MergePayload,
     MomentShare,
 } from "@plugim/protocol";
@@ -14,6 +15,7 @@ import {
     AlertCircleIcon,
     ArrowDownIcon,
     CheckIcon,
+    ChevronLeftIcon,
     ClockIcon,
     CopyIcon,
     CornerUpLeftIcon,
@@ -96,6 +98,77 @@ const parseMerge = (message: ChatMessage): MergePayload | null => {
     } catch {
         return null;
     }
+};
+
+const mergeItemNode = (
+    item: MergedChat,
+    compact: boolean,
+    handlers?: {
+        onOpenNested?: (payload: MergePayload) => void;
+        onOpenMedia?: (item: MergedChat) => void;
+    },
+) => {
+    const kind = item.kind ?? "text";
+    const openMediaItem = handlers?.onOpenMedia;
+    const openNested = handlers?.onOpenNested;
+    if (kind === "image" && /^(\/files\/|https?:\/\/)/.test(item.content)) {
+        const img = (
+            <img
+                src={item.content}
+                alt="图片"
+                loading="lazy"
+                className={cn(
+                    compact
+                        ? "max-h-10 max-w-20 rounded-lg object-cover"
+                        : "max-h-72 w-auto max-w-full rounded-lg object-contain",
+                )}
+            />
+        );
+        if (compact || !openMediaItem) return img;
+        return (
+            <button
+                type="button"
+                title="点击查看大图"
+                className="cursor-zoom-in"
+                onClick={() => openMediaItem(item)}
+            >
+                {img}
+            </button>
+        );
+    }
+    if (kind === "merge" && item.merge) {
+        const nested = item.merge;
+        const chip = (
+            <span className="inline-flex max-w-full items-center gap-1 truncate rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                [聊天记录] {nested.title}
+            </span>
+        );
+        if (openNested)
+            return (
+                <button
+                    type="button"
+                    title="点击查看"
+                    className="max-w-full text-left"
+                    onClick={() => openNested(nested)}
+                >
+                    {chip}
+                </button>
+            );
+        return chip;
+    }
+    const label =
+        messageLabel(kind, item.content, item.file?.name ?? null) ??
+        (kind === "file" && item.file ? `[文件] ${item.file.name}` : null) ??
+        item.content;
+    return (
+        <span
+            className={
+                compact ? "truncate" : "whitespace-pre-wrap break-words text-sm"
+            }
+        >
+            {label}
+        </span>
+    );
 };
 
 const parseMomentShare = (message: ChatMessage): MomentShare | null => {
@@ -436,7 +509,7 @@ const MessageGroupRow = memo(
                                                     <button
                                                         type="button"
                                                         title="点击查看合并的转发消息"
-                                                        className="flex w-56 flex-col gap-1 rounded-lg bg-card px-3 py-2.5 text-left text-foreground transition-colors hover:bg-accent/60"
+                                                        className="flex w-64 flex-col gap-1.5 rounded-lg bg-card px-3 py-2.5 text-left text-foreground transition-colors hover:bg-accent/60"
                                                         onClick={() =>
                                                             actions.openMerge(
                                                                 payload,
@@ -446,15 +519,31 @@ const MessageGroupRow = memo(
                                                         <p className="truncate text-sm font-medium">
                                                             {payload.title}
                                                         </p>
-                                                        <p className="truncate text-xs text-muted-foreground">
-                                                            {payload.list
-                                                                .slice(0, 2)
-                                                                .map(
-                                                                    (item) =>
-                                                                        `${item.sender}: ${messageLabel(item.kind, item.content) ?? item.content}`,
-                                                                )
-                                                                .join(" \n")}
-                                                        </p>
+                                                        {payload.list
+                                                            .slice(0, 2)
+                                                            .map((item) => (
+                                                                <span
+                                                                    key={`${item.sender}:${item.createdAt}:${item.content.slice(0, 12)}`}
+                                                                    className="flex min-w-0 items-center gap-1.5"
+                                                                >
+                                                                    <UserAvatar
+                                                                        name={
+                                                                            item.sender
+                                                                        }
+                                                                        size="sm"
+                                                                    />
+                                                                    <span className="shrink-0 text-xs text-muted-foreground">
+                                                                        {
+                                                                            item.sender
+                                                                        }
+                                                                        ：
+                                                                    </span>
+                                                                    {mergeItemNode(
+                                                                        item,
+                                                                        true,
+                                                                    )}
+                                                                </span>
+                                                            ))}
                                                         <p className="text-[10px] text-muted-foreground/80">
                                                             点击查看
                                                         </p>
@@ -787,7 +876,17 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [forwardError, setForwardError] = useState<string | null>(null);
         const [selectMode, setSelectMode] = useState(false);
         const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-        const [mergeView, setMergeView] = useState<MergePayload | null>(null);
+        const [mergeStack, setMergeStack] = useState<
+            { id: number; payload: MergePayload }[]
+        >([]);
+        const mergeSeq = useRef(0);
+        const openMergeStack = (payload: MergePayload) => {
+            mergeSeq.current += 1;
+            setMergeStack((prev) => [
+                ...prev,
+                { id: mergeSeq.current, payload },
+            ]);
+        };
         const [hint, setHint] = useState<string | null>(null);
         const [essenceIds, setEssenceIds] = useState<Set<string>>(new Set());
         const [groupTitles, setGroupTitles] = useState<Record<string, string>>(
@@ -1572,7 +1671,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
             openMedia,
             react,
             jumpToMessage,
-            openMerge: setMergeView,
+            openMerge: (payload) => openMergeStack(payload),
             openMoment: (author) => ctx.emit("ui:moments:open", { author }),
         };
         const actions = useMemo<MessageActions>(
@@ -2124,88 +2223,131 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     </div>
                 ) : null}
 
-                {mergeView ? (
+                {mergeStack.map(({ id, payload }, depth) => (
                     <div
-                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                        key={id}
+                        className="fixed inset-0 flex items-center justify-center bg-black/40 p-4"
+                        style={{ zIndex: 50 + depth }}
                         role="dialog"
                         aria-modal="true"
                         aria-label="合并转发记录"
                         onKeyDown={(e) => {
-                            if (e.key === "Escape") setMergeView(null);
+                            if (e.key === "Escape")
+                                setMergeStack((prev) => prev.slice(0, -1));
                         }}
                         onClick={(e) => {
                             if (e.target === e.currentTarget)
-                                setMergeView(null);
+                                setMergeStack((prev) => prev.slice(0, -1));
                         }}
                     >
                         <div className="flex max-h-[75vh] w-full max-w-md flex-col rounded-xl border border-border bg-card shadow-xl">
                             <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                                {depth > 0 ? (
+                                    <button
+                                        type="button"
+                                        aria-label="返回上一层"
+                                        title="返回上一层"
+                                        className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+                                        onClick={() =>
+                                            setMergeStack((prev) =>
+                                                prev.slice(0, -1),
+                                            )
+                                        }
+                                    >
+                                        <ChevronLeftIcon className="size-4" />
+                                    </button>
+                                ) : null}
                                 <p className="flex-1 truncate text-sm font-semibold">
-                                    {mergeView.title}
+                                    {payload.title}
                                 </p>
                                 <button
                                     type="button"
                                     aria-label="关闭"
                                     className="rounded-md p-1 text-muted-foreground hover:bg-accent"
-                                    onClick={() => setMergeView(null)}
+                                    onClick={() =>
+                                        setMergeStack((prev) =>
+                                            prev.slice(0, -1),
+                                        )
+                                    }
                                 >
                                     <XIcon className="size-4" />
                                 </button>
                             </div>
                             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-                                {mergeView.list.map((item) => (
+                                {payload.list.map((item) => (
                                     <div
                                         key={`${item.sender}:${item.createdAt}:${item.content.slice(0, 16)}`}
-                                        className="flex flex-col gap-0.5 py-1.5"
+                                        className="flex gap-2.5 py-2"
                                     >
-                                        <p className="text-xs text-muted-foreground">
-                                            {item.sender}
-                                            <span className="ml-2">
-                                                {item.createdAt
-                                                    .slice(5, 16)
-                                                    .replace("T", " ")}
-                                            </span>
-                                        </p>
-                                        <p className="whitespace-pre-wrap break-words text-sm">
-                                            {messageLabel(
-                                                item.kind,
-                                                item.content,
-                                            ) ?? item.content}
-                                        </p>
-                                        {item.link ? (
-                                            <a
-                                                href={item.link.url}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="mt-1 flex items-center gap-2.5 overflow-hidden rounded-lg border border-border bg-muted/40 p-2"
-                                            >
-                                                {item.link.image ? (
-                                                    <img
-                                                        src={item.link.image}
-                                                        alt=""
-                                                        loading="lazy"
-                                                        referrerPolicy="no-referrer"
-                                                        className="size-10 shrink-0 rounded object-cover"
-                                                    />
-                                                ) : null}
-                                                <span className="min-w-0 flex-1">
-                                                    <span className="block truncate text-xs font-medium">
-                                                        {item.link.title}
-                                                    </span>
-                                                    <span className="block truncate text-[11px] text-muted-foreground">
-                                                        {item.link
-                                                            .description ||
-                                                            item.link.site}
-                                                    </span>
+                                        <UserAvatar
+                                            name={item.sender || "?"}
+                                            size="sm"
+                                            className="mt-0.5 shrink-0"
+                                        />
+                                        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                            <p className="flex items-baseline gap-2 text-xs text-muted-foreground">
+                                                <span className="truncate font-medium text-foreground">
+                                                    {item.sender}
                                                 </span>
-                                            </a>
-                                        ) : null}
+                                                <span className="shrink-0">
+                                                    {item.createdAt
+                                                        .slice(5, 16)
+                                                        .replace("T", " ")}
+                                                </span>
+                                            </p>
+                                            {mergeItemNode(item, false, {
+                                                onOpenNested: (next) =>
+                                                    openMergeStack(next),
+                                                onOpenMedia: (media) =>
+                                                    openMedia({
+                                                        id: `merge-${depth}-${media.createdAt}-${media.content.slice(0, 12)}`,
+                                                        session: "",
+                                                        sender: media.sender,
+                                                        content: media.content,
+                                                        kind: "image",
+                                                        file:
+                                                            media.file ?? null,
+                                                        createdAt:
+                                                            media.createdAt,
+                                                    }),
+                                            })}
+                                            {item.link ? (
+                                                <a
+                                                    href={item.link.url}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="mt-1 flex items-center gap-2.5 overflow-hidden rounded-lg border border-border bg-muted/40 p-2"
+                                                >
+                                                    {item.link.image ? (
+                                                        <img
+                                                            src={
+                                                                item.link.image
+                                                            }
+                                                            alt=""
+                                                            loading="lazy"
+                                                            referrerPolicy="no-referrer"
+                                                            className="size-10 shrink-0 rounded object-cover"
+                                                        />
+                                                    ) : null}
+                                                    <span className="min-w-0 flex-1">
+                                                        <span className="block truncate text-xs font-medium">
+                                                            {item.link.title}
+                                                        </span>
+                                                        <span className="block truncate text-[11px] text-muted-foreground">
+                                                            {item.link
+                                                                .description ||
+                                                                item.link.site}
+                                                        </span>
+                                                    </span>
+                                                </a>
+                                            ) : null}
+                                        </span>
                                     </div>
                                 ))}
                             </div>
                         </div>
                     </div>
-                ) : null}
+                ))}
             </>
         );
     };

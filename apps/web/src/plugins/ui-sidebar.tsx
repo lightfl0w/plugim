@@ -497,10 +497,11 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const [addTab, setAddTab] = useState<"friend" | "group">("friend");
         const [searchKey, setSearchKey] = useState("");
         const [searchHits, setSearchHits] = useState<
-            { name: string; relation: string }[]
+            { name: string; relation: string; title?: string | null }[]
         >([]);
         const [searchLoading, setSearchLoading] = useState(false);
         const [addingName, setAddingName] = useState("");
+        const [requestMsg, setRequestMsg] = useState("");
         const activeRef = useRef(active);
         const unreadRef = useRef<Record<string, number>>({});
         const previewsRef = useRef<Record<string, SessionPreview>>({});
@@ -862,6 +863,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 setSearchKey("");
                 setSearchHits([]);
                 setAddingName("");
+                setRequestMsg("");
             });
             return () => {
                 void disposeAdd();
@@ -887,6 +889,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                     users: {
                                         name: string;
                                         relation: string;
+                                        title?: string | null;
                                     }[];
                                 }
                             ).users,
@@ -901,7 +904,8 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const sendFriendRequest = async (name: string) => {
             setAddingName(name);
             try {
-                await friends.request(name);
+                await friends.request(name, requestMsg.trim());
+                setRequestMsg("");
                 setSearchHits((prev) =>
                     prev.map((hit) =>
                         hit.name === name
@@ -1275,6 +1279,15 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                             setSearchKey(e.target.value)
                                         }
                                     />
+                                    <input
+                                        value={requestMsg}
+                                        maxLength={50}
+                                        placeholder="验证留言（选填，最多 50 字）"
+                                        className="h-8 rounded-lg border border-border bg-transparent px-3 text-xs outline-none focus:border-primary"
+                                        onChange={(e) =>
+                                            setRequestMsg(e.target.value)
+                                        }
+                                    />
                                     <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
                                         {searchLoading ? (
                                             <p className="p-3 text-xs text-muted-foreground">
@@ -1302,8 +1315,15 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                                     name={hit.name}
                                                     size="sm"
                                                 />
-                                                <span className="min-w-0 flex-1 truncate">
-                                                    {hit.name}
+                                                <span className="flex min-w-0 flex-1 flex-col">
+                                                    <span className="truncate">
+                                                        {hit.name}
+                                                    </span>
+                                                    {hit.title ? (
+                                                        <span className="truncate text-[11px] text-muted-foreground">
+                                                            {hit.title}
+                                                        </span>
+                                                    ) : null}
                                                 </span>
                                                 {hit.relation === "friend" ? (
                                                     <span className="shrink-0 text-xs text-muted-foreground">

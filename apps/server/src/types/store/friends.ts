@@ -5,6 +5,7 @@ export interface FriendEdge {
     addresseeId: string;
     status: FriendStatus;
     createdAt: string;
+    message?: string | null;
 }
 
 export interface FriendGroupRow {
@@ -15,7 +16,11 @@ export interface FriendGroupRow {
 }
 
 export interface FriendsStore {
-    request(requesterId: string, addresseeId: string): Promise<void>;
+    request(
+        requesterId: string,
+        addresseeId: string,
+        message?: string | null,
+    ): Promise<void>;
     accept(requesterId: string, addresseeId: string): Promise<void>;
     removeBetween(aId: string, bId: string): Promise<void>;
     block(blockerId: string, targetId: string): Promise<void>;

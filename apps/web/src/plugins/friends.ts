@@ -5,7 +5,7 @@ import type { RpcService } from "./connection";
 export interface FriendsService {
     cached(): FriendListResult | null;
     refresh(): Promise<FriendListResult>;
-    request(username: string): Promise<void>;
+    request(username: string, message?: string): Promise<void>;
     accept(username: string): Promise<void>;
     reject(username: string): Promise<void>;
     remove(username: string): Promise<void>;
@@ -77,7 +77,16 @@ export const friendsPlugin: Plugin = {
         ctx.provide<FriendsService>("friends", {
             cached: () => cache,
             refresh: fetchList,
-            request: (u) => mutate("friend.request", u),
+            request: (u, message) =>
+                rpc
+                    .call("friend.request", {
+                        username: u,
+                        message: message ?? null,
+                    })
+                    .then((result) => {
+                        cache = result as FriendListResult;
+                        emit();
+                    }),
             accept: (u) => mutate("friend.accept", u),
             reject: (u) => mutate("friend.reject", u),
             remove: (u) => mutate("friend.remove", u),

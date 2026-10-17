@@ -477,18 +477,61 @@ export const chatPlugin: Plugin = {
                           content: JSON.stringify({
                               merge: 1,
                               title: `${sources.length} 条转发消息`,
-                              list: sources.map((m) => ({
-                                  sender: m.sender,
-                                  content:
-                                      m.kind && m.kind !== "text"
-                                          ? m.kind === "moment"
-                                              ? "[动态]"
-                                              : `[${m.kind}]`
-                                          : m.content.slice(0, 500),
-                                  kind: m.kind ?? "text",
-                                  link: linkByContent.get(m.content) ?? null,
-                                  createdAt: m.createdAt,
-                              })),
+                              list: sources.map((m) => {
+                                  const kind = m.kind ?? "text";
+                                  if (kind === "merge") {
+                                      let nested: MergePayload | null = null;
+                                      try {
+                                          const parsed = JSON.parse(
+                                              m.content,
+                                          ) as MergePayload;
+                                          if (
+                                              parsed &&
+                                              parsed.merge === 1 &&
+                                              Array.isArray(parsed.list)
+                                          )
+                                              nested = parsed;
+                                      } catch {}
+                                      return {
+                                          sender: m.sender,
+                                          content: "[聊天记录]",
+                                          kind,
+                                          merge: nested,
+                                          link: null,
+                                          createdAt: m.createdAt,
+                                      };
+                                  }
+                                  if (
+                                      kind === "image" ||
+                                      kind === "audio" ||
+                                      kind === "video" ||
+                                      kind === "file"
+                                  )
+                                      return {
+                                          sender: m.sender,
+                                          content: m.content.slice(0, 500),
+                                          kind,
+                                          file: m.file ?? null,
+                                          link: null,
+                                          createdAt: m.createdAt,
+                                      };
+                                  if (kind === "moment")
+                                      return {
+                                          sender: m.sender,
+                                          content: "[动态]",
+                                          kind,
+                                          link: null,
+                                          createdAt: m.createdAt,
+                                      };
+                                  return {
+                                      sender: m.sender,
+                                      content: m.content.slice(0, 500),
+                                      kind,
+                                      link:
+                                          linkByContent.get(m.content) ?? null,
+                                      createdAt: m.createdAt,
+                                  };
+                              }),
                           } satisfies MergePayload),
                           kind: "merge",
                       }
