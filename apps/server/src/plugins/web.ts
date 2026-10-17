@@ -56,10 +56,17 @@ export const webPlugin: Plugin = {
             const siteName = name?.trim() || "plugim";
             let html = readFileSync(resolve(webDist, "index.html"), "utf8");
             html = html.replace(
-                "<title>plugim</title>",
+                /<title[^>]*>[\s\S]*?<\/title>/i,
                 `<title>${siteName}</title>`,
             );
-            html = html.replace('content="plugim"', `content="${siteName}"`);
+            html = html.replace(
+                /content="plugim"/g,
+                `content="${siteName}"`,
+            );
+            if (siteName !== "plugim" && html.includes("<title>plugim</title>"))
+                ctx.log.warn(
+                    `index.html title replace missed (dist=${webDist})`,
+                );
             const iconHref = icon?.trim();
             if (iconHref) {
                 html = html.replaceAll(
