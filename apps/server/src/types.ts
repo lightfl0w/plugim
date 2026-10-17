@@ -98,6 +98,7 @@ export interface RedPacketStore {
         totalAmount: number;
         totalCount: number;
         message?: string;
+        createdAt: string;
         expiredAt?: string;
     }): Promise<void>;
     getById(id: string): Promise<null | {
@@ -114,18 +115,17 @@ export interface RedPacketStore {
         createdAt: string;
         expiredAt?: string;
     }>;
-    consumeById(
-        id: string,
-        amount: number,
-    ): Promise<boolean>;
+    consumeById(id: string, amount: number): Promise<boolean>;
     markAsExhausted(id: string): Promise<void>;
     expireIfNeeded(): Promise<string[]>;
-    listRecords(redPacketId: string): Promise<{
-        id: string;
-        claimerId: string;
-        amount: number;
-        claimedAt: string;
-    }[]>;
+    listRecords(redPacketId: string): Promise<
+        {
+            id: string;
+            claimerId: string;
+            amount: number;
+            claimedAt: string;
+        }[]
+    >;
     countActive(sessionId: string, senderId: string): Promise<number>;
 }
 
@@ -156,7 +156,10 @@ export interface AABillStore {
         createdAt: string;
     }>;
     addPayment(billId: string, payerId: string, amount: number): Promise<void>;
-    updateStatus(id: string, status: "pending" | "settled" | "cancelled"): Promise<void>;
+    updateStatus(
+        id: string,
+        status: "pending" | "settled" | "cancelled",
+    ): Promise<void>;
     cancel(id: string): Promise<void>;
     listParticipantsPayments(
         billId: string,
@@ -189,16 +192,18 @@ export interface TransferStore {
     reject(id: string): Promise<boolean>;
     refund(id: string): Promise<boolean>;
     expireIfNeeded(): Promise<string[]>;
-    listForUser(userId: string): Promise<Array<{
-        id: string;
-        fromId: string;
-        toId: string;
-        amount: number;
-        message?: string;
-        state: string;
-        createdAt: string;
-        expiredAt: string;
-    }>>;
+    listForUser(userId: string): Promise<
+        Array<{
+            id: string;
+            fromId: string;
+            toId: string;
+            amount: number;
+            message?: string;
+            state: string;
+            createdAt: string;
+            expiredAt: string;
+        }>
+    >;
 }
 
 export interface MediaFileRow {

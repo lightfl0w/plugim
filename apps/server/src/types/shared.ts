@@ -1,5 +1,4 @@
 import type {
-    ChatMessage,
     FileMeta,
     GroupRole,
     LinkPreview,
@@ -8,7 +7,8 @@ import type {
     MessageReactions,
     User,
 } from "@plugim/protocol";
-import type { Hono } from "hono";
+
+export type { User } from "@plugim/protocol";
 
 export interface AuthUser {
     id: string;

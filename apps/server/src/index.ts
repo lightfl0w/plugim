@@ -1,18 +1,19 @@
 import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Context, autoDiscoverPlugins } from "@plugim/core";
+import { autoDiscoverPlugins, Context } from "@plugim/core";
 import { readInstallConfig } from "./installConfig";
 import { adminPlugin } from "./plugins/admin";
 import { auditPlugin } from "./plugins/audit";
 import { authPlugin } from "./plugins/auth";
 import { chatPlugin } from "./plugins/chat";
 import { configPlugin } from "./plugins/config";
+import { containerPlugin } from "./plugins/container";
 import { filesPlugin } from "./plugins/files";
 import { friendsPlugin } from "./plugins/friends";
 import { gatewayPlugin } from "./plugins/gateway";
-import { groupFilesPlugin } from "./plugins/group-files";
 import { groupPlugin } from "./plugins/group";
+import { groupFilesPlugin } from "./plugins/group-files";
 import { installPlugin } from "./plugins/install";
 import { linkPreviewPlugin } from "./plugins/link-preview";
 import { momentsPlugin } from "./plugins/moments";
@@ -22,7 +23,6 @@ import { screenPlugin } from "./plugins/screen";
 import { storagePlugin } from "./plugins/storage";
 import { tasksPlugin } from "./plugins/tasks";
 import { webPlugin } from "./plugins/web";
-import { ExamplePlugin, ManualPlugin } from "./plugins/example-plugin";
 
 const nodeMajor = Number(process.versions.node.split(".")[0]);
 if (nodeMajor < 20) {
@@ -89,7 +89,8 @@ await autoDiscoverPlugins(ctx, [
     screenPlugin,
     storagePlugin,
     tasksPlugin,
-    webPlugin
+    webPlugin,
+    containerPlugin,
 ]);
 
 ctx.start().catch((err) => {

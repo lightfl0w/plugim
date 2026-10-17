@@ -18,7 +18,11 @@ export interface GroupAclService {
     requireMembership(
         groupId: string,
         me: AuthUser,
-    ): Promise<{ row: import("../row/groups").GroupRow; members: import("../row/groups").GroupMemberRow[]; mine: import("@plugim/protocol").GroupRole }>;
+    ): Promise<{
+        row: import("../row/groups").GroupRow;
+        members: import("../row/groups").GroupMemberRow[];
+        mine: import("@plugim/protocol").GroupRole;
+    }>;
     sessionOf(groupId: string): string;
 }
 

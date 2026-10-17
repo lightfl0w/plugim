@@ -50,7 +50,7 @@ export interface ChatMessage {
     file?: FileMeta | null;
     link?: LinkPreview | null;
     reactions?: MessageReactions | null;
-    
+
     redPacket?: RedPacketInfo | null;
     transfer?: TransferInfo | null;
 }
@@ -537,25 +537,25 @@ export interface MomentUnreadResult {
 }
 
 export interface RedPacketInfo {
-    id: string;           
-    senderId: string;   
-    sessionId: string;   
-    type: "normal" | "lucky";  
-    totalAmount: number;  
-    totalCount: number;  
+    id: string;
+    senderId: string;
+    sessionId: string;
+    type: "normal" | "lucky";
+    totalAmount: number;
+    totalCount: number;
     status: "active" | "exhausted" | "expired";
-    remaining: number;  
-    remainCount: number;  
-    message?: string;    
+    remaining: number;
+    remainCount: number;
+    message?: string;
     createdAt: string;
-    expiredAt?: string;   
+    expiredAt?: string;
 }
 
 export interface RedPacketRecord {
     id: string;
     redPacketId: string;
     claimerId: string;
-    amount: number;       
+    amount: number;
     claimedAt: string;
 }
 
@@ -563,12 +563,12 @@ export interface AABill {
     id: string;
     creatorId: string;
     sessionId: string;
-    description: string;        
-    totalAmount: number;       
-    settledAmount: number;     
-    participantIds: string[];   
+    description: string;
+    totalAmount: number;
+    settledAmount: number;
+    participantIds: string[];
     splitType: "equal" | "custom";
-    customSplits?: Record<string, number>; 
+    customSplits?: Record<string, number>;
     deadline: string;
     status: "pending" | "settled" | "cancelled";
     createdAt: string;
@@ -586,11 +586,11 @@ export interface TransferInfo {
     id: string;
     fromId: string;
     toId: string;
-    amount: number;             
-    message?: string;      
+    amount: number;
+    message?: string;
     state: "pending" | "accepted" | "rejected" | "refunded";
     createdAt: string;
-    expiredAt: string;         
+    expiredAt: string;
 }
 
 export interface RedPacketCreateParams {
@@ -609,7 +609,7 @@ export interface AABillCreateParams {
     sessionId: string;
     description: string;
     totalAmount: number;
-    participantIds?: string[];  
+    participantIds?: string[];
     splitType: "equal" | "custom";
     customSplits?: Record<string, number>;
 }
@@ -633,4 +633,3 @@ export interface TransferRejectParams {
     transferId: string;
     reason?: string;
 }
-

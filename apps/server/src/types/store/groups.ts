@@ -1,4 +1,5 @@
-import type { GroupRow, GroupMemberRow, JoinRequestRow } from "../row/groups";
+import type { GroupRole } from "@plugim/protocol";
+import type { GroupMemberRow, GroupRow, JoinRequestRow } from "../row/groups";
 
 export interface GroupsStore {
     create(name: string, ownerId: string): Promise<GroupRow>;
@@ -44,7 +45,10 @@ export interface JoinRequestsStore {
 
 export interface GroupFilesStore {
     save(row: import("../row/groups").GroupFileRow): Promise<void>;
-    byKey(groupId: string, key: string): Promise<import("../row/groups").GroupFileRow | null>;
+    byKey(
+        groupId: string,
+        key: string,
+    ): Promise<import("../row/groups").GroupFileRow | null>;
     list(
         groupId: string,
         params: { offset: number; limit: number },

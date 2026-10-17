@@ -5,7 +5,8 @@
     "exports": {
         ".": "./src/index.ts",
         "./plugins": "./src/plugins.ts",
-        "./examples": "./src/examples.ts"
+        "./examples": "./src/examples.ts",
+        "./container": "./src/container.ts"
     },
     "scripts": {
         "typecheck": "tsc --noEmit",

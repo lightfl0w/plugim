@@ -1,5 +1,8 @@
 export type Dispose = () => void | Promise<void>;
 
+export * from "./container";
+export * from "./plugins";
+
 export interface Logger {
     info(...args: unknown[]): void;
     warn(...args: unknown[]): void;

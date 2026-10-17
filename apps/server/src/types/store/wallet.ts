@@ -7,6 +7,7 @@ export interface RedPacketStore {
         totalAmount: number;
         totalCount: number;
         message?: string;
+        createdAt: string;
         expiredAt?: string;
     }): Promise<void>;
 
@@ -25,19 +26,18 @@ export interface RedPacketStore {
         expiredAt?: string;
     }>;
 
-    consumeById(
-        id: string,
-        amount: number,
-    ): Promise<boolean>;
+    consumeById(id: string, amount: number): Promise<boolean>;
 
     markAsExhausted(id: string): Promise<void>;
     expireIfNeeded(): Promise<string[]>;
-    listRecords(redPacketId: string): Promise<{
-        id: string;
-        claimerId: string;
-        amount: number;
-        claimedAt: string;
-    }[]>;
+    listRecords(redPacketId: string): Promise<
+        {
+            id: string;
+            claimerId: string;
+            amount: number;
+            claimedAt: string;
+        }[]
+    >;
     countActive(sessionId: string, senderId: string): Promise<number>;
 }
 
@@ -108,14 +108,16 @@ export interface TransferStore {
     reject(id: string): Promise<boolean>;
     refund(id: string): Promise<boolean>;
     expireIfNeeded(): Promise<string[]>;
-    listForUser(userId: string): Promise<Array<{
-        id: string;
-        fromId: string;
-        toId: string;
-        amount: number;
-        message?: string;
-        state: string;
-        createdAt: string;
-        expiredAt: string;
-    }>>;
+    listForUser(userId: string): Promise<
+        Array<{
+            id: string;
+            fromId: string;
+            toId: string;
+            amount: number;
+            message?: string;
+            state: string;
+            createdAt: string;
+            expiredAt: string;
+        }>
+    >;
 }

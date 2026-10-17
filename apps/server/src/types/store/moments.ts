@@ -1,7 +1,7 @@
 import type {
-    MomentRow,
-    MomentLikeRow,
     MomentCommentRow,
+    MomentLikeRow,
+    MomentRow,
     MomentUnreadRow,
 } from "../row/moments";
 
@@ -11,7 +11,7 @@ export interface MomentsStore {
         content: string;
         images: string[];
         video: string | null;
-        link: import("../row/moments").LinkPreview | null;
+        link: import("@plugim/protocol").LinkPreview | null;
         visibility: import("@plugim/protocol").MomentVisibility;
         audience: string[];
     }): Promise<MomentRow>;
