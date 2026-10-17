@@ -12,6 +12,7 @@ export type {
     MomentRow,
     MomentUnreadRow,
 } from "./row/moments";
+export type { AuditService } from "./service/audit";
 export type {
     AuthService,
     ChatService,
@@ -43,7 +44,7 @@ export type {
     DepartmentRow,
     DepartmentsStore,
 } from "./store/departments";
-export type { FriendsStore } from "./store/friends";
+export type { FriendEdge, FriendGroupRow, FriendsStore } from "./store/friends";
 export type {
     EssencesStore,
     GroupFilesStore,
@@ -53,7 +54,12 @@ export type {
 export type { MediaFileRow, MediaFilesStore } from "./store/media";
 export type { MessageStore } from "./store/messages";
 export type { MomentsStore } from "./store/moments";
-export type { PushStore, ReadsStore, SettingsStore } from "./store/settings";
+export type {
+    PushStore,
+    PushSubscriptionRow,
+    ReadsStore,
+    SettingsStore,
+} from "./store/settings";
 export type {
     AABillStore,
     RedPacketStore,
