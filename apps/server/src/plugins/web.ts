@@ -59,10 +59,7 @@ export const webPlugin: Plugin = {
                 /<title[^>]*>[\s\S]*?<\/title>/i,
                 `<title>${siteName}</title>`,
             );
-            html = html.replace(
-                /content="plugim"/g,
-                `content="${siteName}"`,
-            );
+            html = html.replace(/content="plugim"/g, `content="${siteName}"`);
             if (siteName !== "plugim" && html.includes("<title>plugim</title>"))
                 ctx.log.warn(
                     `index.html title replace missed (dist=${webDist})`,

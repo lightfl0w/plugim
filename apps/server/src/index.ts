@@ -23,6 +23,7 @@ import { momentsPlugin } from "./plugins/moments";
 import { orgPlugin } from "./plugins/org";
 import { pushPlugin } from "./plugins/push";
 import { screenPlugin } from "./plugins/screen";
+import { stickersPlugin } from "./plugins/stickers";
 import { storagePlugin } from "./plugins/storage";
 import { tasksPlugin } from "./plugins/tasks";
 import { webPlugin } from "./plugins/web";
@@ -97,6 +98,7 @@ await autoDiscoverPlugins(ctx, [
     pushPlugin,
     screenPlugin,
     storagePlugin,
+    stickersPlugin,
     tasksPlugin,
     webPlugin,
     containerPlugin,

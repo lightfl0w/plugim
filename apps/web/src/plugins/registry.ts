@@ -8,6 +8,7 @@ import { momentsPlugin } from "./moments";
 import { presencePlugin } from "./presence";
 import { senderPlugin } from "./sender";
 import { settingsPlugin } from "./settings";
+import { stickersPlugin } from "./stickers";
 import { uiViewsPlugin } from "./ui-views";
 
 export const globalPlugins: Plugin[] = [
@@ -20,6 +21,7 @@ export const globalPlugins: Plugin[] = [
     momentsPlugin,
     presencePlugin,
     cachePlugin,
+    stickersPlugin,
     uiViewsPlugin,
 ];
 

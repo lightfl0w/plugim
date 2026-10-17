@@ -157,6 +157,17 @@ export interface UserSearchResult {
     users: UserSearchHit[];
 }
 
+export interface StickerItem {
+    url: string;
+    name: string;
+    mime: string;
+    size: number;
+}
+
+export interface StickerListResult {
+    stickers: StickerItem[];
+}
+
 export interface MessageRecalledEvent {
     id: string;
     session: string;

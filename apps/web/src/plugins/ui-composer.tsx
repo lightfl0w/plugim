@@ -3,6 +3,7 @@ import type {
     GroupInfo,
     GroupRole,
     MessageQuote,
+    StickerItem,
     TypingEvent,
 } from "@plugim/protocol";
 import { MENTION_ALL, MENTION_ALL_LABEL } from "@plugim/protocol";
@@ -10,6 +11,7 @@ import {
     ImageIcon,
     MicIcon,
     PaperclipIcon,
+    PlusIcon,
     SmileIcon,
     SquareIcon,
     XIcon,
@@ -21,6 +23,7 @@ import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { ConnStatus, RpcService } from "./connection";
 import type { SenderService } from "./sender";
+import type { StickersService } from "./stickers";
 import { draftStore } from "./ui-drafts";
 import { showAlert } from "./ui-shared";
 import type { UiService } from "./ui-types";
@@ -58,6 +61,7 @@ export const uiComposerSetup = async (ctx: Context) => {
     const ui = ctx.get<UiService>("ui");
     const rpc = ctx.get<RpcService>("rpc");
     const sender = ctx.get<SenderService>("sender");
+    const stickers = ctx.get<StickersService>("stickers");
     const auth = ctx.get<AuthService>("auth");
     let currentSession = "";
     let uploadLimitMb = 20;
@@ -86,6 +90,11 @@ export const uiComposerSetup = async (ctx: Context) => {
         const [status, setStatus] = useState<ConnStatus>(rpc.status());
         const [sending, setSending] = useState(false);
         const [emojiOpen, setEmojiOpen] = useState(false);
+        const [stickerTab, setStickerTab] = useState<"emoji" | "mine">("emoji");
+        const [myStickers, setMyStickers] = useState<StickerItem[]>(
+            stickers.cached(),
+        );
+        const stickerFileRef = useRef<HTMLInputElement>(null);
         const [mentionIndex, setMentionIndex] = useState(0);
         const [recording, setRecording] = useState(false);
         const [groupMembers, setGroupMembers] = useState<string[]>([]);
@@ -137,6 +146,62 @@ export const uiComposerSetup = async (ctx: Context) => {
                 clearInterval(timer);
             };
         }, []);
+
+        useEffect(() => {
+            if (!emojiOpen || stickerTab !== "mine") return;
+            void stickers
+                .refresh()
+                .then(setMyStickers)
+                .catch(() => undefined);
+        }, [emojiOpen, stickerTab]);
+
+        const sendSticker = async (item: StickerItem) => {
+            if (!currentSession || muted || sending || status !== "open")
+                return;
+            try {
+                await sender.send(
+                    currentSession,
+                    item.url,
+                    null,
+                    null,
+                    "image",
+                    {
+                        name: item.name,
+                        size: item.size,
+                        mime: item.mime,
+                    },
+                );
+                setEmojiOpen(false);
+            } catch {
+                void 0;
+            }
+        };
+
+        const addSticker = async (file: File) => {
+            if (!file.type.startsWith("image/")) {
+                showAlert("只能添加图片作为表情");
+                return;
+            }
+            if (file.size > uploadLimitMb * 1024 * 1024) {
+                showAlert(`图片超过 ${uploadLimitMb} MB 上限`);
+                return;
+            }
+            try {
+                const uploaded = await sender.upload(file, file.name);
+                const list = await stickers.add({
+                    url: uploaded.url,
+                    name: uploaded.file.name ?? file.name,
+                    mime: uploaded.file.mime ?? file.type,
+                    size: uploaded.file.size,
+                });
+                setMyStickers(list);
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            }
+        };
 
         useEffect(() => {
             const dispose = ctx.on("ui:chat:quote", (payload) => {
@@ -453,21 +518,101 @@ export const uiComposerSetup = async (ctx: Context) => {
                 }}
             >
                 {emojiOpen ? (
-                    <div className="absolute bottom-full left-2 z-20 mb-1 grid w-72 grid-cols-8 gap-0.5 rounded-xl border border-border bg-popover p-2 shadow-lg">
-                        {EMOJIS.map((emoji) => (
-                            <button
-                                key={emoji}
-                                type="button"
-                                className="rounded-md p-1 text-lg leading-none hover:bg-accent"
-                                onClick={() => {
-                                    setDraft((prev) => prev + emoji);
-                                    textareaRef.current?.focus();
-                                    requestAnimationFrame(autoGrow);
-                                }}
-                            >
-                                {emoji}
-                            </button>
-                        ))}
+                    <div className="absolute bottom-full left-2 z-20 mb-1 w-72 overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
+                        <div className="flex items-center gap-1 border-b border-border px-2 pt-1">
+                            {(
+                                [
+                                    ["emoji", "表情"],
+                                    ["mine", "我的表情"],
+                                ] as const
+                            ).map(([key, label]) => (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    className={cn(
+                                        "rounded-t-md px-2.5 py-1.5 text-xs",
+                                        stickerTab === key
+                                            ? "border-b-2 border-primary font-medium text-foreground"
+                                            : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onClick={() => setStickerTab(key)}
+                                >
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                        {stickerTab === "emoji" ? (
+                            <div className="grid max-h-56 grid-cols-8 gap-0.5 overflow-y-auto p-2">
+                                {EMOJIS.map((emoji) => (
+                                    <button
+                                        key={emoji}
+                                        type="button"
+                                        className="rounded-md p-1 text-lg leading-none hover:bg-accent"
+                                        onClick={() => {
+                                            setDraft((prev) => prev + emoji);
+                                            textareaRef.current?.focus();
+                                            requestAnimationFrame(autoGrow);
+                                        }}
+                                    >
+                                        {emoji}
+                                    </button>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="max-h-56 overflow-y-auto p-2">
+                                <div className="grid grid-cols-4 gap-1">
+                                    {myStickers.map((item) => (
+                                        <div
+                                            key={item.url}
+                                            className="group relative"
+                                        >
+                                            <button
+                                                type="button"
+                                                title={item.name}
+                                                className="flex h-16 w-full items-center justify-center rounded-md p-1 hover:bg-accent"
+                                                onClick={() =>
+                                                    void sendSticker(item)
+                                                }
+                                            >
+                                                <img
+                                                    src={item.url}
+                                                    alt={item.name}
+                                                    className="max-h-14 max-w-full object-contain"
+                                                />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                title="移除表情"
+                                                className="absolute -top-1 -right-1 hidden size-4 items-center justify-center rounded-full bg-red-500 text-white group-hover:flex"
+                                                onClick={() =>
+                                                    void stickers
+                                                        .remove(item.url)
+                                                        .then(setMyStickers)
+                                                        .catch(() => undefined)
+                                                }
+                                            >
+                                                <XIcon className="size-3" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        title="上传图片作为表情"
+                                        className="flex h-16 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+                                        onClick={() =>
+                                            stickerFileRef.current?.click()
+                                        }
+                                    >
+                                        <PlusIcon className="size-5" />
+                                    </button>
+                                </div>
+                                {myStickers.length === 0 ? (
+                                    <p className="pt-2 text-center text-xs text-muted-foreground">
+                                        点击 + 上传图片，收藏为我的表情
+                                    </p>
+                                ) : null}
+                            </div>
+                        )}
                     </div>
                 ) : null}
 
@@ -575,6 +720,17 @@ export const uiComposerSetup = async (ctx: Context) => {
                             const file = e.target.files?.[0];
                             e.target.value = "";
                             if (file) void sendFile(file);
+                        }}
+                    />
+                    <input
+                        ref={stickerFileRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (file) void addSticker(file);
                         }}
                     />
                 </div>
