@@ -1,6 +1,7 @@
 import type { Context } from "@plugim/core";
 import { lazy } from "react";
 import { TOKEN_KEY } from "./auth";
+import { parseJsonResponse } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 export type AppMode = "chat" | "enterprise";
@@ -57,7 +58,7 @@ const callInstallRpc = async (
         },
         body: JSON.stringify({ params }),
     });
-    const body = (await res.json()) as RpcResponse;
+    const body = await parseJsonResponse<RpcResponse>(res);
     if (!body.ok) throw new Error(body.message ?? "request failed");
     return body.result;
 };

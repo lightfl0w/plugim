@@ -776,7 +776,6 @@ export const uiSidebarSetup = async (ctx: Context) => {
         );
 
         const labelOf = (session: string) => {
-            if (session === "general") return "综合频道";
             if (session.startsWith("g:"))
                 return (
                     groupList?.find((group) => `g:${group.id}` === session)
@@ -786,12 +785,6 @@ export const uiSidebarSetup = async (ctx: Context) => {
         };
 
         const entries = [
-            {
-                session: "general",
-                label: "综合频道",
-                isGroup: false,
-                pending: 0,
-            },
             ...(groupList ?? []).map((group) => ({
                 session: `g:${group.id}`,
                 label: group.name,

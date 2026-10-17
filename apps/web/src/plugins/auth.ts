@@ -1,5 +1,6 @@
 import type { Plugin } from "@plugim/core";
 import type { AuthSuccess, User } from "@plugim/protocol";
+import { parseJsonResponse } from "./ui-shared";
 
 export const TOKEN_KEY = "plugim_token";
 
@@ -34,7 +35,7 @@ const callAuthRpc = async (
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ params }),
     });
-    const body = (await res.json()) as AuthResponse;
+    const body = await parseJsonResponse<AuthResponse>(res);
     if (!body.ok || !body.result)
         throw new Error(body.message ?? "request failed");
     return body.result;
@@ -65,11 +66,11 @@ export const authPlugin: Plugin = {
                     },
                     body: JSON.stringify({ params: {} }),
                 });
-                const body = (await res.json()) as {
+                const body = await parseJsonResponse<{
                     ok: boolean;
                     result?: User;
                     message?: string;
-                };
+                }>(res);
                 if (body.ok && body.result) {
                     currentUser = body.result;
                 } else {
@@ -136,10 +137,10 @@ export const authPlugin: Plugin = {
                         },
                         body: JSON.stringify({ params: {} }),
                     });
-                    const body = (await res.json()) as {
+                    const body = await parseJsonResponse<{
                         ok: boolean;
                         result?: User;
-                    };
+                    }>(res);
                     if (body.ok && body.result) {
                         currentUser = body.result;
                         notify();

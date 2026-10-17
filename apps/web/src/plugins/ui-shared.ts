@@ -114,7 +114,7 @@ export const onShellPane = (cb: () => void) => {
 export const useShellPane = (): ShellPane =>
     useSyncExternalStore(onShellPane, currentShellPane, currentShellPane);
 
-let chatTarget: ChatTarget = { session: "general", title: "综合频道" };
+let chatTarget: ChatTarget = { session: "", title: "" };
 const chatTargetListeners = new Set<() => void>();
 
 export const currentChatTarget = (): ChatTarget => chatTarget;
@@ -247,6 +247,18 @@ export const usePopupClose = (
             if (onWheel) window.removeEventListener("wheel", onWheel);
         };
     }, [open, wheel]);
+};
+
+export const parseJsonResponse = async <T>(res: Response): Promise<T> => {
+    const text = await res.text();
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        const type = res.headers.get("content-type") ?? "未知类型";
+        throw new Error(
+            `服务返回了非 JSON 响应（HTTP ${res.status}，${type}），请检查反向代理是否把 /rpc 转发到了服务端口`,
+        );
+    }
 };
 
 export const messageLabel = (

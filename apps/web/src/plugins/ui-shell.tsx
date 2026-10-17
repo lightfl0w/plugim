@@ -60,7 +60,6 @@ export const uiShellSetup = async (ctx: Context) => {
     const DetachedSession = ({ session }: { session: string }) => {
         useEffect(() => {
             const label = () => {
-                if (session === "general") return "综合频道";
                 if (session.startsWith("g:"))
                     return (
                         groups
@@ -95,12 +94,13 @@ export const uiShellSetup = async (ctx: Context) => {
         const pane = useShellPane();
         const popup = isPopupWindow();
         const detached = popup
-            ? (new URLSearchParams(window.location.search).get("session") ??
-              "general")
+            ? (new URLSearchParams(window.location.search).get("session") ?? "")
             : "";
         return (
             <RequireAuth>
-                {popup ? <DetachedSession session={detached} /> : null}
+                {popup && detached ? (
+                    <DetachedSession session={detached} />
+                ) : null}
                 <div className="flex min-h-0 w-full flex-1">
                     {popup ? null : (
                         <aside
