@@ -50,6 +50,9 @@ export const connectionPlugin: Plugin = {
             };
             socket.onclose = () => {
                 setStatus("closed");
+                for (const { reject } of pending.values())
+                    reject(new Error("连接已断开"));
+                pending.clear();
                 clearTimeout(reconnectTimer);
                 reconnectTimer = setTimeout(connect, retryDelay);
                 retryDelay = Math.min(retryDelay * 2, 30_000);

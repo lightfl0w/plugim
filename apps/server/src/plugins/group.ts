@@ -476,6 +476,36 @@ export const groupPlugin: Plugin = {
             return true;
         });
 
+        gateway.rpc("group.transferOwner", async (raw, conn) => {
+            const me = requireUser(conn);
+            const { groupId, username } = raw as unknown as {
+                groupId: string;
+                username: string;
+            };
+            const { row, members } = await requireMembership(groupId, me);
+            if (row.ownerId !== me.id) throw new Error("只有群主可以转让群主");
+            const target = await accounts.byUsername(
+                String(username ?? "")
+                    .trim()
+                    .toLowerCase(),
+            );
+            if (!target) throw new Error("用户不存在");
+            if (target.id === me.id) throw new Error("不能转让给自己");
+            if (!members.some((m) => m.userId === target.id))
+                throw new Error("该用户不在群中");
+            await groups.setOwner(groupId, target.id);
+            await groups.setRole(groupId, target.id, "owner");
+            await groups.setRole(groupId, me.id, "admin");
+            await notifyMembers(groupId);
+            await say(
+                groupId,
+                me,
+                "system",
+                `${me.username} 已将群主转让给 ${target.username}`,
+            );
+            return true;
+        });
+
         gateway.rpc("group.member.title", async (raw, conn) => {
             const me = requireUser(conn);
             const { groupId, username, title } = raw as unknown as {

@@ -14,8 +14,10 @@ import {
     DownloadIcon,
     FileIcon,
     LinkIcon,
+    LoaderCircleIcon,
     PhoneIcon,
     PinOffIcon,
+    SearchIcon,
     ShieldIcon,
     TagIcon,
     Trash2Icon,
@@ -153,6 +155,9 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
         const [expiry, setExpiry] = useState<InviteExpiry>("never");
         const [titleFor, setTitleFor] = useState<string | null>(null);
         const [titleDraft, setTitleDraft] = useState("");
+        const [memberQuery, setMemberQuery] = useState("");
+        const [filesLoadingMore, setFilesLoadingMore] = useState(false);
+        const [transferTo, setTransferTo] = useState<string | null>(null);
         const panelRef = useRef<HTMLDivElement>(null);
         const nameInputRef = useRef<HTMLInputElement>(null);
         const fileRef = useRef<HTMLInputElement>(null);
@@ -284,6 +289,14 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
 
         const me = auth.user()?.username ?? "";
         const privileged = info.myRole === "owner" || info.myRole === "admin";
+        const query = memberQuery.trim().toLowerCase();
+        const visibleMembers = query
+            ? members.filter(
+                  (member) =>
+                      member.username.toLowerCase().includes(query) ||
+                      (member.title ?? "").toLowerCase().includes(query),
+              )
+            : members;
         const memberNames = new Set(members.map((m) => m.username));
         const addable = (friends.cached()?.friends ?? []).filter(
             (name) => !memberNames.has(name),
@@ -312,6 +325,33 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                 id: item.messageId,
                 at: item.createdAt,
             });
+        };
+
+        const loadMoreFiles = async () => {
+            if (!groupId || filesLoadingMore) return;
+            setFilesLoadingMore(true);
+            try {
+                const result = (await rpc.call("group.file.list", {
+                    groupId,
+                    offset: files.length,
+                    limit: 50,
+                })) as { files: GroupFileItem[]; total: number };
+                setFiles((prev) => {
+                    const seen = new Set(prev.map((item) => item.key));
+                    return [
+                        ...prev,
+                        ...result.files.filter((item) => !seen.has(item.key)),
+                    ];
+                });
+                setTotal(result.total);
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "加载失败",
+                );
+            } finally {
+                setFilesLoadingMore(false);
+            }
         };
 
         const submitTitle = async () => {
@@ -416,13 +456,16 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                 onChange={(e) => setNameDraft(e.target.value)}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter") {
+                                        const next = nameDraft.trim();
+                                        if (next.length < 1) return;
                                         void act("group.rename", {
-                                            name: nameDraft,
+                                            name: next,
                                         });
                                         setNameDraft(null);
                                     }
                                     if (e.key === "Escape") setNameDraft(null);
                                 }}
+                                maxLength={32}
                             />
                         ) : null}
                         <span className="shrink-0 text-xs text-muted-foreground">
@@ -637,6 +680,22 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                             ) : null}
                                         </div>
                                     ))}
+                                    {files.length < total ? (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="mt-1"
+                                            disabled={filesLoadingMore}
+                                            onClick={() => void loadMoreFiles()}
+                                        >
+                                            {filesLoadingMore ? (
+                                                <LoaderCircleIcon className="animate-spin" />
+                                            ) : null}
+                                            {filesLoadingMore
+                                                ? "加载中..."
+                                                : `加载更多（剩余 ${total - files.length}）`}
+                                        </Button>
+                                    ) : null}
                                 </div>
                             )}
                         </section>
@@ -937,7 +996,8 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                         <section className="p-4">
                             <div className="mb-2 flex items-center justify-between">
                                 <p className="text-xs font-semibold text-muted-foreground">
-                                    群成员
+                                    群成员 {members.length}
+                                    {query ? ` / ${visibleMembers.length}` : ""}
                                 </p>
                                 {privileged ? (
                                     <button
@@ -950,6 +1010,33 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                     </button>
                                 ) : null}
                             </div>
+                            {members.length > 8 ? (
+                                <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-muted/40 px-2">
+                                    <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                                    <input
+                                        value={memberQuery}
+                                        placeholder="搜索成员或头衔"
+                                        className="h-8 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                                        onChange={(e) =>
+                                            setMemberQuery(e.target.value)
+                                        }
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Escape")
+                                                setMemberQuery("");
+                                        }}
+                                    />
+                                    {memberQuery ? (
+                                        <button
+                                            type="button"
+                                            title="清空"
+                                            className="rounded p-1 text-muted-foreground hover:bg-accent"
+                                            onClick={() => setMemberQuery("")}
+                                        >
+                                            <XIcon className="size-3.5" />
+                                        </button>
+                                    ) : null}
+                                </div>
+                            ) : null}
                             {adding ? (
                                 <div className="mb-3 flex flex-col gap-1 rounded-lg bg-muted/50 p-2">
                                     {addable.length === 0 ? (
@@ -1003,7 +1090,12 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                 </div>
                             ) : null}
                             <div className="flex flex-col">
-                                {members.map((member) => (
+                                {visibleMembers.length === 0 ? (
+                                    <p className="py-4 text-center text-xs text-muted-foreground">
+                                        没有匹配「{memberQuery}」的成员
+                                    </p>
+                                ) : null}
+                                {visibleMembers.map((member) => (
                                     <Fragment key={member.username}>
                                         <div className="flex items-center gap-2.5 rounded-lg px-1 py-2">
                                             <span className="relative">
@@ -1097,8 +1189,25 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                                     member.role !== "owner" ? (
                                                         <button
                                                             type="button"
+                                                            title="转让群主"
+                                                            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-amber-500 hover:bg-amber-500/10"
+                                                            disabled={busy}
+                                                            onClick={() =>
+                                                                setTransferTo(
+                                                                    member.username,
+                                                                )
+                                                            }
+                                                        >
+                                                            <CrownIcon className="size-4" />
+                                                        </button>
+                                                    ) : null}
+                                                    {info.myRole === "owner" &&
+                                                    member.username !== me &&
+                                                    member.role !== "owner" ? (
+                                                        <button
+                                                            type="button"
                                                             title="设置头衔"
-                                                            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+                                                            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent"
                                                             disabled={busy}
                                                             onClick={() => {
                                                                 setTitleFor(
@@ -1119,7 +1228,7 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                                         <button
                                                             type="button"
                                                             className={cn(
-                                                                "shrink-0 rounded-md border border-border px-2 py-1 text-xs",
+                                                                "shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-xs",
                                                                 member.role ===
                                                                     "admin"
                                                                     ? "text-muted-foreground hover:bg-accent"
@@ -1157,7 +1266,7 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                                                     ? "解除禁言"
                                                                     : "禁言"
                                                             }
-                                                            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+                                                            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent"
                                                             disabled={busy}
                                                             onClick={() =>
                                                                 void act(
@@ -1194,17 +1303,36 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                                                     ? "退出群聊"
                                                                     : "移出群聊"
                                                             }
-                                                            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+                                                            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent"
                                                             disabled={busy}
-                                                            onClick={() =>
-                                                                void act(
-                                                                    "group.member.remove",
-                                                                    {
-                                                                        username:
-                                                                            member.username,
-                                                                    },
+                                                            onClick={() => {
+                                                                const target =
+                                                                    member.username;
+                                                                const action =
+                                                                    () =>
+                                                                        void act(
+                                                                            "group.member.remove",
+                                                                            {
+                                                                                username:
+                                                                                    target,
+                                                                            },
+                                                                        );
+                                                                if (
+                                                                    target ===
+                                                                    me
                                                                 )
-                                                            }
+                                                                    showConfirm(
+                                                                        `退出群聊「${info.name}」？退出后将不再接收该群消息`,
+                                                                        action,
+                                                                        "退出群聊",
+                                                                    );
+                                                                else
+                                                                    showConfirm(
+                                                                        `将 ${target} 移出群聊「${info.name}」？`,
+                                                                        action,
+                                                                        "移出群聊",
+                                                                    );
+                                                            }}
                                                         >
                                                             <UserMinusIcon className="size-4" />
                                                         </button>
@@ -1270,6 +1398,62 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                             </Button>
                         )}
                     </div>
+                    {transferTo ? (
+                        <div
+                            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+                            role="dialog"
+                            aria-modal="true"
+                            aria-label="转让群主"
+                            onClick={(event) => {
+                                if (event.target === event.currentTarget)
+                                    setTransferTo(null);
+                            }}
+                            onKeyDown={(event) => {
+                                if (event.key === "Escape") setTransferTo(null);
+                            }}
+                        >
+                            <div className="w-full max-w-xs rounded-xl border border-border bg-card p-4 shadow-xl">
+                                <p className="text-sm font-semibold">
+                                    转让群主
+                                </p>
+                                <p className="mt-1.5 text-sm text-muted-foreground">
+                                    将群「{info.name}」的群主转让给 {transferTo}
+                                    ？转让后你将作为普通成员留在此群，此操作不可撤销。
+                                </p>
+                                <div className="mt-4 flex justify-end gap-2">
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => setTransferTo(null)}
+                                    >
+                                        取消
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        disabled={busy}
+                                        onClick={async () => {
+                                            const target = transferTo;
+                                            setTransferTo(null);
+                                            showConfirm(
+                                                `确认把群主转让给 ${target}？转让后你将不再是群主`,
+                                                async () => {
+                                                    await act(
+                                                        "group.transferOwner",
+                                                        {
+                                                            username: target,
+                                                        },
+                                                    );
+                                                },
+                                                "转让群主",
+                                            );
+                                        }}
+                                    >
+                                        确认转让
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                    ) : null}
                 </div>
             </div>
         );

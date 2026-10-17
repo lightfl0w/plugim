@@ -63,6 +63,7 @@ import {
     presenceStatusMeta,
     setShellPane,
     showAlert,
+    showHint,
     usePopupClose,
 } from "./ui-shared";
 import type { UiService } from "./ui-types";
@@ -496,12 +497,19 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const [creating, setCreating] = useState(false);
         const [addTab, setAddTab] = useState<"friend" | "group">("friend");
         const [searchKey, setSearchKey] = useState("");
+        const [searchError, setSearchError] = useState(false);
+        const [searchNonce, setSearchNonce] = useState(0);
         const [searchHits, setSearchHits] = useState<
             { name: string; relation: string; title?: string | null }[]
         >([]);
         const [searchLoading, setSearchLoading] = useState(false);
         const [addingName, setAddingName] = useState("");
+        const [requestTarget, setRequestTarget] = useState<{
+            name: string;
+            title?: string;
+        } | null>(null);
         const [requestMsg, setRequestMsg] = useState("");
+        const requestMsgRef = useRef<HTMLInputElement>(null);
         const activeRef = useRef(active);
         const unreadRef = useRef<Record<string, number>>({});
         const previewsRef = useRef<Record<string, SessionPreview>>({});
@@ -583,6 +591,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         : [...prev, session];
                     if (me)
                         void cache.setPinned(me, next).catch(() => undefined);
+                    showHint(next.includes(session) ? "已置顶" : "已取消置顶");
                     return next;
                 });
             },
@@ -598,6 +607,11 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     dndRef.current = next;
                     if (me)
                         localStorage.setItem(dndKey(me), JSON.stringify(next));
+                    showHint(
+                        next.includes(session)
+                            ? "已开启免打扰"
+                            : "已关闭免打扰",
+                    );
                     return next;
                 });
             },
@@ -766,11 +780,21 @@ export const uiSidebarSetup = async (ctx: Context) => {
         );
 
         useEffect(() => {
-            if (createOpen) {
+            if (!createOpen) return;
+            const id = requestAnimationFrame(() => {
                 if (addTab === "friend") searchInputRef.current?.focus();
                 else nameInputRef.current?.focus();
-            }
+            });
+            return () => cancelAnimationFrame(id);
         }, [createOpen, addTab]);
+
+        useEffect(() => {
+            if (!requestTarget) return;
+            const id = requestAnimationFrame(() =>
+                requestMsgRef.current?.focus(),
+            );
+            return () => cancelAnimationFrame(id);
+        }, [requestTarget]);
 
         useEffect(() => {
             const keyword = query.trim();
@@ -872,6 +896,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
 
         useEffect(() => {
             const keyword = searchKey.trim();
+            const attempt = searchNonce;
             clearTimeout(searchTimerRef.current);
             if (!keyword) {
                 setSearchHits([]);
@@ -880,6 +905,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
             }
             setSearchLoading(true);
             searchTimerRef.current = setTimeout(() => {
+                if (attempt !== searchNonce) return;
                 void rpc
                     .call("user.search", { keyword })
                     .then((result) =>
@@ -895,17 +921,20 @@ export const uiSidebarSetup = async (ctx: Context) => {
                             ).users,
                         ),
                     )
-                    .catch(() => setSearchHits([]))
+                    .then(() => setSearchError(false))
+                    .catch(() => {
+                        setSearchHits([]);
+                        setSearchError(true);
+                    })
                     .finally(() => setSearchLoading(false));
             }, 250);
             return () => clearTimeout(searchTimerRef.current);
-        }, [searchKey]);
+        }, [searchKey, searchNonce]);
 
-        const sendFriendRequest = async (name: string) => {
+        const sendFriendRequest = async (name: string, message?: string) => {
             setAddingName(name);
             try {
-                await friends.request(name, requestMsg.trim());
-                setRequestMsg("");
+                await friends.request(name, message?.trim() || undefined);
                 setSearchHits((prev) =>
                     prev.map((hit) =>
                         hit.name === name
@@ -1024,6 +1053,8 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                     onClick={() => {
                                         setPlusOpen(false);
                                         setAddTab("group");
+                                        setGroupName("");
+                                        setInvitees([]);
                                         setCreateOpen(true);
                                     }}
                                 >
@@ -1152,6 +1183,8 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                             variant="outline"
                                             onClick={() => {
                                                 setAddTab("group");
+                                                setGroupName("");
+                                                setInvitees([]);
                                                 setCreateOpen(true);
                                             }}
                                         >
@@ -1279,15 +1312,6 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                             setSearchKey(e.target.value)
                                         }
                                     />
-                                    <input
-                                        value={requestMsg}
-                                        maxLength={50}
-                                        placeholder="验证留言（选填，最多 50 字）"
-                                        className="h-8 rounded-lg border border-border bg-transparent px-3 text-xs outline-none focus:border-primary"
-                                        onChange={(e) =>
-                                            setRequestMsg(e.target.value)
-                                        }
-                                    />
                                     <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
                                         {searchLoading ? (
                                             <p className="p-3 text-xs text-muted-foreground">
@@ -1301,6 +1325,22 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                         ) : null}
                                         {!searchLoading &&
                                         searchKey.trim() &&
+                                        searchError ? (
+                                            <button
+                                                type="button"
+                                                className="w-full p-3 text-left text-xs text-destructive hover:bg-accent/60"
+                                                onClick={() =>
+                                                    setSearchKey(
+                                                        `${searchKey} `,
+                                                    )
+                                                }
+                                            >
+                                                搜索失败，点击重试
+                                            </button>
+                                        ) : null}
+                                        {!searchLoading &&
+                                        searchKey.trim() &&
+                                        !searchError &&
                                         searchHits.length === 0 ? (
                                             <p className="p-3 text-xs text-muted-foreground">
                                                 没有找到用户
@@ -1326,9 +1366,24 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                                     ) : null}
                                                 </span>
                                                 {hit.relation === "friend" ? (
-                                                    <span className="shrink-0 text-xs text-muted-foreground">
-                                                        已是好友
-                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                                                        onClick={() => {
+                                                            setCreateOpen(
+                                                                false,
+                                                            );
+                                                            openSession(
+                                                                `p2p:${hit.name}`,
+                                                                displayName(
+                                                                    hit.name,
+                                                                    list?.remarks,
+                                                                ),
+                                                            );
+                                                        }}
+                                                    >
+                                                        发消息
+                                                    </button>
                                                 ) : hit.relation ===
                                                   "outgoing" ? (
                                                     <span className="shrink-0 text-xs text-muted-foreground">
@@ -1336,9 +1391,20 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                                     </span>
                                                 ) : hit.relation ===
                                                   "incoming" ? (
-                                                    <span className="shrink-0 text-xs text-muted-foreground">
-                                                        对方申请中，去好友页处理
-                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                                                        onClick={() => {
+                                                            setCreateOpen(
+                                                                false,
+                                                            );
+                                                            navigate(
+                                                                "/friends",
+                                                            );
+                                                        }}
+                                                    >
+                                                        去处理
+                                                    </button>
                                                 ) : (
                                                     <Button
                                                         variant="outline"
@@ -1348,15 +1414,17 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                                             addingName ===
                                                             hit.name
                                                         }
-                                                        onClick={() =>
-                                                            void sendFriendRequest(
-                                                                hit.name,
-                                                            )
-                                                        }
+                                                        onClick={() => {
+                                                            setRequestMsg("");
+                                                            setRequestTarget({
+                                                                name: hit.name,
+                                                                title:
+                                                                    hit.title ??
+                                                                    undefined,
+                                                            });
+                                                        }}
                                                     >
-                                                        {addingName === hit.name
-                                                            ? "发送中"
-                                                            : "加好友"}
+                                                        加好友
                                                     </Button>
                                                 )}
                                             </div>
@@ -1442,6 +1510,82 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                     </Button>
                                 </div>
                             ) : null}
+                        </div>
+                    </div>
+                ) : null}
+
+                {requestTarget ? (
+                    <div
+                        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="添加好友"
+                        onKeyDown={(e) => {
+                            if (e.key === "Escape") setRequestTarget(null);
+                        }}
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget)
+                                setRequestTarget(null);
+                        }}
+                    >
+                        <div className="flex w-full max-w-xs flex-col gap-3 rounded-2xl bg-card p-4 shadow-xl">
+                            <p className="text-sm font-semibold">添加好友</p>
+                            <div className="flex items-center gap-2">
+                                <UserAvatar
+                                    name={requestTarget.name}
+                                    size="sm"
+                                />
+                                <div className="min-w-0">
+                                    <p className="truncate text-sm">
+                                        {requestTarget.name}
+                                    </p>
+                                    {requestTarget.title ? (
+                                        <p className="truncate text-[11px] text-muted-foreground">
+                                            {requestTarget.title}
+                                        </p>
+                                    ) : null}
+                                </div>
+                            </div>
+                            <input
+                                ref={requestMsgRef}
+                                value={requestMsg}
+                                maxLength={50}
+                                placeholder="验证留言（选填）"
+                                className="h-9 rounded-lg border border-border bg-transparent px-3 text-sm outline-none focus:border-primary"
+                                onChange={(e) => setRequestMsg(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key !== "Enter") return;
+                                    const target = requestTarget;
+                                    setRequestTarget(null);
+                                    void sendFriendRequest(
+                                        target.name,
+                                        requestMsg,
+                                    );
+                                }}
+                            />
+                            <div className="flex justify-end gap-2">
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setRequestTarget(null)}
+                                >
+                                    取消
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    disabled={addingName === requestTarget.name}
+                                    onClick={() => {
+                                        const target = requestTarget;
+                                        setRequestTarget(null);
+                                        void sendFriendRequest(
+                                            target.name,
+                                            requestMsg,
+                                        );
+                                    }}
+                                >
+                                    发送申请
+                                </Button>
+                            </div>
                         </div>
                     </div>
                 ) : null}

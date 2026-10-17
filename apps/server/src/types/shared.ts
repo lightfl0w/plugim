@@ -1,6 +1,5 @@
 import type {
     FileMeta,
-    LinkPreview,
     MessageKind,
     MessageQuote,
     MessageReactions,

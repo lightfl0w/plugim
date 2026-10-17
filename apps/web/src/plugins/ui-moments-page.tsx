@@ -769,7 +769,9 @@ export const createMomentsPage = (ctx: Context): FC => {
         const [draft, setDraft] = useState("");
         const [busy, setBusy] = useState(false);
         const [error, setError] = useState("");
+        const [likesOpen, setLikesOpen] = useState(false);
         const liked = post.likes.some((like) => like.username === me);
+        const remarks = friendService.cached()?.remarks ?? {};
 
         const run = async (fn: () => Promise<void>) => {
             setBusy(true);
@@ -977,25 +979,83 @@ export const createMomentsPage = (ctx: Context): FC => {
                     </Button>
                 </div>
                 {post.likes.length > 0 ? (
-                    <p className="mt-1.5 flex items-start gap-1 text-xs text-muted-foreground">
-                        <HeartIcon className="mt-0.5 size-3.5 shrink-0 fill-current text-rose-500" />
-                        <span className="break-words">
-                            {post.likes.map((like) => like.username).join("、")}
-                        </span>
-                    </p>
+                    <div className="mt-1.5 rounded-lg bg-muted/50 px-2 py-1.5">
+                        <button
+                            type="button"
+                            className="flex w-full items-start gap-1 text-left text-xs text-muted-foreground"
+                            onClick={() => setLikesOpen((v) => !v)}
+                        >
+                            <HeartIcon className="mt-0.5 size-3.5 shrink-0 fill-current text-rose-500" />
+                            <span className="min-w-0 flex-1">
+                                {likesOpen
+                                    ? post.likes
+                                          .map((like) =>
+                                              displayName(
+                                                  like.username,
+                                                  remarks,
+                                              ),
+                                          )
+                                          .join("、")
+                                    : post.likes
+                                          .slice(0, 3)
+                                          .map((like) =>
+                                              displayName(
+                                                  like.username,
+                                                  remarks,
+                                              ),
+                                          )
+                                          .join("、")}
+                                {post.likes.length > 3 && !likesOpen
+                                    ? ` 等 ${post.likes.length} 人`
+                                    : ""}
+                            </span>
+                            <span className="mt-0.5 shrink-0 text-[10px]">
+                                {likesOpen ? "收起" : "展开"}
+                            </span>
+                        </button>
+                    </div>
                 ) : null}
                 {post.comments.length > 0 ? (
                     <div className="mt-1.5 flex flex-col gap-1 rounded-lg bg-muted/50 p-2">
                         {post.comments.map((comment) => (
-                            <p key={comment.id} className="text-xs break-words">
-                                <span className="font-medium text-primary">
-                                    {comment.author}
+                            <div
+                                key={comment.id}
+                                className="group flex items-start gap-2 text-xs break-words"
+                            >
+                                <span className="min-w-0 flex-1">
+                                    <span className="font-medium text-primary">
+                                        {displayName(comment.author, remarks)}
+                                    </span>
+                                    <span className="text-muted-foreground">
+                                        ：
+                                    </span>
+                                    {comment.content}
                                 </span>
-                                <span className="text-muted-foreground">
-                                    ：
-                                </span>
-                                {comment.content}
-                            </p>
+                                {comment.author === me || post.author === me ? (
+                                    <button
+                                        type="button"
+                                        title="删除评论"
+                                        className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground opacity-70 hover:bg-accent hover:text-destructive group-hover:opacity-100"
+                                        disabled={busy}
+                                        onClick={() => {
+                                            showConfirm(
+                                                "删除这条评论？",
+                                                () => {
+                                                    void run(() =>
+                                                        moments.removeComment(
+                                                            post.id,
+                                                            comment.id,
+                                                        ),
+                                                    );
+                                                },
+                                                "删除评论",
+                                            );
+                                        }}
+                                    >
+                                        <Trash2Icon className="size-3.5" />
+                                    </button>
+                                ) : null}
+                            </div>
                         ))}
                     </div>
                 ) : null}

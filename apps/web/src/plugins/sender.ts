@@ -51,6 +51,7 @@ export interface SenderService {
         mentions?: string[] | null,
     ): Promise<ChatMessage>;
     retry(tempId: string): Promise<void>;
+    discard(tempId: string): void;
 }
 
 export const kindFor = (mime: string): MessageKind => {
@@ -194,6 +195,15 @@ export const senderPlugin: Plugin = {
                         old.file,
                     )
                     .catch(() => undefined);
+            },
+            discard(tempId) {
+                const old = registry.get(tempId);
+                if (!old) return;
+                registry.delete(tempId);
+                ctx.emit("chat:pending", {
+                    type: "remove",
+                    pending: old,
+                } satisfies PendingEvent);
             },
         };
 

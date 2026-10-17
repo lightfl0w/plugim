@@ -4,10 +4,16 @@ import { parseJsonResponse } from "./ui-shared";
 
 export const TOKEN_KEY = "plugim_token";
 
+export interface RegisterPolicy {
+    requireInvite: boolean;
+    open: boolean;
+}
+
 export interface AuthService {
     token(): string | null;
     user(): User | null;
     restoring(): boolean;
+    registerPolicy(): Promise<RegisterPolicy>;
     login(username: string, password: string): Promise<User>;
     register(
         username: string,
@@ -89,6 +95,10 @@ export const authPlugin: Plugin = {
             token: () => currentToken,
             user: () => currentUser,
             restoring: () => isRestoring,
+            async registerPolicy() {
+                const res = await fetch("/auth/register-policy");
+                return parseJsonResponse<RegisterPolicy>(res);
+            },
             async login(username, password) {
                 const success = await callAuthRpc("auth.login", {
                     username,

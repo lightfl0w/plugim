@@ -1,5 +1,5 @@
 import type { Context } from "@plugim/core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
@@ -15,7 +15,7 @@ import {
     FieldLabel,
 } from "../components/ui/field";
 import { Input } from "../components/ui/input";
-import type { AuthService } from "./auth";
+import type { AuthService, RegisterPolicy } from "./auth";
 import type { UiService } from "./ui-types";
 
 export const uiAuthSetup = async (ctx: Context) => {
@@ -29,6 +29,30 @@ export const uiAuthSetup = async (ctx: Context) => {
         const [inviteCode, setInviteCode] = useState("");
         const [error, setError] = useState("");
         const [busy, setBusy] = useState(false);
+        const [policy, setPolicy] = useState<RegisterPolicy | null>(null);
+
+        useEffect(() => {
+            let alive = true;
+            void auth
+                .registerPolicy()
+                .then((next) => {
+                    if (alive) setPolicy(next);
+                })
+                .catch(() => {
+                    if (alive) setPolicy({ requireInvite: false, open: true });
+                });
+            return () => {
+                alive = false;
+            };
+        }, []);
+
+        const needInvite =
+            mode === "register" && policy?.requireInvite === true;
+        const registerClosed =
+            mode === "register" &&
+            policy !== null &&
+            !policy.open &&
+            !needInvite;
 
         const submit = async () => {
             if (busy) return;
@@ -101,14 +125,14 @@ export const uiAuthSetup = async (ctx: Context) => {
                                     <FieldError>{error}</FieldError>
                                 ) : null}
                             </Field>
-                            {mode === "register" ? (
+                            {needInvite ? (
                                 <Field>
                                     <FieldLabel htmlFor="auth-invite">
                                         邀请码
                                     </FieldLabel>
                                     <Input
                                         id="auth-invite"
-                                        placeholder="服务器要求时填写"
+                                        placeholder="请输入管理员提供的邀请码"
                                         value={inviteCode}
                                         onChange={(e) =>
                                             setInviteCode(e.target.value)
@@ -116,13 +140,20 @@ export const uiAuthSetup = async (ctx: Context) => {
                                     />
                                 </Field>
                             ) : null}
+                            {registerClosed ? (
+                                <FieldError>
+                                    该服务器已关闭注册，请联系管理员开通账号
+                                </FieldError>
+                            ) : null}
                             <Button
                                 type="submit"
                                 className="w-full"
                                 disabled={
                                     busy ||
+                                    registerClosed ||
                                     !username.trim() ||
-                                    password.length < 6
+                                    password.length < 6 ||
+                                    (needInvite && !inviteCode.trim())
                                 }
                             >
                                 {mode === "login" ? "登录" : "注册"}

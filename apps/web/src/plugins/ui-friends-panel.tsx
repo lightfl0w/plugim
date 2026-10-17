@@ -19,6 +19,7 @@ import {
     displayName,
     openChat,
     setShellPane,
+    showAlert,
     showConfirm,
     usePopupClose,
 } from "./ui-shared";
@@ -159,7 +160,12 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                     ) : null}
                 </span>
                 {list?.starred?.includes(name) ? (
-                    <StarIcon className="ml-auto size-3.5 shrink-0 fill-amber-400 text-amber-400" />
+                    <span
+                        title="特别关心"
+                        className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[11px] text-amber-500"
+                    >
+                        <StarIcon className="size-3.5 fill-amber-400 text-amber-400" />
+                    </span>
                 ) : null}
             </button>
         );
@@ -351,9 +357,7 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                                         size="sm"
                                         className="h-7 px-2 text-xs"
                                         onClick={() =>
-                                            void friends
-                                                .accept(name)
-                                                .catch(() => undefined)
+                                            void run(() => friends.accept(name))
                                         }
                                     >
                                         同意
@@ -363,9 +367,7 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                                         size="sm"
                                         className="h-7 px-2 text-xs"
                                         onClick={() =>
-                                            void friends
-                                                .reject(name)
-                                                .catch(() => undefined)
+                                            void run(() => friends.reject(name))
                                         }
                                     >
                                         拒绝
@@ -393,9 +395,7 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                                     size="sm"
                                     className="h-7 px-2 text-xs"
                                     onClick={() =>
-                                        void friends
-                                            .unblock(name)
-                                            .catch(() => undefined)
+                                        void run(() => friends.unblock(name))
                                     }
                                 >
                                     取消屏蔽
@@ -554,6 +554,16 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
         const navigate = useNavigate();
         const list = useFriendList();
         const remark = list?.remarks?.[name] ?? "";
+        const act = async (fn: () => Promise<unknown>) => {
+            try {
+                await fn();
+            } catch (err) {
+                showAlert(
+                    err instanceof Error ? err.message : String(err),
+                    "操作失败",
+                );
+            }
+        };
         return (
             <div className="flex h-full flex-col overflow-y-auto">
                 <BackBar />
@@ -588,15 +598,27 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                         <Button
                             variant="outline"
                             onClick={() =>
-                                void friends.block(name).catch(() => undefined)
+                                showConfirm(
+                                    `屏蔽 ${name} 后，对方将无法给你发送消息`,
+                                    () => void act(() => friends.block(name)),
+                                    "屏蔽好友",
+                                )
                             }
                         >
                             屏蔽
                         </Button>
                         <Button
-                            variant="outline"
+                            variant="destructive"
                             onClick={() =>
-                                void friends.remove(name).catch(() => undefined)
+                                showConfirm(
+                                    `删除好友 ${name}？聊天记录将不再保留在好友列表中`,
+                                    () =>
+                                        void act(async () => {
+                                            await friends.remove(name);
+                                            navigate("/friends");
+                                        }),
+                                    "删除好友",
+                                )
                             }
                         >
                             删除

@@ -2102,6 +2102,12 @@ export const storagePlugin: Plugin = {
                         .set({ name })
                         .where(eq(groupsPg.id, id));
                 },
+                async setOwner(id, ownerId) {
+                    await db
+                        .update(groupsPg)
+                        .set({ ownerId })
+                        .where(eq(groupsPg.id, id));
+                },
                 async setNotice(id, notice) {
                     await db
                         .update(groupsPg)
@@ -2811,6 +2817,19 @@ export const storagePlugin: Plugin = {
                         .where(inArray(momentCommentsPg.postId, postIds))
                         .orderBy(asc(momentCommentsPg.createdAt));
                     return rows.map(momentCommentToRow);
+                },
+                async commentById(id) {
+                    const rows = await db
+                        .select()
+                        .from(momentCommentsPg)
+                        .where(eq(momentCommentsPg.id, id))
+                        .limit(1);
+                    return rows[0] ? momentCommentToRow(rows[0]) : null;
+                },
+                async removeComment(id) {
+                    await db
+                        .delete(momentCommentsPg)
+                        .where(eq(momentCommentsPg.id, id));
                 },
             };
 
@@ -3801,6 +3820,12 @@ export const storagePlugin: Plugin = {
                         .set({ name })
                         .where(eq(groupsSqlite.id, id));
                 },
+                async setOwner(id, ownerId) {
+                    await db
+                        .update(groupsSqlite)
+                        .set({ ownerId })
+                        .where(eq(groupsSqlite.id, id));
+                },
                 async setNotice(id, notice) {
                     await db
                         .update(groupsSqlite)
@@ -4557,6 +4582,19 @@ export const storagePlugin: Plugin = {
                         .where(inArray(momentCommentsSqlite.postId, postIds))
                         .orderBy(asc(momentCommentsSqlite.createdAt));
                     return rows.map(momentCommentToRow);
+                },
+                async commentById(id) {
+                    const rows = await db
+                        .select()
+                        .from(momentCommentsSqlite)
+                        .where(eq(momentCommentsSqlite.id, id))
+                        .limit(1);
+                    return rows[0] ? momentCommentToRow(rows[0]) : null;
+                },
+                async removeComment(id) {
+                    await db
+                        .delete(momentCommentsSqlite)
+                        .where(eq(momentCommentsSqlite.id, id));
                 },
             };
 

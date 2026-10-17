@@ -553,7 +553,17 @@ export interface MomentCommentParams {
     content: string;
 }
 
-export type MomentAction = "publish" | "delete" | "like" | "comment";
+export interface MomentCommentDeleteParams {
+    postId: string;
+    commentId: string;
+}
+
+export type MomentAction =
+    | "publish"
+    | "delete"
+    | "like"
+    | "comment"
+    | "commentDelete";
 
 export interface MomentUpdateEvent {
     action: MomentAction;

@@ -33,6 +33,7 @@ import {
     memo,
     useCallback,
     useEffect,
+    useLayoutEffect,
     useMemo,
     useReducer,
     useRef,
@@ -58,6 +59,7 @@ import {
     formatBytes,
     longPressMenu,
     messageLabel,
+    showHint,
     useChatTarget,
     usePopupClose,
 } from "./ui-shared";
@@ -854,6 +856,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
             y: number;
         } | null>(null);
         const menuRef = useRef<HTMLDivElement>(null);
+        const [menuHeight, setMenuHeight] = useState(160);
         const paletteRef = useRef<HTMLDivElement>(null);
         const [pending, setPending] = useState<PendingMessage[]>([]);
         const [atBottom, setAtBottom] = useState(true);
@@ -887,7 +890,6 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 { id: mergeSeq.current, payload },
             ]);
         };
-        const [hint, setHint] = useState<string | null>(null);
         const [essenceIds, setEssenceIds] = useState<Set<string>>(new Set());
         const [groupTitles, setGroupTitles] = useState<Record<string, string>>(
             {},
@@ -918,9 +920,6 @@ export const uiMessagesSetup = async (ctx: Context) => {
             at: string;
         } | null>(null);
         const pokeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-            undefined,
-        );
-        const hintTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
             undefined,
         );
         const user = auth.user();
@@ -1355,6 +1354,11 @@ export const uiMessagesSetup = async (ctx: Context) => {
 
         usePopupClose(menuRef, !!menu, () => setMenu(null), true);
 
+        useLayoutEffect(() => {
+            if (menu && menuRef.current)
+                setMenuHeight(menuRef.current.offsetHeight);
+        }, [menu]);
+
         usePopupClose(paletteRef, !!reactFor, () => setReactFor(null), true);
 
         const sessionPending = pending.filter(
@@ -1412,8 +1416,12 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 requestAnimationFrame(() => {
                     if (el) el.scrollTop = el.scrollHeight - prevHeight;
                 });
-            } catch {
-                setHasMore(false);
+            } catch (err) {
+                showHint(
+                    err instanceof Error
+                        ? `加载更早消息失败：${err.message}`
+                        : "加载更早消息失败，请重试",
+                );
             } finally {
                 setLoadingOlder(false);
                 loadingRef.current = false;
@@ -1511,13 +1519,23 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const recall = async (message: ChatMessage) => {
             try {
                 await rpc.call("message.recall", { id: message.id });
-            } catch {}
+                showHint("已撤回");
+            } catch (err) {
+                showHint(
+                    err instanceof Error
+                        ? `撤回失败：${err.message}`
+                        : "撤回失败",
+                );
+            }
         };
 
         const copy = async (message: ChatMessage) => {
             try {
                 await navigator.clipboard.writeText(message.content);
-            } catch {}
+                showHint("已复制");
+            } catch {
+                showHint("复制失败");
+            }
         };
 
         const reply = (message: ChatMessage) => {
@@ -1574,12 +1592,6 @@ export const uiMessagesSetup = async (ctx: Context) => {
             } catch (err) {
                 showHint(err instanceof Error ? err.message : String(err));
             }
-        };
-
-        const showHint = (text: string) => {
-            setHint(text);
-            if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
-            hintTimerRef.current = setTimeout(() => setHint(null), 2400);
         };
 
         const setEssence = (message: ChatMessage, on: boolean) => {
@@ -1878,21 +1890,35 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                 <MessageContent>
                                     <div className="flex items-center gap-1.5 self-end">
                                         {item.state === "failed" ? (
-                                            <button
-                                                type="button"
-                                                title={
-                                                    item.error ??
-                                                    "发送失败，点击重发"
-                                                }
-                                                className="text-destructive"
-                                                onClick={() =>
-                                                    void sender.retry(
-                                                        item.tempId,
-                                                    )
-                                                }
-                                            >
-                                                <AlertCircleIcon className="size-4.5" />
-                                            </button>
+                                            <span className="flex items-center gap-1">
+                                                <button
+                                                    type="button"
+                                                    title={
+                                                        item.error ??
+                                                        "发送失败，点击重发"
+                                                    }
+                                                    className="text-destructive"
+                                                    onClick={() =>
+                                                        void sender.retry(
+                                                            item.tempId,
+                                                        )
+                                                    }
+                                                >
+                                                    <AlertCircleIcon className="size-4.5" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="删除这条失败的消息"
+                                                    className="text-muted-foreground hover:text-foreground"
+                                                    onClick={() =>
+                                                        sender.discard(
+                                                            item.tempId,
+                                                        )
+                                                    }
+                                                >
+                                                    <XIcon className="size-4" />
+                                                </button>
+                                            </span>
                                         ) : (
                                             <ClockIcon className="size-3.5 text-muted-foreground" />
                                         )}
@@ -1944,11 +1970,6 @@ export const uiMessagesSetup = async (ctx: Context) => {
                             <ArrowDownIcon className="size-4" />
                         </button>
                     ) : null}
-                    {hint ? (
-                        <div className="pointer-events-none absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-full bg-foreground/80 px-3 py-1.5 text-xs text-background shadow-md">
-                            {hint}
-                        </div>
-                    ) : null}
                     {selectMode ? (
                         <div className="absolute bottom-3 left-1/2 z-10 flex h-10 -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-background px-4 text-xs shadow-md">
                             <span className="font-medium">
@@ -1985,8 +2006,17 @@ export const uiMessagesSetup = async (ctx: Context) => {
                         role="menu"
                         className="fixed z-50 w-36 rounded-lg border border-border bg-popover py-1 text-sm shadow-lg"
                         style={{
-                            left: Math.min(menu.x, window.innerWidth - 160),
-                            top: Math.min(menu.y, window.innerHeight - 160),
+                            left: Math.max(
+                                8,
+                                Math.min(menu.x, window.innerWidth - 160),
+                            ),
+                            top: Math.max(
+                                8,
+                                Math.min(
+                                    menu.y,
+                                    window.innerHeight - menuHeight - 8,
+                                ),
+                            ),
                         }}
                         onContextMenu={(e) => e.preventDefault()}
                     >

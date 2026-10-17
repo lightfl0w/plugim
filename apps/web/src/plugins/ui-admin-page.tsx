@@ -465,6 +465,17 @@ export const createAdminPage = (ctx: Context): FC => {
         const [newDept, setNewDept] = useState("");
         const [newTitle, setNewTitle] = useState("");
         const [newUserBusy, setNewUserBusy] = useState(false);
+        const newName = newUsername.trim().toLowerCase();
+        const newUserNameError =
+            newName.length === 0
+                ? ""
+                : !/^[a-z0-9_]{2,24}$/.test(newName)
+                  ? "用户名只能包含小写字母、数字或下划线，长度 2-24 位"
+                  : "";
+        const newUserPassError =
+            newPassword.length === 0 || newPassword.length >= 6
+                ? ""
+                : "初始密码至少 6 位";
         const [registerPolicy, setRegisterPolicy] =
             useState<RegisterPolicy | null>(null);
         const [inviteDraft, setInviteDraft] = useState("");
@@ -1029,6 +1040,7 @@ export const createAdminPage = (ctx: Context): FC => {
 
         const submitNewUser = async () => {
             if (newUserBusy) return;
+            if (newUserNameError || newUserPassError) return;
             setNewUserBusy(true);
             try {
                 await rpc.call("admin.user.create", {
@@ -2473,18 +2485,38 @@ export const createAdminPage = (ctx: Context): FC => {
                                 <Input
                                     value={newUsername}
                                     placeholder="用户名：2-24 位小写字母、数字或下划线"
+                                    aria-invalid={Boolean(newUserNameError)}
+                                    className={cn(
+                                        newUserNameError &&
+                                            "border-destructive focus-visible:ring-destructive/30",
+                                    )}
                                     onChange={(e) =>
                                         setNewUsername(e.target.value)
                                     }
                                 />
+                                {newUserNameError ? (
+                                    <p className="-mt-1 text-xs text-destructive">
+                                        {newUserNameError}
+                                    </p>
+                                ) : null}
                                 <Input
                                     type="password"
                                     value={newPassword}
                                     placeholder="初始密码，至少 6 位"
+                                    aria-invalid={Boolean(newUserPassError)}
+                                    className={cn(
+                                        newUserPassError &&
+                                            "border-destructive focus-visible:ring-destructive/30",
+                                    )}
                                     onChange={(e) =>
                                         setNewPassword(e.target.value)
                                     }
                                 />
+                                {newUserPassError ? (
+                                    <p className="-mt-1 text-xs text-destructive">
+                                        {newUserPassError}
+                                    </p>
+                                ) : null}
                                 <select
                                     value={newDept}
                                     onChange={(e) => setNewDept(e.target.value)}
@@ -2519,7 +2551,9 @@ export const createAdminPage = (ctx: Context): FC => {
                                     size="sm"
                                     disabled={
                                         newUserBusy ||
-                                        newUsername.trim().length < 2 ||
+                                        Boolean(newUserNameError) ||
+                                        Boolean(newUserPassError) ||
+                                        newName.length < 2 ||
                                         newPassword.length < 6
                                     }
                                     onClick={() => void submitNewUser()}

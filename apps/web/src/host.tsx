@@ -35,9 +35,11 @@ import {
     closeAlert,
     currentAlert,
     currentConfirm,
+    currentHint,
     isPopupWindow,
     onAlert,
     onConfirmChange,
+    onHintChange,
 } from "./plugins/ui-shared";
 import type { UiService, UiSlot } from "./plugins/ui-types";
 
@@ -288,6 +290,22 @@ export const mountHost = (ctx: Context): void => {
         );
     };
 
+    const HintHost = () => {
+        const hint = useSyncExternalStore(
+            onHintChange,
+            currentHint,
+            currentHint,
+        );
+        if (!hint) return null;
+        return (
+            <div className="pointer-events-none fixed inset-x-0 bottom-20 z-[85] flex justify-center px-4 md:bottom-8">
+                <p className="max-w-[80vw] rounded-lg bg-foreground/90 px-3 py-2 text-sm text-background shadow-lg">
+                    {hint}
+                </p>
+            </div>
+        );
+    };
+
     const ConfirmHost = () => {
         const confirm = useSyncExternalStore(
             onConfirmChange,
@@ -384,6 +402,7 @@ export const mountHost = (ctx: Context): void => {
                 </main>
                 <AlertHost />
                 <ConfirmHost />
+                <HintHost />
                 <Slot
                     slot="global-overlay"
                     className="pointer-events-none fixed inset-0 z-[80]"

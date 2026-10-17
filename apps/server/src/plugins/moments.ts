@@ -2,6 +2,7 @@ import type { Plugin } from "@plugim/core";
 import type {
     LinkPreviewParams,
     MomentAction,
+    MomentCommentDeleteParams,
     MomentCommentParams,
     MomentForwardParams,
     MomentLikeParams,
@@ -346,6 +347,22 @@ export const momentsPlugin: Plugin = {
                 content,
             });
             await notify(row, "comment", me);
+            return buildOne(row, me.id);
+        });
+
+        gateway.rpc("moment.comment.delete", async (raw, conn) => {
+            const me = requireUser(conn);
+            const params = raw as unknown as MomentCommentDeleteParams;
+            const row = await loadVisible(params.postId, me);
+            const comment = await store.commentById(
+                String(params.commentId ?? ""),
+            );
+            if (!comment || comment.postId !== row.id)
+                throw new Error("评论不存在或已被删除");
+            if (comment.authorId !== me.id && row.authorId !== me.id)
+                throw new Error("只能删除自己的评论");
+            await store.removeComment(comment.id);
+            await notify(row, "commentDelete", me);
             return buildOne(row, me.id);
         });
 

@@ -440,3 +440,27 @@ export const onConfirmChange = (cb: () => void) => {
         confirmListeners.delete(cb);
     };
 };
+
+let hintState: string | null = null;
+let hintTimer: ReturnType<typeof setTimeout> | null = null;
+const hintListeners = new Set<() => void>();
+
+export const showHint = (text: string) => {
+    hintState = text;
+    if (hintTimer) clearTimeout(hintTimer);
+    for (const cb of hintListeners) cb();
+    hintTimer = setTimeout(() => {
+        hintState = null;
+        hintTimer = null;
+        for (const cb of hintListeners) cb();
+    }, 2400);
+};
+
+export const currentHint = (): string | null => hintState;
+
+export const onHintChange = (cb: () => void) => {
+    hintListeners.add(cb);
+    return () => {
+        hintListeners.delete(cb);
+    };
+};

@@ -37,6 +37,7 @@ export interface MomentsService {
     forward(postId: string, sessions: string[]): Promise<void>;
     like(postId: string, liked: boolean): Promise<void>;
     comment(postId: string, content: string): Promise<void>;
+    removeComment(postId: string, commentId: string): Promise<void>;
     remove(postId: string): Promise<void>;
     onUpdate(cb: () => void): () => void;
 }
@@ -195,6 +196,13 @@ export const momentsPlugin: Plugin = {
                 const post = (await rpc.call("moment.comment", {
                     postId,
                     content,
+                })) as MomentPost;
+                upsert(post);
+            },
+            async removeComment(postId, commentId) {
+                const post = (await rpc.call("moment.comment.delete", {
+                    postId,
+                    commentId,
                 })) as MomentPost;
                 upsert(post);
             },

@@ -1,9 +1,11 @@
 import type { Context } from "@plugim/core";
+import { CloudOffIcon, LoaderCircleIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
+import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { InstallService } from "./ui-install";
@@ -195,12 +197,66 @@ export const uiShellSetup = async (ctx: Context) => {
         );
     };
 
+    const uiShellSetupBanner = async () => {
+        const rpc = ctx.get<RpcService>("rpc");
+        const Banner = () => {
+            const status = useSyncExternalStore(
+                (cb) => rpc.onStatus(cb),
+                () => rpc.status(),
+                () => rpc.status(),
+            );
+            const path = useLocation().pathname;
+            const [since, setSince] = useState(0);
+            useEffect(() => {
+                if (status === "open") return undefined;
+                setSince(Date.now());
+                const timer = window.setInterval(() => {
+                    if (rpc.status() !== "open") setSince(Date.now());
+                }, 1000);
+                return () => window.clearInterval(timer);
+            }, [status]);
+            if (status === "open") return null;
+            if (path === "/install") return null;
+            const seconds = Math.max(
+                0,
+                Math.round((Date.now() - since) / 1000),
+            );
+            return (
+                <div className="pointer-events-auto absolute inset-x-0 top-0 z-10 flex justify-center px-3 pt-[max(0.5rem,env(safe-area-inset-top))]">
+                    <div
+                        role="status"
+                        className={cn(
+                            "flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-xs shadow-lg backdrop-blur",
+                            status === "connecting"
+                                ? "bg-amber-500/90 text-white"
+                                : "bg-red-500/90 text-white",
+                        )}
+                    >
+                        {status === "connecting" ? (
+                            <LoaderCircleIcon className="size-3.5 animate-spin" />
+                        ) : (
+                            <CloudOffIcon className="size-3.5" />
+                        )}
+                        <span className="truncate">
+                            {status === "connecting"
+                                ? "正在连接服务器..."
+                                : `连接已断开，${seconds} 秒后重连，消息可能发送失败`}
+                        </span>
+                    </div>
+                </div>
+            );
+        };
+        return ui.register("global-overlay", Banner, 90);
+    };
+
     const unregisterChat = ui.registerRoute("/chat", ChatPage);
     const unregisterFriends = ui.registerRoute("/friends", FriendsPage);
     const unregisterLogin = ui.registerRoute("/login", LoginPage);
+    const unregisterBanner = await uiShellSetupBanner();
     return () => {
         unregisterChat();
         unregisterFriends();
         unregisterLogin();
+        unregisterBanner();
     };
 };

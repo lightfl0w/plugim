@@ -139,6 +139,18 @@ export const authPlugin: Plugin = {
             };
         };
 
+        gateway.hono().get("/auth/register-policy", async (c) => {
+            const policy = await registerPolicy();
+            const hasUsers = (await accounts.count()) > 0;
+            return c.json({
+                requireInvite: hasUsers && Boolean(policy.inviteCode),
+                open:
+                    !hasUsers || !policy.inviteCode
+                        ? policy.allowRegister
+                        : false,
+            });
+        });
+
         gateway.rpc("auth.register", async (raw) => {
             const params = raw as unknown as {
                 username: string;

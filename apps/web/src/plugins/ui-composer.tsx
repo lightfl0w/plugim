@@ -25,7 +25,7 @@ import type { ConnStatus, RpcService } from "./connection";
 import type { SenderService } from "./sender";
 import type { StickersService } from "./stickers";
 import { draftStore } from "./ui-drafts";
-import { showAlert } from "./ui-shared";
+import { showAlert, usePopupClose } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const EMOJIS = [
@@ -90,6 +90,8 @@ export const uiComposerSetup = async (ctx: Context) => {
         const [status, setStatus] = useState<ConnStatus>(rpc.status());
         const [sending, setSending] = useState(false);
         const [emojiOpen, setEmojiOpen] = useState(false);
+        const emojiPanelRef = useRef<HTMLDivElement>(null);
+        const emojiButtonRef = useRef<HTMLSpanElement>(null);
         const [stickerTab, setStickerTab] = useState<"emoji" | "mine">("emoji");
         const [myStickers, setMyStickers] = useState<StickerItem[]>(
             stickers.cached(),
@@ -154,6 +156,10 @@ export const uiComposerSetup = async (ctx: Context) => {
                 .then(setMyStickers)
                 .catch(() => undefined);
         }, [emojiOpen, stickerTab]);
+
+        usePopupClose([emojiPanelRef, emojiButtonRef], emojiOpen, () =>
+            setEmojiOpen(false),
+        );
 
         const sendSticker = async (item: StickerItem) => {
             if (!currentSession || muted || sending || status !== "open")
@@ -372,17 +378,25 @@ export const uiComposerSetup = async (ctx: Context) => {
                 writeDraft("");
                 setQuote(null);
                 autoGrow();
-            } catch {
-                writeDraft("");
-                setQuote(null);
-                autoGrow();
+            } catch (err) {
+                showAlert(
+                    err instanceof Error
+                        ? `发送失败：${err.message}\n内容已保留，可点击失败消息重试`
+                        : "发送失败，内容已保留",
+                    "发送失败",
+                );
+                requestAnimationFrame(autoGrow);
             } finally {
                 setSending(false);
             }
         };
 
         const sendFile = async (file: File) => {
-            if (status !== "open" || sending || !currentSession) return;
+            if (!currentSession || muted) return;
+            if (status !== "open" || sending) {
+                showAlert("当前处于离线状态，连接恢复后再发送附件");
+                return;
+            }
             if (file.size > uploadLimitMb * 1024 * 1024) {
                 showAlert(`文件超过 ${uploadLimitMb} MB 上限`);
                 return;
@@ -518,7 +532,10 @@ export const uiComposerSetup = async (ctx: Context) => {
                 }}
             >
                 {emojiOpen ? (
-                    <div className="absolute bottom-full left-2 z-20 mb-1 w-72 overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
+                    <div
+                        ref={emojiPanelRef}
+                        className="absolute bottom-full left-2 z-20 mb-1 w-72 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+                    >
                         <div className="flex items-center gap-1 border-b border-border px-2 pt-1">
                             {(
                                 [
@@ -666,13 +683,15 @@ export const uiComposerSetup = async (ctx: Context) => {
                 ) : null}
 
                 <div className="flex items-center gap-0.5 px-1">
-                    {toolButton(
-                        "表情",
-                        <SmileIcon className="size-5" />,
-                        () => setEmojiOpen((v) => !v),
-                        emojiOpen,
-                        muted,
-                    )}
+                    <span ref={emojiButtonRef} className="inline-flex">
+                        {toolButton(
+                            "表情",
+                            <SmileIcon className="size-5" />,
+                            () => setEmojiOpen((v) => !v),
+                            emojiOpen,
+                            muted,
+                        )}
+                    </span>
                     {toolButton(
                         "图片",
                         <ImageIcon className="size-5" />,
@@ -820,7 +839,7 @@ export const uiComposerSetup = async (ctx: Context) => {
                         }
                         onClick={() => void submit()}
                     >
-                        {sending ? "发送中" : "发送(S)"}
+                        {sending ? "发送中" : "发送"}
                     </Button>
                 </div>
             </div>

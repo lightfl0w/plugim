@@ -39,4 +39,6 @@ export interface MomentsStore {
         content: string;
     }): Promise<MomentCommentRow>;
     commentsOf(postIds: string[]): Promise<MomentCommentRow[]>;
+    commentById(id: string): Promise<MomentCommentRow | null>;
+    removeComment(id: string): Promise<void>;
 }

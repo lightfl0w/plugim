@@ -7,6 +7,7 @@ export interface GroupsStore {
     byInviteCode(code: string): Promise<GroupRow | null>;
     remove(id: string): Promise<void>;
     rename(id: string, name: string): Promise<void>;
+    setOwner(id: string, ownerId: string): Promise<void>;
     setNotice(id: string, notice: string): Promise<void>;
     setMuteAll(id: string, on: boolean): Promise<void>;
     setNoFriendAdd(id: string, on: boolean): Promise<void>;

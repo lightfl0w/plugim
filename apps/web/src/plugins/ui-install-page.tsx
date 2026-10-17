@@ -88,6 +88,7 @@ export const createInstallPage = (ctx: Context): FC => {
         const [mode, setMode] = useState<ModeValue>("enterprise");
         const [invite, setInvite] = useState("");
         const [error, setError] = useState("");
+        const [errorField, setErrorField] = useState<string>("");
         const [busy, setBusy] = useState(false);
         const prefilled = useRef(false);
 
@@ -112,14 +113,21 @@ export const createInstallPage = (ctx: Context): FC => {
             logDir: logDir.trim(),
         });
 
+        const fail = (message: string, field: string) => {
+            setError(message);
+            setErrorField(field);
+        };
+
         const runTest = async () => {
             setError("");
+            setErrorField("");
             setTesting(true);
             try {
                 await install.testDb(dbOptions());
                 setRestartNote("连接正常");
             } catch (err) {
                 setRestartNote("");
+                setErrorField(driver === "sqlite" ? "dbFile" : "dbUrl");
                 setError(await staleGuard(err, () => install.reload()));
             } finally {
                 setTesting(false);
@@ -128,6 +136,7 @@ export const createInstallPage = (ctx: Context): FC => {
 
         const runSaveAndRestart = async () => {
             setError("");
+            setErrorField("");
             setBusy(true);
             try {
                 await install.saveDb(dbOptions());
@@ -144,6 +153,7 @@ export const createInstallPage = (ctx: Context): FC => {
                 setStep(back.hasUsers ? 2 : 1);
             } catch (err) {
                 setRestartNote("");
+                setErrorField(driver === "sqlite" ? "dbFile" : "dbUrl");
                 setError(await staleGuard(err, () => install.reload()));
             } finally {
                 setBusy(false);
@@ -152,16 +162,17 @@ export const createInstallPage = (ctx: Context): FC => {
 
         const submitAdmin = async () => {
             setError("");
+            setErrorField("");
             if (!/^[a-z0-9_]{2,24}$/.test(username.trim())) {
-                setError("用户名需为 2-24 位小写字母、数字或下划线");
+                fail("用户名需为 2-24 位小写字母、数字或下划线", "username");
                 return;
             }
             if (password.length < 6) {
-                setError("密码至少需要 6 位");
+                fail("密码至少需要 6 位", "password");
                 return;
             }
             if (password !== confirm) {
-                setError("两次输入的密码不一致");
+                fail("两次输入的密码不一致", "confirm");
                 return;
             }
             setBusy(true);
@@ -169,7 +180,10 @@ export const createInstallPage = (ctx: Context): FC => {
                 await auth.register(username.trim(), password);
                 setStep(2);
             } catch (err) {
-                setError(err instanceof Error ? err.message : "创建失败");
+                fail(
+                    err instanceof Error ? err.message : "创建失败",
+                    "username",
+                );
             } finally {
                 setBusy(false);
             }
@@ -177,8 +191,9 @@ export const createInstallPage = (ctx: Context): FC => {
 
         const submitPolicy = async () => {
             setError("");
+            setErrorField("");
             if (policy === "invite" && !invite.trim()) {
-                setError("请设置邀请码");
+                fail("请设置邀请码", "invite");
                 return;
             }
             setBusy(true);
@@ -190,11 +205,15 @@ export const createInstallPage = (ctx: Context): FC => {
                 });
                 navigate("/chat", { replace: true });
             } catch (err) {
+                setErrorField("policy");
                 setError(await staleGuard(err, () => install.reload()));
             } finally {
                 setBusy(false);
             }
         };
+
+        const fieldError = (field: string) =>
+            errorField === field ? <FieldError>{error}</FieldError> : null;
 
         const driverButton = (
             value: "sqlite" | "postgres",
@@ -299,6 +318,7 @@ export const createInstallPage = (ctx: Context): FC => {
                                                 setDbFile(e.target.value)
                                             }
                                         />
+                                        {fieldError("dbFile")}
                                     </Field>
                                 ) : (
                                     <Field>
@@ -319,6 +339,7 @@ export const createInstallPage = (ctx: Context): FC => {
                                                 setDbUrl(e.target.value)
                                             }
                                         />
+                                        {fieldError("dbUrl")}
                                     </Field>
                                 )}
                                 <Field>
@@ -334,9 +355,6 @@ export const createInstallPage = (ctx: Context): FC => {
                                         }
                                     />
                                 </Field>
-                                {error ? (
-                                    <FieldError>{error}</FieldError>
-                                ) : null}
                                 {restartNote ? (
                                     <p className="text-xs text-primary">
                                         {restartNote}
@@ -390,6 +408,7 @@ export const createInstallPage = (ctx: Context): FC => {
                                                 setUsername(e.target.value)
                                             }
                                         />
+                                        {fieldError("username")}
                                     </Field>
                                     <Field>
                                         <FieldLabel htmlFor="ins-pass">
@@ -405,6 +424,7 @@ export const createInstallPage = (ctx: Context): FC => {
                                                 setPassword(e.target.value)
                                             }
                                         />
+                                        {fieldError("password")}
                                     </Field>
                                     <Field>
                                         <FieldLabel htmlFor="ins-confirm">
@@ -420,10 +440,8 @@ export const createInstallPage = (ctx: Context): FC => {
                                                 setConfirm(e.target.value)
                                             }
                                         />
+                                        {fieldError("confirm")}
                                     </Field>
-                                    {error ? (
-                                        <FieldError>{error}</FieldError>
-                                    ) : null}
                                     <Button
                                         type="submit"
                                         className="w-full"
@@ -464,6 +482,7 @@ export const createInstallPage = (ctx: Context): FC => {
                                                 setInvite(e.target.value)
                                             }
                                         />
+                                        {fieldError("invite")}
                                     </Field>
                                 ) : null}
                                 <p className="text-sm font-medium">站点模式</p>
@@ -477,9 +496,7 @@ export const createInstallPage = (ctx: Context): FC => {
                                         ),
                                     )}
                                 </div>
-                                {error ? (
-                                    <FieldError>{error}</FieldError>
-                                ) : null}
+                                {fieldError("policy")}
                                 <Button
                                     className="w-full"
                                     disabled={busy}
