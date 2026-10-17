@@ -1119,9 +1119,42 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                 />
                             ))}
                             {entries.length === 0 ? (
-                                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                                    还没有会话，去好友页添加好友或右上角新建群聊
-                                </p>
+                                <div className="mx-2 mt-6 flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-5 text-center">
+                                    <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+                                        <MessagesSquareIcon className="size-6 text-muted-foreground" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium">
+                                            开始你的第一段对话
+                                        </p>
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                            添加好友，或直接发起群聊
+                                        </p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            size="sm"
+                                            onClick={() => {
+                                                setAddTab("friend");
+                                                setSearchKey("");
+                                                setSearchHits([]);
+                                                setCreateOpen(true);
+                                            }}
+                                        >
+                                            添加好友
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => {
+                                                setAddTab("group");
+                                                setCreateOpen(true);
+                                            }}
+                                        >
+                                            发起群聊
+                                        </Button>
+                                    </div>
+                                </div>
                             ) : null}
                         </>
                     )}

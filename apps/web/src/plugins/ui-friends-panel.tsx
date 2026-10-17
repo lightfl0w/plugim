@@ -311,6 +311,20 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                                 }),
                         ),
                     )}
+                    {(list?.friends ?? []).length === 0 ? (
+                        <div className="mt-3 flex flex-col items-center gap-2 rounded-xl border border-dashed border-border p-4 text-center">
+                            <p className="text-xs text-muted-foreground">
+                                还没有好友，搜索站内用户发送申请吧
+                            </p>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => ctx.emit("ui:contacts:add", {})}
+                            >
+                                添加好友
+                            </Button>
+                        </div>
+                    ) : null}
                     {section(
                         "收到的申请",
                         (list?.incoming ?? []).map((name) => (
