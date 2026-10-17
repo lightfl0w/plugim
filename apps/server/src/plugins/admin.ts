@@ -333,6 +333,37 @@ export const adminPlugin: Plugin = {
             return { days: value };
         });
 
+        const siteInfo = async () => ({
+            name: (await settings.get("site_name")) ?? "",
+            icon: (await settings.get("site_icon")) ?? "",
+        });
+
+        gateway.rpc("admin.site.get", async (_raw, conn) => {
+            await requireAdmin(conn, accounts);
+            return siteInfo();
+        });
+
+        gateway.rpc("admin.site.set", async (raw, conn) => {
+            const me = await requireAdmin(conn, accounts);
+            const params = raw as unknown as { name?: unknown; icon?: unknown };
+            const name =
+                typeof params.name === "string" ? params.name.trim() : "";
+            if (name.length > 30) throw new Error("站点名称不能超过 30 个字符");
+            const icon =
+                typeof params.icon === "string" ? params.icon.trim() : "";
+            if (icon && !FILE_KEY_RE.test(icon))
+                throw new Error("图标地址无效");
+            await settings.set("site_name", name);
+            await settings.set("site_icon", icon);
+            await audit.log({
+                actorId: me.id,
+                actor: me.username,
+                action: "admin.site",
+                detail: `更新站点信息（名称：${name || "默认"}）`,
+            });
+            return siteInfo();
+        });
+
         gateway.rpc("admin.cleanup", async (_raw, conn) => {
             const me = await requireAdmin(conn, accounts);
             const days = await retentionDays();

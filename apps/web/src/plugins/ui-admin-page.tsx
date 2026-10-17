@@ -8,6 +8,7 @@ import {
     FolderInputIcon,
     FolderTreeIcon,
     HardDriveIcon,
+    ImageIcon,
     KeyRoundIcon,
     PencilIcon,
     PlayIcon,
@@ -31,10 +32,16 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
+import { TOKEN_KEY } from "./auth";
 import type { RpcService } from "./connection";
 import type { AdminService } from "./ui-admin";
 import type { AppMode, InstallService } from "./ui-install";
-import { formatBytes, showAlert, showConfirm } from "./ui-shared";
+import {
+    applySiteMeta,
+    formatBytes,
+    showAlert,
+    showConfirm,
+} from "./ui-shared";
 
 interface AdminUserRow {
     id: string;
@@ -430,6 +437,9 @@ export const createAdminPage = (ctx: Context): FC => {
         const [trendDays, setTrendDays] = useState(14);
         const [trend, setTrend] = useState<TrendPoint[]>([]);
         const [retention, setRetention] = useState("");
+        const [siteDraft, setSiteDraft] = useState({ name: "", icon: "" });
+        const [siteBusy, setSiteBusy] = useState(false);
+        const iconInputRef = useRef<HTMLInputElement>(null);
         const [resetUser, setResetUser] = useState<AdminUserRow | null>(null);
         const [resetPassword, setResetPassword] = useState("");
         const [resetBusy, setResetBusy] = useState(false);
@@ -612,7 +622,22 @@ export const createAdminPage = (ctx: Context): FC => {
             }
             if (tab === "tasks") loadTasks();
             if (tab === "audit") loadAudit(0);
-            if (tab === "system") loadRegister();
+            if (tab === "system") {
+                loadRegister();
+                void rpc
+                    .call("admin.site.get", {})
+                    .then((result) => {
+                        const info = result as {
+                            name?: string;
+                            icon?: string;
+                        };
+                        setSiteDraft({
+                            name: info.name ?? "",
+                            icon: info.icon ?? "",
+                        });
+                    })
+                    .catch(() => undefined);
+            }
         }, [
             tab,
             allowed,
@@ -650,6 +675,67 @@ export const createAdminPage = (ctx: Context): FC => {
                         "出错了",
                     ),
                 );
+        };
+
+        const saveSite = async (draft?: { name: string; icon: string }) => {
+            const next = draft ?? siteDraft;
+            setSiteBusy(true);
+            try {
+                const result = (await rpc.call("admin.site.set", {
+                    name: next.name,
+                    icon: next.icon,
+                })) as { name: string; icon: string };
+                applySiteMeta({ name: result.name, icon: result.icon });
+                setSiteDraft({
+                    name: result.name ?? "",
+                    icon: result.icon ?? "",
+                });
+                showAlert("站点信息已保存");
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            } finally {
+                setSiteBusy(false);
+            }
+        };
+
+        const uploadIcon = async (file: File) => {
+            if (!file.type.startsWith("image/")) {
+                showAlert("请选择图片文件");
+                return;
+            }
+            setSiteBusy(true);
+            try {
+                const res = await fetch("/upload", {
+                    method: "POST",
+                    headers: {
+                        authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}`,
+                        "content-type": file.type,
+                        "x-file-name": encodeURIComponent(file.name),
+                    },
+                    body: file,
+                });
+                const body = (await res.json()) as {
+                    ok: boolean;
+                    result?: { url: string };
+                    message?: string;
+                };
+                if (!body.ok || !body.result)
+                    throw new Error(body.message ?? "上传失败");
+                await saveSite({
+                    name: siteDraft.name,
+                    icon: body.result.url,
+                });
+            } catch (err) {
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "出错了",
+                );
+            } finally {
+                setSiteBusy(false);
+            }
         };
 
         const runCleanup = () => {
@@ -2168,6 +2254,90 @@ export const createAdminPage = (ctx: Context): FC => {
                                             ? "切换为企业模式"
                                             : "切换为聊天模式"}
                                     </Button>
+                                </div>
+                                <div className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
+                                    <div className="flex items-center gap-3">
+                                        <ImageIcon className="size-4 text-muted-foreground" />
+                                        <p className="flex-1">站点信息</p>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <p className="w-14 shrink-0 text-xs text-muted-foreground">
+                                            名称
+                                        </p>
+                                        <Input
+                                            value={siteDraft.name}
+                                            placeholder="plugim"
+                                            onChange={(e) =>
+                                                setSiteDraft((d) => ({
+                                                    ...d,
+                                                    name: e.target.value,
+                                                }))
+                                            }
+                                            className="h-8 flex-1"
+                                        />
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <p className="w-14 shrink-0 text-xs text-muted-foreground">
+                                            图标
+                                        </p>
+                                        {siteDraft.icon ? (
+                                            <img
+                                                src={siteDraft.icon}
+                                                alt="站点图标"
+                                                className="size-8 rounded"
+                                            />
+                                        ) : (
+                                            <span className="flex size-8 items-center justify-center rounded border border-border text-xs text-muted-foreground">
+                                                无
+                                            </span>
+                                        )}
+                                        <input
+                                            ref={iconInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={(e) => {
+                                                const file =
+                                                    e.target.files?.[0];
+                                                e.target.value = "";
+                                                if (file) void uploadIcon(file);
+                                            }}
+                                        />
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={siteBusy}
+                                            onClick={() =>
+                                                iconInputRef.current?.click()
+                                            }
+                                        >
+                                            上传图标
+                                        </Button>
+                                        {siteDraft.icon ? (
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={siteBusy}
+                                                onClick={() =>
+                                                    void saveSite({
+                                                        name: siteDraft.name,
+                                                        icon: "",
+                                                    })
+                                                }
+                                            >
+                                                移除
+                                            </Button>
+                                        ) : null}
+                                    </div>
+                                    <div className="flex justify-end">
+                                        <Button
+                                            size="sm"
+                                            disabled={siteBusy}
+                                            onClick={() => void saveSite()}
+                                        >
+                                            保存站点信息
+                                        </Button>
+                                    </div>
                                 </div>
                                 <div className="flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm">
                                     <div className="flex items-center gap-3">

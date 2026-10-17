@@ -9,6 +9,7 @@ import type { GroupsService } from "./groups";
 import type { InstallService } from "./ui-install";
 import {
     displayName,
+    initSiteMeta,
     isPopupWindow,
     openChat,
     useShellPane,
@@ -16,6 +17,7 @@ import {
 import type { UiService } from "./ui-types";
 
 export const uiShellSetup = async (ctx: Context) => {
+    initSiteMeta(ctx);
     const ui = ctx.get<UiService>("ui");
     const auth = ctx.get<AuthService>("auth");
     const install = ctx.get<InstallService>("install");

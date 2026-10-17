@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { Plugin } from "@plugim/core";
-import type { GatewayService } from "../types";
+import type { GatewayService, SettingsStore } from "../types";
 import type { AppConfig } from "./config";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -27,10 +27,11 @@ const findWebDist = (): string | null => {
 export const webPlugin: Plugin = {
     name: "web",
     description: "生产模式单端口托管前端静态资源",
-    inject: ["gateway", "config"],
+    inject: ["gateway", "config", "settings"],
     async apply(ctx) {
         const config = ctx.get<AppConfig>("config");
         const gateway = ctx.get<GatewayService>("gateway");
+        const settings = ctx.get<SettingsStore>("settings");
         const webDist = findWebDist();
         if (!webDist) {
             ctx.log.info("web dist not found, serving API only");
@@ -46,6 +47,16 @@ export const webPlugin: Plugin = {
         } catch {}
 
         const app = gateway.hono();
+        app.get("/site/meta", async (c) => {
+            const [name, icon] = await Promise.all([
+                settings.get("site_name"),
+                settings.get("site_icon"),
+            ]);
+            return c.json({
+                name: name?.trim() || "plugim",
+                icon: icon?.trim() || "",
+            });
+        });
         app.get("/version", (c) =>
             c.json({
                 name: "plugim",

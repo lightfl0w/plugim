@@ -48,10 +48,12 @@ import type { InstallService } from "./ui-install";
 import {
     clientSessionOf,
     currentChatTarget,
+    currentSiteName,
     displayName,
     isPopupWindow,
     longPressMenu,
     messageLabel,
+    onSiteName,
     openChat,
     openDetachedChat,
     PRESENCE_STATUS_OPTIONS,
@@ -63,8 +65,6 @@ import {
     usePopupClose,
 } from "./ui-shared";
 import type { UiService } from "./ui-types";
-
-const BASE_TITLE = "plugim";
 
 const previewText = (
     content: string,
@@ -522,10 +522,15 @@ export const uiSidebarSetup = async (ctx: Context) => {
                         dndRef.current.includes(session) ? sum : sum + n,
                     0,
                 );
-                document.title =
-                    total > 0 ? `(${total}) ${BASE_TITLE}` : BASE_TITLE;
+                const base = currentSiteName();
+                document.title = total > 0 ? `(${total}) ${base}` : base;
             },
             [me],
+        );
+
+        useEffect(
+            () => onSiteName(() => applyUnread(unreadRef.current)),
+            [applyUnread],
         );
 
         const applyPreview = useCallback((message: ChatMessage) => {

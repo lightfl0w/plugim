@@ -261,6 +261,51 @@ export const parseJsonResponse = async <T>(res: Response): Promise<T> => {
     }
 };
 
+let siteNameValue = "plugim";
+const siteNameListeners = new Set<() => void>();
+
+export const currentSiteName = (): string => siteNameValue;
+
+export const onSiteName = (cb: () => void): (() => void) => {
+    siteNameListeners.add(cb);
+    return () => {
+        siteNameListeners.delete(cb);
+    };
+};
+
+export const applySiteMeta = (meta: {
+    name?: unknown;
+    icon?: unknown;
+}): void => {
+    const name =
+        typeof meta.name === "string" && meta.name.trim()
+            ? meta.name.trim()
+            : "plugim";
+    siteNameValue = name;
+    if (typeof meta.icon === "string") {
+        const href = meta.icon.trim() || "/icons/icon-192.png";
+        for (const rel of ["icon", "apple-touch-icon"]) {
+            const link = document.querySelector<HTMLLinkElement>(
+                `link[rel="${rel}"]`,
+            );
+            if (link) link.href = href;
+        }
+    }
+    for (const cb of siteNameListeners) cb();
+};
+
+export const initSiteMeta = (ctx: Context): void => {
+    void fetch("/site/meta")
+        .then((res) => res.json())
+        .then((meta) =>
+            applySiteMeta(meta as { name?: unknown; icon?: unknown }),
+        )
+        .catch(() => undefined);
+    ctx.on("server:site:meta", (payload) => {
+        applySiteMeta(payload as { name?: unknown; icon?: unknown });
+    });
+};
+
 export const messageLabel = (
     kind: string | undefined,
     content: string,
