@@ -72,6 +72,35 @@ interface AdminStats {
     retentionDays: number;
 }
 
+interface UpdateInfo {
+    supported: boolean;
+    reason?: string;
+    current?: string;
+    target?: string;
+    branch?: string;
+    behind?: number;
+    dirty?: boolean;
+    commits?: string[];
+}
+
+interface UpdatePhase {
+    phase: string;
+    message: string;
+    current: string;
+    target: string;
+    time: number;
+}
+
+const UPDATE_PHASE_TEXT: Record<string, string> = {
+    fetching: "获取远端提交",
+    pulling: "合并代码",
+    installing: "安装依赖",
+    building: "构建产物",
+    restarting: "重启服务",
+    done: "更新完成",
+    error: "更新失败",
+};
+
 interface AdminMessageRow {
     id: string;
     session: string;
@@ -480,8 +509,25 @@ export const createAdminPage = (ctx: Context): FC => {
             useState<RegisterPolicy | null>(null);
         const [inviteDraft, setInviteDraft] = useState("");
         const [modeBusy, setModeBusy] = useState(false);
+        const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+        const [updateState, setUpdateState] = useState<UpdatePhase | null>(
+            null,
+        );
+        const [updateBusy, setUpdateBusy] = useState(false);
+        const pollRef = useRef<number | null>(null);
+        const checkUpdateRef = useRef<
+            (() => Promise<UpdateInfo | null>) | null
+        >(null);
         const msgFiltersRef = useRef({ keyword: "", sender: "" });
         const auditFiltersRef = useRef({ keyword: "", category: "" });
+
+        useEffect(
+            () => () => {
+                if (pollRef.current !== null)
+                    window.clearInterval(pollRef.current);
+            },
+            [],
+        );
 
         const refresh = useCallback(() => {
             void Promise.all([
@@ -648,6 +694,7 @@ export const createAdminPage = (ctx: Context): FC => {
                         });
                     })
                     .catch(() => undefined);
+                void checkUpdateRef.current?.();
             }
         }, [
             tab,
@@ -1099,6 +1146,98 @@ export const createAdminPage = (ctx: Context): FC => {
             } finally {
                 setModeBusy(false);
             }
+        };
+
+        const stopPoll = () => {
+            if (pollRef.current !== null) {
+                window.clearInterval(pollRef.current);
+                pollRef.current = null;
+            }
+        };
+
+        const checkUpdate = async (silent = false) => {
+            if (!silent) setUpdateBusy(true);
+            try {
+                const info = (await rpc.call(
+                    "admin.update.check",
+                    {},
+                )) as UpdateInfo;
+                setUpdateInfo(info);
+                if (!silent && !info.supported && info.reason)
+                    showAlert(info.reason, "无法自动更新");
+                return info;
+            } catch (err) {
+                if (!silent)
+                    showAlert(
+                        String(err instanceof Error ? err.message : err),
+                        "检查更新失败",
+                    );
+                return null;
+            } finally {
+                if (!silent) setUpdateBusy(false);
+            }
+        };
+
+        checkUpdateRef.current = checkUpdate;
+
+        const pollUpdate = () => {
+            stopPoll();
+            pollRef.current = window.setInterval(() => {
+                void (async () => {
+                    try {
+                        const state = (await rpc.call(
+                            "admin.update.status",
+                            {},
+                        )) as UpdatePhase | null;
+                        setUpdateState(state);
+                        if (
+                            state &&
+                            (state.phase === "done" || state.phase === "error")
+                        ) {
+                            stopPoll();
+                            setUpdateBusy(false);
+                            if (state.phase === "done") {
+                                showAlert(state.message, "更新完成");
+                                setTimeout(() => location.reload(), 1500);
+                            } else {
+                                showAlert(state.message, "更新失败，已停止");
+                            }
+                        }
+                    } catch {
+                        stopPoll();
+                        setUpdateBusy(false);
+                    }
+                })();
+            }, 2000);
+        };
+
+        const startUpdate = async () => {
+            setUpdateBusy(true);
+            try {
+                await rpc.call("admin.update.apply", {});
+                setUpdateState({
+                    phase: "fetching",
+                    message: "正在启动更新器…",
+                    current: updateInfo?.current ?? "",
+                    target: updateInfo?.target ?? "",
+                    time: Math.floor(Date.now() / 1000),
+                });
+                pollUpdate();
+            } catch (err) {
+                setUpdateBusy(false);
+                showAlert(
+                    String(err instanceof Error ? err.message : err),
+                    "更新失败",
+                );
+            }
+        };
+
+        const applyUpdate = () => {
+            showConfirm(
+                "更新会拉取远端最新提交、安装依赖并重新构建，期间服务会短暂重启。确定继续吗？",
+                () => void startUpdate(),
+                "确认更新",
+            );
         };
 
         const exportAudit = async () => {
@@ -2350,6 +2489,114 @@ export const createAdminPage = (ctx: Context): FC => {
                                             保存站点信息
                                         </Button>
                                     </div>
+                                </div>
+                                <div className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
+                                    <div className="flex items-center gap-3">
+                                        <DownloadIcon className="size-4 text-muted-foreground" />
+                                        <p className="flex-1">系统更新</p>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={updateBusy}
+                                            onClick={() => void checkUpdate()}
+                                        >
+                                            检查更新
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            disabled={
+                                                updateBusy ||
+                                                !updateInfo?.supported ||
+                                                !updateInfo?.behind
+                                            }
+                                            onClick={applyUpdate}
+                                        >
+                                            立即更新
+                                        </Button>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                        <span>
+                                            当前版本{" "}
+                                            <code className="rounded bg-muted px-1 py-0.5 text-foreground">
+                                                {updateInfo?.current ??
+                                                    "读取中"}
+                                            </code>
+                                        </span>
+                                        {updateInfo?.supported ? (
+                                            updateInfo.behind ? (
+                                                <span className="text-primary">
+                                                    有 {updateInfo.behind}{" "}
+                                                    个新提交可更新
+                                                </span>
+                                            ) : (
+                                                <span>已是最新版本</span>
+                                            )
+                                        ) : (
+                                            <span className="text-amber-600 dark:text-amber-400">
+                                                {updateInfo?.reason ?? "读取中"}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {updateInfo?.dirty ? (
+                                        <p className="text-xs text-destructive">
+                                            工作区有未提交的改动，更新已禁用，请先提交或回滚
+                                        </p>
+                                    ) : null}
+                                    {updateInfo?.commits?.length ? (
+                                        <div className="max-h-40 overflow-y-auto rounded-lg bg-muted/50 p-2">
+                                            {updateInfo.commits.map((line) => (
+                                                <p
+                                                    key={line}
+                                                    className="truncate font-mono text-xs text-muted-foreground"
+                                                >
+                                                    {line}
+                                                </p>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                    {updateState ? (
+                                        <div className="flex flex-col gap-1.5 rounded-lg bg-muted/50 p-2.5">
+                                            <div className="flex items-center gap-2 text-xs">
+                                                {updateState.phase !== "done" &&
+                                                updateState.phase !==
+                                                    "error" ? (
+                                                    <PlayIcon className="size-3.5 animate-pulse text-primary" />
+                                                ) : null}
+                                                <span className="font-medium">
+                                                    {UPDATE_PHASE_TEXT[
+                                                        updateState.phase
+                                                    ] ?? updateState.phase}
+                                                </span>
+                                                <span className="text-muted-foreground">
+                                                    {updateState.message}
+                                                </span>
+                                            </div>
+                                            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                                                <div
+                                                    className={cn(
+                                                        "h-full rounded-full transition-all",
+                                                        updateState.phase ===
+                                                            "error"
+                                                            ? "bg-destructive"
+                                                            : updateState.phase ===
+                                                                "done"
+                                                              ? "bg-emerald-500"
+                                                              : "animate-pulse bg-primary",
+                                                    )}
+                                                    style={{
+                                                        width:
+                                                            updateState.phase ===
+                                                            "done"
+                                                                ? "100%"
+                                                                : updateState.phase ===
+                                                                    "error"
+                                                                  ? "100%"
+                                                                  : "45%",
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+                                    ) : null}
                                 </div>
                                 <div className="flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm">
                                     <div className="flex items-center gap-3">

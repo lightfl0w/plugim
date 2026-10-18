@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +46,34 @@ export const webPlugin: Plugin = {
             ) as { version?: string };
             version = pkg.version ?? version;
         } catch {}
+
+        let buildId = "";
+        for (const candidate of [
+            process.env.PLUGIM_REPO,
+            resolve(here, "..", "..", ".."),
+            resolve(here, "..", ".."),
+            process.cwd(),
+        ]) {
+            if (!candidate) continue;
+            if (!existsSync(resolve(candidate, ".git"))) continue;
+            try {
+                buildId = execFileSync(
+                    "git",
+                    ["rev-parse", "--short", "HEAD"],
+                    {
+                        cwd: candidate,
+                        encoding: "utf8",
+                        stdio: ["ignore", "pipe", "ignore"],
+                        timeout: 5000,
+                    },
+                ).trim();
+            } catch (err) {
+                ctx.log.warn(
+                    `git rev-parse failed in ${candidate}: ${String(err)}`,
+                );
+            }
+            if (buildId) break;
+        }
 
         const app = gateway.hono();
 
@@ -101,6 +130,7 @@ export const webPlugin: Plugin = {
             c.json({
                 name: "plugim",
                 version,
+                buildId,
                 node: process.versions.node,
                 port: config.port,
             }),

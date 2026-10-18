@@ -207,6 +207,31 @@ export const uiShellSetup = async (ctx: Context) => {
             );
             const path = useLocation().pathname;
             const [since, setSince] = useState(0);
+            const [maint, setMaint] = useState<string | null>(null);
+            useEffect(() => {
+                if (status === "open") setMaint(null);
+            }, [status]);
+            useEffect(() => {
+                const dispose = ctx.on(
+                    "server:system:maintenance",
+                    (payload) => {
+                        const data = payload as {
+                            active?: boolean;
+                            message?: unknown;
+                        };
+                        setMaint(
+                            data?.active
+                                ? typeof data.message === "string"
+                                    ? data.message
+                                    : "系统正在升级，请稍候…"
+                                : null,
+                        );
+                    },
+                );
+                return () => {
+                    void dispose();
+                };
+            }, []);
             useEffect(() => {
                 if (status === "open") return undefined;
                 setSince(Date.now());
@@ -215,7 +240,7 @@ export const uiShellSetup = async (ctx: Context) => {
                 }, 1000);
                 return () => window.clearInterval(timer);
             }, [status]);
-            if (status === "open") return null;
+            if (status === "open" && !maint) return null;
             if (path === "/install") return null;
             const seconds = Math.max(
                 0,
@@ -227,20 +252,26 @@ export const uiShellSetup = async (ctx: Context) => {
                         role="status"
                         className={cn(
                             "flex max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-xs shadow-lg backdrop-blur",
-                            status === "connecting"
-                                ? "bg-amber-500/90 text-white"
-                                : "bg-red-500/90 text-white",
+                            maint
+                                ? "bg-primary/90 text-primary-foreground"
+                                : status === "connecting"
+                                  ? "bg-amber-500/90 text-white"
+                                  : "bg-red-500/90 text-white",
                         )}
                     >
-                        {status === "connecting" ? (
+                        {maint ? (
+                            <LoaderCircleIcon className="size-3.5 animate-spin" />
+                        ) : status === "connecting" ? (
                             <LoaderCircleIcon className="size-3.5 animate-spin" />
                         ) : (
                             <CloudOffIcon className="size-3.5" />
                         )}
                         <span className="truncate">
-                            {status === "connecting"
-                                ? "正在连接服务器..."
-                                : `连接已断开，${seconds} 秒后重连，消息可能发送失败`}
+                            {maint
+                                ? maint
+                                : status === "connecting"
+                                  ? "正在连接服务器..."
+                                  : `连接已断开，${seconds} 秒后重连，消息可能发送失败`}
                         </span>
                     </div>
                 </div>

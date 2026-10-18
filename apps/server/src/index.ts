@@ -26,6 +26,7 @@ import { screenPlugin } from "./plugins/screen";
 import { stickersPlugin } from "./plugins/stickers";
 import { storagePlugin } from "./plugins/storage";
 import { tasksPlugin } from "./plugins/tasks";
+import { updatePlugin } from "./plugins/update";
 import { webPlugin } from "./plugins/web";
 
 const nodeMajor = Number(process.versions.node.split(".")[0]);
@@ -102,6 +103,7 @@ await autoDiscoverPlugins(ctx, [
     tasksPlugin,
     webPlugin,
     containerPlugin,
+    updatePlugin,
 ]);
 
 ctx.start().catch((err) => {

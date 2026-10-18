@@ -35,6 +35,34 @@ export const connectionPlugin: Plugin = {
             for (const cb of statusListeners) cb(next);
         };
 
+        const BUILD_KEY = "plugim:build";
+        const knownBuild = (): string => {
+            try {
+                return localStorage.getItem(BUILD_KEY) ?? "";
+            } catch {
+                return "";
+            }
+        };
+
+        const syncBuild = (): void => {
+            void fetch("/version")
+                .then((res) => res.json())
+                .then((data: { buildId?: unknown }) => {
+                    const id =
+                        typeof data.buildId === "string" ? data.buildId : "";
+                    if (!id) return;
+                    const prev = knownBuild();
+                    if (!prev) {
+                        try {
+                            localStorage.setItem(BUILD_KEY, id);
+                        } catch {}
+                        return;
+                    }
+                    if (prev !== id) location.reload();
+                })
+                .catch(() => undefined);
+        };
+
         const connect = () => {
             if (disposed) return;
             const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -45,7 +73,10 @@ export const connectionPlugin: Plugin = {
             socket.onopen = () => {
                 retryDelay = 1000;
                 setStatus("open");
-                if (!firstOpen) fetchSiteMeta();
+                if (!firstOpen) {
+                    fetchSiteMeta();
+                    syncBuild();
+                }
                 firstOpen = false;
             };
             socket.onclose = () => {
@@ -78,6 +109,7 @@ export const connectionPlugin: Plugin = {
         };
 
         connect();
+        syncBuild();
         auth.onChange(() => {
             for (const { reject } of pending.values())
                 reject(new Error("connection reset"));
