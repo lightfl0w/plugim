@@ -303,7 +303,9 @@ export const gatewayPlugin: Plugin = {
             {
                 fetch: (req, ...rest) => {
                     const stats = metrics();
-                    if (!stats || req.url?.startsWith("/metrics"))
+                    const path =
+                        req.url?.replace(/^https?:\/\/[^/]+/, "") ?? "";
+                    if (!stats || path.startsWith("/metrics"))
                         return app.fetch(req, ...rest);
                     const startedAt = Date.now();
                     return Promise.resolve(app.fetch(req, ...rest)).then(
