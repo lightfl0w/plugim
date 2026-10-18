@@ -26,6 +26,11 @@ export type {
     TokenVerifier as GatewayTokenVerifier,
 } from "./service/gateway";
 export type {
+    MetricsService,
+    MetricsSnapshot,
+    RpcMetric,
+} from "./service/metrics";
+export type {
     AdminUserRow,
     AuthUser,
     ChatSendPayload,

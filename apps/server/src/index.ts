@@ -19,6 +19,7 @@ import { groupPlugin } from "./plugins/group";
 import { groupFilesPlugin } from "./plugins/group-files";
 import { installPlugin } from "./plugins/install";
 import { linkPreviewPlugin } from "./plugins/link-preview";
+import { metricsPlugin } from "./plugins/metrics";
 import { momentsPlugin } from "./plugins/moments";
 import { orgPlugin } from "./plugins/org";
 import { pushPlugin } from "./plugins/push";
@@ -104,6 +105,7 @@ await autoDiscoverPlugins(ctx, [
     webPlugin,
     containerPlugin,
     updatePlugin,
+    metricsPlugin,
 ]);
 
 ctx.start().catch((err) => {

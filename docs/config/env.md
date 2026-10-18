@@ -30,6 +30,7 @@
 | `PLUGIM_SHUTDOWN_TIMEOUT_MS` | `15000` | 收到 `SIGTERM`/`SIGINT` 后等待插件关闭的最长时间，到点强制退出 |
 | `PLUGIM_BACKUP_DIR` | `data/backups` | 自动备份目录，相对进程工作目录 |
 | `PLUGIM_BACKUP_KEEP` | `7` | 自动备份保留份数，1 到 365 |
+| `PLUGIM_SLOW_RPC_MS` | `1500` | RPC 耗时超过该毫秒数时打 `slow rpc` 警告，0 表示关闭 |
 
 ## 认证与注册
 

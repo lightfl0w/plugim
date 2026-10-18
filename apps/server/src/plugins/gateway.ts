@@ -15,6 +15,7 @@ import type {
     AuthUser,
     ConnInfo,
     GatewayService,
+    MetricsService,
     RpcHandler,
     SettingsStore,
     TokenVerifier,
@@ -41,6 +42,14 @@ const toStatus = (raw: unknown): PresenceStatus =>
         ? raw
         : "online";
 
+const metricsOf = (ctx: { get<T>(name: string): T }): MetricsService | null => {
+    try {
+        return ctx.get<MetricsService>("metrics");
+    } catch {
+        return null;
+    }
+};
+
 export const gatewayPlugin: Plugin = {
     name: "gateway",
     description: "WebSocket 网关与 RPC 注册表",
@@ -56,6 +65,12 @@ export const gatewayPlugin: Plugin = {
         const lastSeen = new Map<string, string>();
         const offlineListeners = new Set<(userId: string) => void>();
         let verifyToken: TokenVerifier = nullVerifier;
+        let metricsCache: MetricsService | null | undefined;
+
+        const metrics = (): MetricsService | null => {
+            if (metricsCache === undefined) metricsCache = metricsOf(ctx);
+            return metricsCache;
+        };
 
         const app = new Hono();
         app.use(compress());
@@ -122,6 +137,7 @@ export const gatewayPlugin: Plugin = {
                 name: name as ServerEventName,
                 payload,
             };
+            if (name.startsWith("message:")) metrics()?.addMessage();
             for (const ws of sockets) sendFrame(ws, frame);
         };
 
@@ -131,6 +147,7 @@ export const gatewayPlugin: Plugin = {
                 name: name as ServerEventName,
                 payload,
             };
+            if (name.startsWith("message:")) metrics()?.addMessage();
             for (const [ws, user] of identities) {
                 if (user?.id === userId) sendFrame(ws, frame);
             }
@@ -142,10 +159,25 @@ export const gatewayPlugin: Plugin = {
             conn: ConnInfo,
         ) => {
             const handler = handlers.get(method);
-            if (!handler) throw new Error(`未知方法: ${method}`);
-            if (mustChangeBlocked(conn.user, method))
+            if (!handler) {
+                metrics()?.observeRpc(method, 0, false);
+                throw new Error(`未知方法: ${method}`);
+            }
+            if (mustChangeBlocked(conn.user, method)) {
+                metrics()?.observeRpc(method, 0, false);
                 throw new Error("请先修改初始密码后再使用");
-            return handler(params, conn);
+            }
+            const stats = metrics();
+            if (!stats) return handler(params, conn);
+            const startedAt = Date.now();
+            try {
+                const result = await handler(params, conn);
+                stats.observeRpc(method, Date.now() - startedAt, true);
+                return result;
+            } catch (err) {
+                stats.observeRpc(method, Date.now() - startedAt, false);
+                throw err;
+            }
         };
 
         const wsReply = (
@@ -222,6 +254,7 @@ export const gatewayPlugin: Plugin = {
                             ? onlineUserIds().includes(connUser.id)
                             : false;
                         sockets.add(raw);
+                        metrics()?.setConnections(sockets.size);
                         identities.set(raw, connUser);
                         liveness.set(raw, true);
                         raw.on("pong", () => liveness.set(raw, true));
@@ -252,6 +285,7 @@ export const gatewayPlugin: Plugin = {
                         const raw = ws.raw as NodeWebSocket;
                         const user = identities.get(raw) ?? null;
                         sockets.delete(raw);
+                        metrics()?.setConnections(sockets.size);
                         identities.delete(raw);
                         if (user) refreshPresence(user.id);
                         if (user && !isUserOnline(user.id))
@@ -266,7 +300,28 @@ export const gatewayPlugin: Plugin = {
         );
 
         const server = serve(
-            { fetch: app.fetch, port: config.port },
+            {
+                fetch: (req, ...rest) => {
+                    const stats = metrics();
+                    if (!stats || req.url?.startsWith("/metrics"))
+                        return app.fetch(req, ...rest);
+                    const startedAt = Date.now();
+                    return Promise.resolve(app.fetch(req, ...rest)).then(
+                        (response: Response) => {
+                            stats.observeHttp(
+                                Date.now() - startedAt,
+                                response.status < 500,
+                            );
+                            return response;
+                        },
+                        (err: unknown) => {
+                            stats.observeHttp(Date.now() - startedAt, false);
+                            throw err;
+                        },
+                    );
+                },
+                port: config.port,
+            },
             (info) => {
                 ctx.log.info(
                     `gateway listening on http://localhost:${info.port}`,

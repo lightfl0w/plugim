@@ -101,6 +101,29 @@ pm2 startup
 
 都找不到就退化成纯接口服务，和开发模式一样。前端产物不在默认位置时用 `PLUGIM_WEB_DIST` 指定。
 
+## 运行指标
+
+服务端默认开启 Prometheus 格式的指标端点：
+
+```bash
+curl http://127.0.0.1:3000/metrics        # Prometheus 文本格式
+curl http://127.0.0.1:3000/metrics.json   # 结构化快照，便于脚本消费
+```
+
+指标分两类：全局 gauge/counter（`plugim_uptime_seconds`、`plugim_websocket_connections`、`plugim_messages_sent_total`、`plugim_http_requests_total`、`plugim_http_errors_total`、`plugim_event_loop_lag_ms`、`plugim_memory_rss_bytes`、`plugim_memory_heap_used_bytes`），以及按 RPC 方法拆分的调用量与延迟直方图（`plugim_rpc_calls_total{method=...}`、`plugim_rpc_errors_total{method=...}`、`plugim_rpc_duration_ms_bucket/sum/max{method=...}`）。
+
+拉取 `/metrics` 本身不计入 HTTP 请求数，避免监控轮询污染数据。直方图桶为 5ms 到 5000ms 共 10 档，另有 `+Inf`。
+
+慢调用会直接打进日志，方便不看监控时也能发现：
+
+```bash
+grep 'slow rpc' data/logs/server-*.log
+```
+
+阈值默认 1500 毫秒，用 `PLUGIM_SLOW_RPC_MS` 调整。调成 0 可以关闭慢调用日志。
+
+接入 Prometheus 时在反向代理上限制 `/metrics` 的访问来源，不要暴露到公网。
+
 ## 日志
 
 - 不配置日志目录：日志走 stdout，交给 journald 或容器日志驱动。
