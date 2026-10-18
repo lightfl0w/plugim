@@ -58,6 +58,7 @@ import type { GroupsService } from "./groups";
 import type { AAService, TransferService } from "./money";
 import type { RedPacketService } from "./redpacket";
 import type { PendingEvent, PendingMessage, SenderService } from "./sender";
+import type { SessionsService } from "./sessions";
 import {
     AABillCard,
     AABillOpenDialog,
@@ -606,10 +607,10 @@ const MessageGroupRow = memo(
                                                     preload="metadata"
                                                     className="max-h-64 w-auto max-w-80 rounded-lg bg-black"
                                                 >
-                                                        <track
-                                                            kind="captions"
-                                                            label="字幕"
-                                                        />
+                                                    <track
+                                                        kind="captions"
+                                                        label="字幕"
+                                                    />
                                                 </video>
                                             </button>
                                         ) : media === "audio" ? (
@@ -619,10 +620,10 @@ const MessageGroupRow = memo(
                                                     controls
                                                     className="h-8 w-full min-w-44"
                                                 >
-                                                        <track
-                                                            kind="captions"
-                                                            label="字幕"
-                                                        />
+                                                    <track
+                                                        kind="captions"
+                                                        label="字幕"
+                                                    />
                                                 </audio>
                                             </div>
                                         ) : media === "moment" ? (
@@ -910,6 +911,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
     const sender = ctx.get<SenderService>("sender");
     const friends = ctx.get<FriendsService>("friends");
     const groups = ctx.get<GroupsService>("groups");
+    const sessions = ctx.get<SessionsService>("sessions");
 
     const Messages = () => {
         const { session } = useChatTarget();
@@ -1338,7 +1340,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     })
                     .catch(() => undefined);
             }
-            void rpc.call("receipt.read", { session }).catch(() => undefined);
+            void sessions.markRead(session).catch(() => undefined);
             const dispose = ctx.on("server:receipt:update", (payload) => {
                 const data = payload as {
                     session: string;
@@ -1466,8 +1468,9 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 void cache
                     .putMessages(me, message.session, [message])
                     .catch(() => undefined);
-                void rpc
-                    .call("receipt.read", { session: message.session })
+                sessions.track(message.session, message.seq ?? 0);
+                void sessions
+                    .markRead(message.session, message.seq ?? 0)
                     .catch(() => undefined);
                 if (hasNewerRef.current) {
                     if (message.sender === me) void backToLatest();
@@ -1480,6 +1483,29 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 void dispose();
             };
         }, [me, backToLatest]);
+
+        useEffect(() => {
+            const dispose = ctx.on("sync:messages", (payload) => {
+                const data = payload as {
+                    session: string;
+                    messages: ChatMessage[];
+                    hasMore: boolean;
+                };
+                if (data.session !== sessionRef.current) return;
+                if (data.messages.length === 0) return;
+                void cache
+                    .putMessages(me, data.session, data.messages)
+                    .catch(() => undefined);
+                if (hasNewerRef.current && !atBottomRef.current) {
+                    setNewCount((prev) => prev + data.messages.length);
+                    return;
+                }
+                setMessages((prev) => mergeById(prev, data.messages));
+            });
+            return () => {
+                void dispose();
+            };
+        }, [me]);
 
         useEffect(() => {
             const dispose = ctx.on("server:message:update", (payload) => {
@@ -1574,6 +1600,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     limit: PAGE_SIZE,
                     before: oldest.createdAt,
                     beforeId: oldest.id,
+                    beforeSeq: oldest.seq,
                 })) as ChatMessage[];
                 setHasMore(older.length >= PAGE_SIZE);
                 if (older.length > 0) {
@@ -1609,6 +1636,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     limit: PAGE_SIZE,
                     after: newest.createdAt,
                     afterId: newest.id,
+                    afterSeq: newest.seq,
                 })) as ChatMessage[];
                 if (sessionRef.current !== session) return;
                 setHasNewer(next.length >= PAGE_SIZE);

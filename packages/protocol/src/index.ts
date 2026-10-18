@@ -48,6 +48,7 @@ export interface ChatMessage {
     sender: string;
     content: string;
     createdAt: string;
+    seq?: number;
     recalledAt?: string | null;
     quote?: MessageQuote | null;
     mentions?: string[] | null;
@@ -326,6 +327,7 @@ export type ServerEventName =
     | "group:request"
     | "presence:update"
     | "receipt:update"
+    | "read:update"
     | "typing"
     | "screen:signal"
     | "group:call"
@@ -383,6 +385,55 @@ export interface HistoryParams {
     after?: string;
     beforeId?: string;
     afterId?: string;
+    beforeSeq?: number;
+    afterSeq?: number;
+}
+
+export interface ReadParams {
+    session: string;
+    seq?: number;
+}
+
+export interface SessionSummary {
+    session: string;
+    lastSeq: number;
+    readSeq: number;
+    unread: number;
+    lastMessage: ChatMessage | null;
+}
+
+export interface SessionListParams {
+    sessions?: string[];
+}
+
+export interface DeltaCursor {
+    session: string;
+    seq: number;
+}
+
+export interface SyncDeltaParams {
+    cursors?: DeltaCursor[];
+    limit?: number;
+}
+
+export interface SyncDeltaSession {
+    session: string;
+    messages: ChatMessage[];
+    lastSeq: number;
+    readSeq: number;
+    hasMore: boolean;
+}
+
+export interface SyncDeltaResult {
+    sessions: SyncDeltaSession[];
+    at: string;
+}
+
+export interface ReadUpdateEvent {
+    session: string;
+    username: string;
+    seq: number;
+    at: string;
 }
 
 export interface TypingParams {

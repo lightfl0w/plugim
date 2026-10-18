@@ -10,8 +10,13 @@ import type {
     MessageReactions,
     MessageReactParams,
     MessageSearchParams,
+    ReadParams,
+    ReadUpdateEvent,
     RecallParams,
     SendMessageParams,
+    SessionListParams,
+    SyncDeltaParams,
+    SyncDeltaSession,
     TypingEvent,
     TypingParams,
 } from "@plugim/protocol";
@@ -595,10 +600,14 @@ export const chatPlugin: Plugin = {
             return store.list(
                 session,
                 Math.min(Number(params.limit ?? 50), 200),
-                params.before,
-                params.after,
-                params.beforeId,
-                params.afterId,
+                {
+                    before: params.before,
+                    after: params.after,
+                    beforeId: params.beforeId,
+                    afterId: params.afterId,
+                    beforeSeq: params.beforeSeq,
+                    afterSeq: params.afterSeq,
+                },
             );
         });
 
@@ -844,6 +853,201 @@ export const chatPlugin: Plugin = {
                 username: nameById.get(row.userId) ?? row.userId,
                 at: row.at,
             }));
+        });
+
+        const storageSessionOf = async (
+            me: AuthUser,
+            rawSession: string,
+        ): Promise<string> => {
+            if (rawSession.startsWith("p2p:")) {
+                const peer = await resolveP2p(me, rawSession);
+                return p2pKey(me.username, peer.username);
+            }
+            if (rawSession.startsWith("g:")) {
+                await resolveGroup(me, rawSession);
+                return rawSession;
+            }
+            if (rawSession && rawSession !== config.defaultSession)
+                throw new Error("会话不存在");
+            return config.defaultSession;
+        };
+
+        const visibleSessions = async (
+            me: AuthUser,
+            requested?: string[],
+        ): Promise<string[]> => {
+            if (Array.isArray(requested) && requested.length > 0) {
+                const out: string[] = [];
+                for (const raw of requested.slice(0, 200))
+                    out.push(await storageSessionOf(me, String(raw ?? "")));
+                return [...new Set(out)];
+            }
+            const out = [config.defaultSession];
+            const edges = await friendships.edgesOf(me.id);
+            const friendIds = [
+                ...new Set(
+                    edges
+                        .filter((edge) => edge.status === "accepted")
+                        .map((edge) =>
+                            edge.requesterId === me.id
+                                ? edge.addresseeId
+                                : edge.requesterId,
+                        ),
+                ),
+            ];
+            for (const friend of await accounts.byIds(friendIds))
+                out.push(p2pKey(me.username, friend.username));
+            for (const group of await groups.groupsOf(me.id))
+                out.push(`g:${group.id}`);
+            return [...new Set(out)];
+        };
+
+        gateway.rpc("chat.read", async (raw, conn) => {
+            const user = requireUser(conn);
+            const params = raw as unknown as ReadParams;
+            const rawSession = String(params.session ?? "").trim();
+            if (!rawSession) throw new Error("缺少会话");
+            const session = await storageSessionOf(user, rawSession);
+            const lastSeq = await store.lastSeq(session);
+            const target = Math.min(
+                Math.max(0, Math.floor(Number(params.seq ?? lastSeq)) || 0),
+                lastSeq,
+            );
+            const at = new Date().toISOString();
+            const before = await reads.cursorsOf(user.id);
+            const previous = before[session] ?? 0;
+            await reads.set(user.id, session, at, target);
+            const effective = Math.max(previous, target);
+            const payload = {
+                session: rawSession,
+                username: user.username,
+                seq: effective,
+                at,
+            } satisfies ReadUpdateEvent;
+            if (rawSession.startsWith("p2p:")) {
+                const peer = await accounts.byUsername(rawSession.slice(4));
+                if (peer) gateway.emitToUser(peer.id, "read:update", payload);
+            } else if (rawSession.startsWith("g:")) {
+                const ids = await groups.memberIdsOf(rawSession.slice(2));
+                for (const uid of ids) {
+                    if (uid === user.id) continue;
+                    gateway.emitToUser(uid, "read:update", payload);
+                }
+            }
+            gateway.emitToUser(user.id, "read:update", payload);
+            return { seq: effective, at };
+        });
+
+        const rawOf = (username: string, storage: string): string => {
+            if (!storage.startsWith("p2p:"))
+                return storage === config.defaultSession
+                    ? config.defaultSession
+                    : storage;
+            const peer = storage
+                .slice(4)
+                .split("|")
+                .find((name) => name !== username);
+            return `p2p:${peer ?? ""}`;
+        };
+
+        const deltaOf = async (
+            raw: string,
+            storage: string,
+            cursor: number,
+            cursors: Record<string, number>,
+            limit: number,
+        ): Promise<SyncDeltaSession> => {
+            const rows = await store.since({
+                session: storage,
+                seq: cursor,
+                limit: limit + 1,
+            });
+            const hasMore = rows.length > limit;
+            const messages = hasMore ? rows.slice(0, limit) : rows;
+            return {
+                session: raw,
+                messages,
+                lastSeq:
+                    messages.length > 0
+                        ? (messages[messages.length - 1].seq ?? 0)
+                        : cursor,
+                readSeq: cursors[storage] ?? 0,
+                hasMore,
+            };
+        };
+
+        gateway.rpc("chat.sessionList", async (raw, conn) => {
+            const user = requireUser(conn);
+            const params = raw as unknown as SessionListParams;
+            const sessions = await visibleSessions(user, params.sessions);
+            const rows = await store.summaries({
+                userId: user.id,
+                username: user.username,
+                sessions,
+            });
+            return rows.map((row) => ({
+                ...row,
+                session: rawOf(user.username, row.session),
+            }));
+        });
+
+        gateway.rpc("sync.delta", async (raw, conn) => {
+            const user = requireUser(conn);
+            const params = raw as unknown as SyncDeltaParams;
+            const limit = Math.min(
+                Math.max(1, Math.floor(Number(params.limit ?? 200))),
+                500,
+            );
+            const requested = Array.isArray(params.cursors)
+                ? params.cursors
+                      .filter(
+                          (item) =>
+                              item &&
+                              typeof item.session === "string" &&
+                              Number.isFinite(Number(item.seq)),
+                      )
+                      .slice(0, 200)
+                : [];
+            const cursorByRaw = new Map(
+                requested.map((item) => [
+                    item.session,
+                    Math.max(0, Math.floor(Number(item.seq))),
+                ]),
+            );
+            const cursors = await reads.cursorsOf(user.id);
+            const out: SyncDeltaSession[] = [];
+            if (requested.length > 0) {
+                for (const rawSession of cursorByRaw.keys()) {
+                    let storage: string;
+                    try {
+                        storage = await storageSessionOf(user, rawSession);
+                    } catch {
+                        continue;
+                    }
+                    out.push(
+                        await deltaOf(
+                            rawSession,
+                            storage,
+                            cursorByRaw.get(rawSession) ?? 0,
+                            cursors,
+                            limit,
+                        ),
+                    );
+                }
+                return { sessions: out, at: new Date().toISOString() };
+            }
+            for (const storage of await visibleSessions(user)) {
+                out.push(
+                    await deltaOf(
+                        rawOf(user.username, storage),
+                        storage,
+                        0,
+                        cursors,
+                        limit,
+                    ),
+                );
+            }
+            return { sessions: out, at: new Date().toISOString() };
         });
 
         ctx.provide<ChatService>("chat", { sendTo });

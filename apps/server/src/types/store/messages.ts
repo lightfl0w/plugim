@@ -11,6 +11,15 @@ import type {
 } from "@plugim/protocol";
 import type { MessageTrendPoint } from "../shared";
 
+export interface MessageCursor {
+    before?: string;
+    after?: string;
+    beforeId?: string;
+    afterId?: string;
+    beforeSeq?: number;
+    afterSeq?: number;
+}
+
 export interface MessageStore {
     save(input: {
         session: string;
@@ -29,11 +38,30 @@ export interface MessageStore {
     list(
         session: string,
         limit: number,
-        before?: string,
-        after?: string,
-        beforeId?: string,
-        afterId?: string,
+        cursor?: MessageCursor,
     ): Promise<ChatMessage[]>;
+
+    lastSeq(session: string): Promise<number>;
+
+    summaries(input: {
+        userId: string;
+        username: string;
+        sessions: string[];
+    }): Promise<
+        {
+            session: string;
+            lastSeq: number;
+            readSeq: number;
+            unread: number;
+            lastMessage: ChatMessage | null;
+        }[]
+    >;
+
+    since(input: {
+        session: string;
+        seq: number;
+        limit: number;
+    }): Promise<ChatMessage[]>;
 
     byId(id: string): Promise<ChatMessage | null>;
     markRecalled(id: string): Promise<string | null>;

@@ -25,6 +25,14 @@ export interface PushStore {
 }
 
 export interface ReadsStore {
-    set(userId: string, session: string, at: string): Promise<void>;
-    ofSession(session: string): Promise<{ userId: string; at: string }[]>;
+    set(
+        userId: string,
+        session: string,
+        at: string,
+        seq?: number,
+    ): Promise<void>;
+    ofSession(
+        session: string,
+    ): Promise<{ userId: string; at: string; seq: number }[]>;
+    cursorsOf(userId: string): Promise<Record<string, number>>;
 }

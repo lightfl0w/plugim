@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import type { Plugin } from "@plugim/core";
 import type {
     AABillInfo,
+    ChatMessage,
     FileMeta,
     GroupRole,
     LinkPreview,
@@ -97,6 +98,7 @@ const messagesSqlite = sqliteTable("messages", {
     session: sqliteText("session").notNull(),
     sender: sqliteText("sender").notNull(),
     content: sqliteText("content").notNull(),
+    seq: integer("seq").notNull().default(0),
     createdAt: integer("created_at").notNull(),
     recalledAt: integer("recalled_at"),
     quote: sqliteText("quote"),
@@ -115,6 +117,7 @@ const messagesPg = pgTable("messages", {
     session: pgText("session").notNull(),
     sender: pgText("sender").notNull(),
     content: pgText("content").notNull(),
+    seq: pgInteger("seq").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
         .notNull()
         .defaultNow(),
@@ -438,6 +441,7 @@ const readsSqlite = sqliteTable(
         userId: sqliteText("user_id").notNull(),
         session: sqliteText("session").notNull(),
         readAt: integer("read_at").notNull(),
+        seq: integer("seq").notNull().default(0),
     },
     (table) => [primaryKey({ columns: [table.userId, table.session] })],
 );
@@ -448,6 +452,7 @@ const readsPg = pgTable(
         userId: pgText("user_id").notNull(),
         session: pgText("session").notNull(),
         readAt: timestamp("read_at", { withTimezone: true }).notNull(),
+        seq: pgInteger("seq").notNull().default(0),
     },
     (table) => [pgPrimaryKey({ columns: [table.userId, table.session] })],
 );
@@ -756,6 +761,7 @@ CREATE TABLE IF NOT EXISTS messages (
   session TEXT NOT NULL,
   sender TEXT NOT NULL,
   content TEXT NOT NULL,
+  seq INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   recalled_at INTEGER,
   quote TEXT,
@@ -1002,6 +1008,7 @@ CREATE TABLE IF NOT EXISTS messages (
   session TEXT NOT NULL,
   sender TEXT NOT NULL,
   content TEXT NOT NULL,
+  seq INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   recalled_at TIMESTAMPTZ,
   quote TEXT,
@@ -1495,6 +1502,7 @@ interface MessageDbRow {
     session: string;
     sender: string;
     content: string;
+    seq: number;
     createdAt: Date | number;
     recalledAt: Date | number | null;
     quote: string | null;
@@ -1585,6 +1593,7 @@ const messageRowToChat = (row: MessageDbRow) => ({
     session: row.session,
     sender: row.sender,
     content: row.content,
+    seq: row.seq,
     createdAt: toIso(row.createdAt),
     recalledAt: row.recalledAt === null ? null : toIso(row.recalledAt),
     quote: parseQuote(row.quote),
@@ -1729,6 +1738,24 @@ export const storagePlugin: Plugin = {
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS aa_bill TEXT",
             );
             await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS seq INTEGER NOT NULL DEFAULT 0",
+            );
+            await client.unsafe(
+                "ALTER TABLE reads ADD COLUMN IF NOT EXISTS seq INTEGER NOT NULL DEFAULT 0",
+            );
+            await client.unsafe(
+                "CREATE INDEX IF NOT EXISTS messages_session_seq_idx ON messages (session, seq)",
+            );
+            await client.unsafe(
+                `UPDATE messages SET seq = sub.rn FROM (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY session ORDER BY created_at, id
+                    ) AS rn
+                    FROM messages
+                    WHERE seq = 0
+                ) sub WHERE messages.id = sub.id`,
+            );
+            await client.unsafe(
                 "ALTER TABLE group_members ADD COLUMN IF NOT EXISTS title TEXT",
             );
             await client.unsafe(
@@ -1740,18 +1767,17 @@ export const storagePlugin: Plugin = {
                 const rows = await db
                     .select({
                         id: messagesPg.id,
+                        seq: messagesPg.seq,
                         createdAt: messagesPg.createdAt,
                     })
                     .from(messagesPg)
                     .where(eq(messagesPg.id, id))
                     .limit(1);
                 const row = rows[0];
-                return row ? { id: row.id, at: row.createdAt } : null;
+                return row
+                    ? { id: row.id, seq: row.seq, at: row.createdAt }
+                    : null;
             };
-            const olderThan = (at: Date, id: string) =>
-                sql`(${messagesPg.createdAt} < ${at} OR (${messagesPg.createdAt} = ${at} AND ${messagesPg.id} <= ${id}))`;
-            const newerThan = (at: Date, id: string) =>
-                sql`(${messagesPg.createdAt} > ${at} OR (${messagesPg.createdAt} = ${at} AND ${messagesPg.id} >= ${id}))`;
 
             const userToRow = (
                 row: typeof usersPg.$inferSelect,
@@ -1819,52 +1845,185 @@ export const storagePlugin: Plugin = {
                         aaBill,
                         ...rest
                     } = input;
-                    const rows = await db
-                        .insert(messagesPg)
-                        .values({
-                            id,
-                            ...rest,
-                            quote: serializeQuote(quote),
-                            mentions: serializeMentions(mentions),
-                            file: file ? JSON.stringify(file) : null,
-                            link: link ? JSON.stringify(link) : null,
-                            redPacket: redPacket
-                                ? JSON.stringify(redPacket)
-                                : null,
-                            transfer: transfer
-                                ? JSON.stringify(transfer)
-                                : null,
-                            aaBill: aaBill ? JSON.stringify(aaBill) : null,
-                        })
-                        .returning();
+                    const rows = await db.transaction(async (tx) => {
+                        const head = await tx
+                            .select({
+                                max: sql<number>`coalesce(max(${messagesPg.seq}), 0)`,
+                            })
+                            .from(messagesPg)
+                            .where(eq(messagesPg.session, rest.session));
+                        const seq = Number(head[0]?.max ?? 0) + 1;
+                        return tx
+                            .insert(messagesPg)
+                            .values({
+                                id,
+                                ...rest,
+                                seq,
+                                quote: serializeQuote(quote),
+                                mentions: serializeMentions(mentions),
+                                file: file ? JSON.stringify(file) : null,
+                                link: link ? JSON.stringify(link) : null,
+                                redPacket: redPacket
+                                    ? JSON.stringify(redPacket)
+                                    : null,
+                                transfer: transfer
+                                    ? JSON.stringify(transfer)
+                                    : null,
+                                aaBill: aaBill ? JSON.stringify(aaBill) : null,
+                            })
+                            .returning();
+                    });
                     return messageRowToChat(rows[0]);
                 },
-                async list(session, limit, before, after, beforeId, afterId) {
+                async list(session, limit, cursor) {
                     const conds = [eq(messagesPg.session, session)];
-                    const older = beforeId
-                        ? await messageCursor(beforeId)
+                    const forward = cursor?.afterSeq !== undefined;
+                    const older = cursor?.beforeId
+                        ? await messageCursor(cursor.beforeId)
                         : null;
-                    const newer = afterId ? await messageCursor(afterId) : null;
-                    if (older) conds.push(olderThan(older.at, older.id));
-                    else if (before)
-                        conds.push(lt(messagesPg.createdAt, new Date(before)));
-                    if (newer) conds.push(newerThan(newer.at, newer.id));
-                    else if (after)
-                        conds.push(gt(messagesPg.createdAt, new Date(after)));
-                    const forward = Boolean(newer) || Boolean(!older && after);
+                    const newer = cursor?.afterId
+                        ? await messageCursor(cursor.afterId)
+                        : null;
+                    const beforeSeq =
+                        cursor?.beforeSeq ?? older?.seq ?? undefined;
+                    const afterSeq =
+                        cursor?.afterSeq ?? newer?.seq ?? undefined;
+                    const beforeInclusive =
+                        cursor?.beforeSeq === undefined && older !== null;
+                    const afterInclusive =
+                        cursor?.afterSeq === undefined && newer !== null;
+                    if (beforeSeq === undefined) {
+                        if (cursor?.before)
+                            conds.push(
+                                lt(
+                                    messagesPg.createdAt,
+                                    new Date(cursor.before),
+                                ),
+                            );
+                    } else if (beforeInclusive)
+                        conds.push(lte(messagesPg.seq, beforeSeq));
+                    else conds.push(lt(messagesPg.seq, beforeSeq));
+                    if (afterSeq === undefined) {
+                        if (cursor?.after)
+                            conds.push(
+                                gt(
+                                    messagesPg.createdAt,
+                                    new Date(cursor.after),
+                                ),
+                            );
+                    } else if (afterInclusive)
+                        conds.push(gte(messagesPg.seq, afterSeq));
+                    else conds.push(gt(messagesPg.seq, afterSeq));
+                    const up =
+                        forward ||
+                        Boolean(newer) ||
+                        Boolean(!older && cursor?.after);
                     const rows = await db
                         .select()
                         .from(messagesPg)
                         .where(and(...conds))
                         .orderBy(
-                            forward
+                            up ? asc(messagesPg.seq) : desc(messagesPg.seq),
+                            up
                                 ? asc(messagesPg.createdAt)
                                 : desc(messagesPg.createdAt),
-                            forward ? asc(messagesPg.id) : desc(messagesPg.id),
+                            up ? asc(messagesPg.id) : desc(messagesPg.id),
                         )
                         .limit(limit);
                     const list = rows.map(messageRowToChat);
-                    return forward ? list : list.reverse();
+                    return up ? list : list.reverse();
+                },
+                async lastSeq(session) {
+                    const rows = await db
+                        .select({
+                            max: sql<number>`coalesce(max(${messagesPg.seq}), 0)`,
+                        })
+                        .from(messagesPg)
+                        .where(eq(messagesPg.session, session));
+                    return Number(rows[0]?.max ?? 0);
+                },
+                async summaries({ userId, username, sessions }) {
+                    if (sessions.length === 0) return [];
+                    const grouped = await db
+                        .select({
+                            session: messagesPg.session,
+                            lastSeq: sql<number>`max(${messagesPg.seq})`,
+                            readSeq: sql<number>`max(coalesce(${readsPg.seq}, 0))`,
+                            unread: sql<number>`count(*) filter (
+                                where ${messagesPg.seq} > coalesce(${readsPg.seq}, 0)
+                                and ${messagesPg.sender} <> ${username}
+                            )`,
+                        })
+                        .from(messagesPg)
+                        .leftJoin(
+                            readsPg,
+                            and(
+                                eq(readsPg.session, messagesPg.session),
+                                eq(readsPg.userId, userId),
+                            ),
+                        )
+                        .where(inArray(messagesPg.session, sessions))
+                        .groupBy(messagesPg.session);
+                    const stats = new Map(
+                        grouped.map((row) => [
+                            row.session,
+                            {
+                                lastSeq: Number(row.lastSeq ?? 0),
+                                readSeq: Number(row.readSeq ?? 0),
+                                unread: Number(row.unread ?? 0),
+                            },
+                        ]),
+                    );
+                    const latestConds = sessions
+                        .map((session) => ({ session, ...stats.get(session) }))
+                        .filter(
+                            (
+                                entry,
+                            ): entry is typeof entry & {
+                                lastSeq: number;
+                            } => (entry.lastSeq ?? 0) > 0,
+                        )
+                        .map((entry) =>
+                            and(
+                                eq(messagesPg.session, entry.session),
+                                eq(messagesPg.seq, entry.lastSeq),
+                            ),
+                        );
+                    const latest =
+                        latestConds.length > 0
+                            ? await db
+                                  .select()
+                                  .from(messagesPg)
+                                  .where(
+                                      latestConds.length === 1
+                                          ? latestConds[0]
+                                          : or(...latestConds),
+                                  )
+                            : [];
+                    const lastBySession = new Map<string, ChatMessage>();
+                    for (const row of latest)
+                        lastBySession.set(row.session, messageRowToChat(row));
+                    return sessions.map((session) => ({
+                        session,
+                        lastSeq: stats.get(session)?.lastSeq ?? 0,
+                        readSeq: stats.get(session)?.readSeq ?? 0,
+                        unread: stats.get(session)?.unread ?? 0,
+                        lastMessage: lastBySession.get(session) ?? null,
+                    }));
+                },
+                async since({ session, seq, limit }) {
+                    const rows = await db
+                        .select()
+                        .from(messagesPg)
+                        .where(
+                            and(
+                                eq(messagesPg.session, session),
+                                gt(messagesPg.seq, seq),
+                            ),
+                        )
+                        .orderBy(asc(messagesPg.seq), asc(messagesPg.id))
+                        .limit(limit);
+                    return rows.map(messageRowToChat);
                 },
                 async byId(id) {
                     const rows = await db
@@ -2697,13 +2856,17 @@ export const storagePlugin: Plugin = {
             };
 
             reads = {
-                async set(userId, session, at) {
+                async set(userId, session, at, seq) {
+                    const readAt = new Date(at);
                     await db
                         .insert(readsPg)
-                        .values({ userId, session, readAt: new Date(at) })
+                        .values({ userId, session, readAt, seq: seq ?? 0 })
                         .onConflictDoUpdate({
                             target: [readsPg.userId, readsPg.session],
-                            set: { readAt: new Date(at) },
+                            set: {
+                                readAt,
+                                seq: sql`greatest(${readsPg.seq}, ${seq ?? 0})`,
+                            },
                         });
                 },
                 async ofSession(session) {
@@ -2714,7 +2877,17 @@ export const storagePlugin: Plugin = {
                     return rows.map((row) => ({
                         userId: row.userId,
                         at: toIso(row.readAt),
+                        seq: row.seq,
                     }));
+                },
+                async cursorsOf(userId) {
+                    const rows = await db
+                        .select()
+                        .from(readsPg)
+                        .where(eq(readsPg.userId, userId));
+                    return Object.fromEntries(
+                        rows.map((row) => [row.session, row.seq]),
+                    );
                 },
             };
 
@@ -3970,6 +4143,27 @@ export const storagePlugin: Plugin = {
                     );
                 }
             }
+            if (!messageColumns.some((item) => item.name === "seq"))
+                client.exec(
+                    "ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0",
+                );
+            client.exec(
+                "CREATE INDEX IF NOT EXISTS messages_session_seq_idx ON messages (session, seq)",
+            );
+            client.exec(
+                `UPDATE messages SET seq = (
+                    SELECT COUNT(*) FROM messages AS earlier
+                    WHERE earlier.session = messages.session
+                    AND (
+                        earlier.created_at < messages.created_at
+                        OR (
+                            earlier.created_at = messages.created_at
+                            AND earlier.id < messages.id
+                        )
+                    )
+                ) + 1
+                WHERE messages.seq = 0`,
+            );
             const userColumns = client.pragma("table_info(users)") as Array<{
                 name: string;
             }>;
@@ -4017,24 +4211,30 @@ export const storagePlugin: Plugin = {
             ) as Array<{ name: string }>;
             if (!groupMemberColumns.some((item) => item.name === "title"))
                 client.exec("ALTER TABLE group_members ADD COLUMN title TEXT");
+            const readColumns = client.pragma("table_info(reads)") as Array<{
+                name: string;
+            }>;
+            if (!readColumns.some((item) => item.name === "seq"))
+                client.exec(
+                    "ALTER TABLE reads ADD COLUMN seq INTEGER NOT NULL DEFAULT 0",
+                );
             const db = drizzleSqlite(client);
 
             const messageCursor = async (id: string) => {
                 const rows = await db
                     .select({
                         id: messagesSqlite.id,
+                        seq: messagesSqlite.seq,
                         createdAt: messagesSqlite.createdAt,
                     })
                     .from(messagesSqlite)
                     .where(eq(messagesSqlite.id, id))
                     .limit(1);
                 const row = rows[0];
-                return row ? { id: row.id, at: row.createdAt } : null;
+                return row
+                    ? { id: row.id, seq: row.seq, at: row.createdAt }
+                    : null;
             };
-            const olderThan = (at: number, id: string) =>
-                sql`(${messagesSqlite.createdAt} < ${at} OR (${messagesSqlite.createdAt} = ${at} AND ${messagesSqlite.id} <= ${id}))`;
-            const newerThan = (at: number, id: string) =>
-                sql`(${messagesSqlite.createdAt} > ${at} OR (${messagesSqlite.createdAt} = ${at} AND ${messagesSqlite.id} >= ${id}))`;
 
             const userToRow = (
                 row: typeof usersSqlite.$inferSelect,
@@ -4104,9 +4304,18 @@ export const storagePlugin: Plugin = {
                         aaBill,
                         ...rest
                     } = input;
+                    const seq = client.transaction(() => {
+                        const row = client
+                            .prepare(
+                                "SELECT coalesce(max(seq), 0) AS maxSeq FROM messages WHERE session = ?",
+                            )
+                            .get(rest.session) as { maxSeq: number };
+                        return Number(row?.maxSeq ?? 0) + 1;
+                    })();
                     await db.insert(messagesSqlite).values({
                         id,
                         ...rest,
+                        seq,
                         quote: serializeQuote(quote),
                         mentions: serializeMentions(mentions),
                         file: meta ? JSON.stringify(meta) : null,
@@ -4119,6 +4328,7 @@ export const storagePlugin: Plugin = {
                     return {
                         id,
                         ...rest,
+                        seq,
                         quote: quote ?? null,
                         mentions: mentions ?? null,
                         file: meta ?? null,
@@ -4130,44 +4340,162 @@ export const storagePlugin: Plugin = {
                         recalledAt: null,
                     };
                 },
-                async list(session, limit, before, after, beforeId, afterId) {
+                async list(session, limit, cursor) {
                     const conds = [eq(messagesSqlite.session, session)];
-                    const older = beforeId
-                        ? await messageCursor(beforeId)
+                    const forward = cursor?.afterSeq !== undefined;
+                    const older = cursor?.beforeId
+                        ? await messageCursor(cursor.beforeId)
                         : null;
-                    const newer = afterId ? await messageCursor(afterId) : null;
-                    if (older) conds.push(olderThan(older.at, older.id));
-                    else if (before)
-                        conds.push(
-                            lt(
-                                messagesSqlite.createdAt,
-                                new Date(before).getTime(),
-                            ),
-                        );
-                    if (newer) conds.push(newerThan(newer.at, newer.id));
-                    else if (after)
-                        conds.push(
-                            gt(
-                                messagesSqlite.createdAt,
-                                new Date(after).getTime(),
-                            ),
-                        );
-                    const forward = Boolean(newer) || Boolean(!older && after);
+                    const newer = cursor?.afterId
+                        ? await messageCursor(cursor.afterId)
+                        : null;
+                    const beforeSeq =
+                        cursor?.beforeSeq ?? older?.seq ?? undefined;
+                    const afterSeq =
+                        cursor?.afterSeq ?? newer?.seq ?? undefined;
+                    const beforeInclusive =
+                        cursor?.beforeSeq === undefined && older !== null;
+                    const afterInclusive =
+                        cursor?.afterSeq === undefined && newer !== null;
+                    if (beforeSeq === undefined) {
+                        if (cursor?.before)
+                            conds.push(
+                                lt(
+                                    messagesSqlite.createdAt,
+                                    new Date(cursor.before).getTime(),
+                                ),
+                            );
+                    } else if (beforeInclusive)
+                        conds.push(lte(messagesSqlite.seq, beforeSeq));
+                    else conds.push(lt(messagesSqlite.seq, beforeSeq));
+                    if (afterSeq === undefined) {
+                        if (cursor?.after)
+                            conds.push(
+                                gt(
+                                    messagesSqlite.createdAt,
+                                    new Date(cursor.after).getTime(),
+                                ),
+                            );
+                    } else if (afterInclusive)
+                        conds.push(gte(messagesSqlite.seq, afterSeq));
+                    else conds.push(gt(messagesSqlite.seq, afterSeq));
+                    const up =
+                        forward ||
+                        Boolean(newer) ||
+                        Boolean(!older && cursor?.after);
                     const rows = await db
                         .select()
                         .from(messagesSqlite)
                         .where(and(...conds))
                         .orderBy(
-                            forward
+                            up
+                                ? asc(messagesSqlite.seq)
+                                : desc(messagesSqlite.seq),
+                            up
                                 ? asc(messagesSqlite.createdAt)
                                 : desc(messagesSqlite.createdAt),
-                            forward
+                            up
                                 ? asc(messagesSqlite.id)
                                 : desc(messagesSqlite.id),
                         )
                         .limit(limit);
                     const list = rows.map(messageRowToChat);
-                    return forward ? list : list.reverse();
+                    return up ? list : list.reverse();
+                },
+                async lastSeq(session) {
+                    const row = client
+                        .prepare(
+                            "SELECT coalesce(max(seq), 0) AS maxSeq FROM messages WHERE session = ?",
+                        )
+                        .get(session) as { maxSeq: number };
+                    return Number(row?.maxSeq ?? 0);
+                },
+                async summaries({ userId, username, sessions }) {
+                    if (sessions.length === 0) return [];
+                    const placeholders = sessions.map(() => "?").join(", ");
+                    const grouped = client
+                        .prepare(
+                            `SELECT m.session AS session,
+                                    max(m.seq) AS lastSeq,
+                                    coalesce(max(r.seq), 0) AS readSeq,
+                                    sum(CASE WHEN m.seq > coalesce(r.seq, 0)
+                                        AND m.sender <> ? THEN 1 ELSE 0 END) AS unread
+                             FROM messages m
+                             LEFT JOIN reads r
+                               ON r.session = m.session AND r.user_id = ?
+                             WHERE m.session IN (${placeholders})
+                             GROUP BY m.session`,
+                        )
+                        .all(username, userId, ...sessions) as Array<{
+                        session: string;
+                        lastSeq: number;
+                        readSeq: number;
+                        unread: number;
+                    }>;
+                    const stats = new Map(
+                        grouped.map((row) => [
+                            row.session,
+                            {
+                                lastSeq: Number(row.lastSeq ?? 0),
+                                readSeq: Number(row.readSeq ?? 0),
+                                unread: Number(row.unread ?? 0),
+                            },
+                        ]),
+                    );
+                    const latestConds = sessions
+                        .map((session) => ({ session, ...stats.get(session) }))
+                        .filter(
+                            (
+                                entry,
+                            ): entry is typeof entry & {
+                                lastSeq: number;
+                            } => (entry.lastSeq ?? 0) > 0,
+                        )
+                        .map((entry) =>
+                            and(
+                                eq(messagesSqlite.session, entry.session),
+                                eq(messagesSqlite.seq, entry.lastSeq),
+                            ),
+                        );
+                    const latest =
+                        latestConds.length > 0
+                            ? await db
+                                  .select()
+                                  .from(messagesSqlite)
+                                  .where(
+                                      latestConds.length === 1
+                                          ? latestConds[0]
+                                          : or(...latestConds),
+                                  )
+                            : [];
+                    const lastBySession = new Map<string, ChatMessage>();
+                    for (const row of latest)
+                        lastBySession.set(row.session, messageRowToChat(row));
+                    return sessions.map((session) => ({
+                        session,
+                        lastSeq: stats.get(session)?.lastSeq ?? 0,
+                        readSeq: stats.get(session)?.readSeq ?? 0,
+                        unread: stats.get(session)?.unread ?? 0,
+                        lastMessage: lastBySession.get(session) ?? null,
+                    }));
+                },
+                async since({ session, seq, limit }) {
+                    const rows = await db
+                        .select()
+                        .from(messagesSqlite)
+                        .where(
+                            and(
+                                eq(messagesSqlite.session, session),
+                                gt(messagesSqlite.seq, seq),
+                            ),
+                        )
+                        .orderBy(
+                            asc(messagesSqlite.seq),
+                            asc(messagesSqlite.createdAt),
+                            asc(messagesSqlite.id),
+                        )
+                        .limit(limit);
+                    return rows.map(messageRowToChat);
                 },
                 async byId(id) {
                     const rows = await db
@@ -5049,17 +5377,21 @@ export const storagePlugin: Plugin = {
             };
 
             reads = {
-                async set(userId, session, at) {
+                async set(userId, session, at, seq) {
                     await db
                         .insert(readsSqlite)
                         .values({
                             userId,
                             session,
                             readAt: Date.parse(at),
+                            seq: seq ?? 0,
                         })
                         .onConflictDoUpdate({
                             target: [readsSqlite.userId, readsSqlite.session],
-                            set: { readAt: Date.parse(at) },
+                            set: {
+                                readAt: Date.parse(at),
+                                seq: sql`max(${readsSqlite.seq}, ${seq ?? 0})`,
+                            },
                         });
                 },
                 async ofSession(session) {
@@ -5070,7 +5402,17 @@ export const storagePlugin: Plugin = {
                     return rows.map((row) => ({
                         userId: row.userId,
                         at: new Date(row.readAt).toISOString(),
+                        seq: row.seq,
                     }));
+                },
+                async cursorsOf(userId) {
+                    const rows = await db
+                        .select()
+                        .from(readsSqlite)
+                        .where(eq(readsSqlite.userId, userId));
+                    return Object.fromEntries(
+                        rows.map((row) => [row.session, row.seq]),
+                    );
                 },
             };
 

@@ -9,6 +9,7 @@ import { moneyPlugin } from "./money";
 import { presencePlugin } from "./presence";
 import { redpacketPlugin } from "./redpacket";
 import { senderPlugin } from "./sender";
+import { sessionsPlugin } from "./sessions";
 import { settingsPlugin } from "./settings";
 import { stickersPlugin } from "./stickers";
 import { uiViewsPlugin } from "./ui-views";
@@ -17,6 +18,7 @@ export const globalPlugins: Plugin[] = [
     authPlugin,
     settingsPlugin,
     connectionPlugin,
+    sessionsPlugin,
     senderPlugin,
     friendsPlugin,
     groupsPlugin,

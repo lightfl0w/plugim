@@ -43,6 +43,7 @@ import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { MomentsService } from "./moments";
 import type { PresenceService } from "./presence";
+import type { SessionsService } from "./sessions";
 import type { AdminService } from "./ui-admin";
 import { draftKey, draftStore } from "./ui-drafts";
 import type { InstallService } from "./ui-install";
@@ -320,6 +321,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
     const adminService = ctx.get<AdminService>("admin");
     const moments = ctx.get<MomentsService>("moments");
     const install = ctx.get<InstallService>("install");
+    const sessions = ctx.get<SessionsService>("sessions");
 
     const StatusMenu = ({ username }: { username: string }) => {
         const [open, setOpen] = useState(false);
@@ -563,6 +565,14 @@ export const uiSidebarSetup = async (ctx: Context) => {
             [applyUnread],
         );
 
+        useEffect(
+            () =>
+                sessions.onUpdate(() => {
+                    applyUnread(sessions.unread());
+                }),
+            [applyUnread],
+        );
+
         const applyPreview = useCallback((message: ChatMessage) => {
             const at = Date.parse(message.createdAt);
             const current = previewsRef.current[message.session];
@@ -653,6 +663,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     const { [session]: _drop, ...rest } = current;
                     applyUnread(rest);
                 }
+                void sessions.markRead(session);
                 setMentioned((prev) => {
                     if (!prev[session]) return prev;
                     const { [session]: _drop, ...rest } = prev;
@@ -677,6 +688,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     (friends.cached()?.starred ?? []).includes(message.sender);
                 if (starHit || !dndRef.current.includes(message.session))
                     playBeep();
+                sessions.track(message.session, message.seq ?? 0);
                 if (message.session === activeRef.current) return;
                 applyUnread({
                     ...unreadRef.current,
@@ -694,6 +706,18 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     },
                     starHit,
                 );
+            });
+            const disposeRead = ctx.on("server:read:update", (payload) => {
+                const data = payload as {
+                    session: string;
+                    username: string;
+                };
+                if (data.username !== auth.user()?.username) return;
+                if (data.session !== activeRef.current) return;
+                const current = unreadRef.current;
+                if (!current[data.session]) return;
+                const { [data.session]: _drop, ...rest } = current;
+                applyUnread(rest);
             });
             const disposeRecall = ctx.on(
                 "server:message:recalled",
@@ -748,6 +772,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
             return () => {
                 void disposeOpen();
                 void disposeMsg();
+                void disposeRead();
                 void disposeRecall();
                 void disposePresence();
             };

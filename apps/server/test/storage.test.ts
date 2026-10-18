@@ -75,7 +75,9 @@ describe("message store", () => {
             "m3",
             "m4",
         ]);
-        const older = await messages.list("page", 2, all[2].createdAt);
+        const older = await messages.list("page", 2, {
+            before: all[2].createdAt,
+        });
         expect(older.map((m) => m.content)).toEqual(["m0", "m1"]);
     });
 
