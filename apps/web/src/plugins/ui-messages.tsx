@@ -606,11 +606,10 @@ const MessageGroupRow = memo(
                                                     preload="metadata"
                                                     className="max-h-64 w-auto max-w-80 rounded-lg bg-black"
                                                 >
-                                                    <track
-                                                        kind="captions"
-                                                        src=""
-                                                        label="字幕"
-                                                    />
+                                                        <track
+                                                            kind="captions"
+                                                            label="字幕"
+                                                        />
                                                 </video>
                                             </button>
                                         ) : media === "audio" ? (
@@ -620,11 +619,10 @@ const MessageGroupRow = memo(
                                                     controls
                                                     className="h-8 w-full min-w-44"
                                                 >
-                                                    <track
-                                                        kind="captions"
-                                                        src=""
-                                                        label="字幕"
-                                                    />
+                                                        <track
+                                                            kind="captions"
+                                                            label="字幕"
+                                                        />
                                                 </audio>
                                             </div>
                                         ) : media === "moment" ? (

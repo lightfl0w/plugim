@@ -1111,14 +1111,6 @@ export const createMomentsPage = (ctx: Context): FC => {
         return (
             <div className="relative flex h-full flex-col">
                 <div className="flex h-12 min-h-12 shrink-0 items-center gap-1 border-b border-border px-3">
-                    <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title="返回"
-                        onClick={() => void navigate(-1)}
-                    >
-                        <ArrowLeftIcon />
-                    </Button>
                     <p className="text-sm font-semibold">朋友圈</p>
                     {state.author ? (
                         <button

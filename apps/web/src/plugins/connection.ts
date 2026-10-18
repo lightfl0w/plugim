@@ -110,7 +110,11 @@ export const connectionPlugin: Plugin = {
 
         connect();
         syncBuild();
+        let lastToken = auth.token();
         auth.onChange(() => {
+            const token = auth.token();
+            if (token === lastToken) return;
+            lastToken = token;
             for (const { reject } of pending.values())
                 reject(new Error("connection reset"));
             pending.clear();

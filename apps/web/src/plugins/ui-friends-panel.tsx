@@ -245,26 +245,6 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
             <>
                 <div className="flex h-12 min-h-12 items-center px-4">
                     <p className="flex-1 text-sm font-semibold">好友</p>
-                    <button
-                        type="button"
-                        title="新建分组"
-                        className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                        onClick={() => {
-                            setCreating((v) => !v);
-                            setNewName("");
-                        }}
-                    >
-                        <PlusIcon className="size-4" />
-                    </button>
-                </div>
-                <div className="flex gap-1 px-2 pb-1">
-                    <Button
-                        variant="outline"
-                        className="h-9 w-full"
-                        onClick={() => ctx.emit("ui:contacts:add", {})}
-                    >
-                        添加好友
-                    </Button>
                 </div>
                 {creating ? (
                     <div className="flex gap-1 px-2 pb-1">
@@ -318,17 +298,10 @@ export const uiFriendsPanelSetup = async (ctx: Context) => {
                         ),
                     )}
                     {(list?.friends ?? []).length === 0 ? (
-                        <div className="mt-3 flex flex-col items-center gap-2 rounded-xl border border-dashed border-border p-4 text-center">
+                        <div className="mt-3 flex flex-col items-center gap-2 rounded-xl p-2 text-center">
                             <p className="text-xs text-muted-foreground">
                                 还没有好友，搜索站内用户发送申请吧
                             </p>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => ctx.emit("ui:contacts:add", {})}
-                            >
-                                添加好友
-                            </Button>
                         </div>
                     ) : null}
                     {section(

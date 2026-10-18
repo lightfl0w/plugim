@@ -206,7 +206,6 @@ export const uiShellSetup = async (ctx: Context) => {
                 () => rpc.status(),
             );
             const path = useLocation().pathname;
-            const [since, setSince] = useState(0);
             const [maint, setMaint] = useState<string | null>(null);
             useEffect(() => {
                 if (status === "open") setMaint(null);
@@ -232,20 +231,8 @@ export const uiShellSetup = async (ctx: Context) => {
                     void dispose();
                 };
             }, []);
-            useEffect(() => {
-                if (status === "open") return undefined;
-                setSince(Date.now());
-                const timer = window.setInterval(() => {
-                    if (rpc.status() !== "open") setSince(Date.now());
-                }, 1000);
-                return () => window.clearInterval(timer);
-            }, [status]);
             if (status === "open" && !maint) return null;
             if (path === "/install") return null;
-            const seconds = Math.max(
-                0,
-                Math.round((Date.now() - since) / 1000),
-            );
             return (
                 <div className="pointer-events-auto absolute inset-x-0 top-0 z-10 flex justify-center px-3 pt-[max(0.5rem,env(safe-area-inset-top))]">
                     <div
@@ -271,7 +258,7 @@ export const uiShellSetup = async (ctx: Context) => {
                                 ? maint
                                 : status === "connecting"
                                   ? "正在连接服务器..."
-                                  : `连接已断开，${seconds} 秒后重连，消息可能发送失败`}
+                                  : `连接已断开，正在重连…`}
                         </span>
                     </div>
                 </div>
