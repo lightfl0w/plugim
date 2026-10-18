@@ -1,8 +1,10 @@
 import type {
+    AABillInfo,
     FileMeta,
     MessageKind,
     MessageQuote,
     RedPacketInfo,
+    TransferInfo,
     User,
 } from "@plugim/protocol";
 
@@ -38,6 +40,8 @@ export interface ChatSendPayload {
     kind: MessageKind;
     file: FileMeta | null;
     redPacket?: RedPacketInfo | null;
+    transfer?: TransferInfo | null;
+    aaBill?: AABillInfo | null;
 }
 
 export interface UserWithHash extends User {

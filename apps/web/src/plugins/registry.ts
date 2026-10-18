@@ -5,6 +5,7 @@ import { connectionPlugin } from "./connection";
 import { friendsPlugin } from "./friends";
 import { groupsPlugin } from "./groups";
 import { momentsPlugin } from "./moments";
+import { moneyPlugin } from "./money";
 import { presencePlugin } from "./presence";
 import { redpacketPlugin } from "./redpacket";
 import { senderPlugin } from "./sender";
@@ -24,6 +25,7 @@ export const globalPlugins: Plugin[] = [
     cachePlugin,
     stickersPlugin,
     redpacketPlugin,
+    moneyPlugin,
     uiViewsPlugin,
 ];
 

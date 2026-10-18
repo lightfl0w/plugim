@@ -8,11 +8,13 @@ import type {
 } from "@plugim/protocol";
 import { MENTION_ALL, MENTION_ALL_LABEL } from "@plugim/protocol";
 import {
+    ArrowRightLeftIcon,
     GiftIcon,
     ImageIcon,
     MicIcon,
     PaperclipIcon,
     PlusIcon,
+    ReceiptIcon,
     SmileIcon,
     SquareIcon,
     XIcon,
@@ -23,11 +25,13 @@ import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { ConnStatus, RpcService } from "./connection";
+import type { MoneyApi } from "./money";
 import type { RedPacketService } from "./redpacket";
 import type { SenderService } from "./sender";
 import type { StickersService } from "./stickers";
 import { draftStore } from "./ui-drafts";
-import { RedPacketCreateDialog } from "./ui-redpacket";
+import { AABillCreateDialog, TransferCreateDialog } from "./ui-money";
+import { formatMoney, RedPacketCreateDialog } from "./ui-redpacket";
 import { showAlert, showHint, usePopupClose } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
@@ -67,6 +71,7 @@ export const uiComposerSetup = async (ctx: Context) => {
     const stickers = ctx.get<StickersService>("stickers");
     const auth = ctx.get<AuthService>("auth");
     const redpackets = ctx.get<RedPacketService>("redpacket");
+    const money = ctx.get<MoneyApi>("money");
     let currentSession = "";
     let uploadLimitMb = 20;
     void rpc
@@ -93,6 +98,60 @@ export const uiComposerSetup = async (ctx: Context) => {
         const [quote, setQuote] = useState<MessageQuote | null>(null);
         const [packetOpen, setPacketOpen] = useState(false);
         const [packetBusy, setPacketBusy] = useState(false);
+        const [transferOpen, setTransferOpen] = useState(false);
+        const [transferBusy, setTransferBusy] = useState(false);
+        const [balance, setBalance] = useState<number | null>(null);
+        const [billOpen, setBillOpen] = useState(false);
+        const [billBusy, setBillBusy] = useState(false);
+        const [billMembers, setBillMembers] = useState<
+            { userId: string; username: string }[]
+        >([]);
+        const [session, setSession] = useState(currentSession);
+        useEffect(() => {
+            const sync = () => setSession(currentSession);
+            sessionListeners.add(sync);
+            sync();
+            return () => {
+                sessionListeners.delete(sync);
+            };
+        }, []);
+        const isP2p = session.startsWith("p2p:");
+        const peerName = isP2p ? session.slice(4) : "";
+
+        const refreshBalance = useCallback(async () => {
+            try {
+                const next = await money.transfer.balance();
+                setBalance(next.balance);
+            } catch {
+                setBalance(null);
+            }
+        }, []);
+
+        useEffect(() => {
+            if (transferOpen || balance === null) void refreshBalance();
+        }, [transferOpen, balance, refreshBalance]);
+
+        const openTransfer = async () => {
+            await refreshBalance();
+            setTransferOpen(true);
+        };
+
+        const openAABill = async () => {
+            setBillBusy(true);
+            try {
+                const next = await money.aa.candidates({
+                    sessionId: currentSession,
+                });
+                setBillMembers(next.candidates);
+                setBillOpen(true);
+            } catch (err) {
+                showHint(
+                    err instanceof Error ? err.message : "无法获取参与人列表",
+                );
+            } finally {
+                setBillBusy(false);
+            }
+        };
         const [status, setStatus] = useState<ConnStatus>(rpc.status());
         const [sending, setSending] = useState(false);
         const [emojiOpen, setEmojiOpen] = useState(false);
@@ -736,6 +795,22 @@ export const uiComposerSetup = async (ctx: Context) => {
                                     !currentSession.startsWith("g:")),
                         )}
                         {toolButton(
+                            "转账",
+                            <ArrowRightLeftIcon className="size-5" />,
+                            () => void openTransfer(),
+                            false,
+                            muted || !isP2p,
+                        )}
+                        {toolButton(
+                            "AA 账单",
+                            <ReceiptIcon className="size-5" />,
+                            () => void openAABill(),
+                            false,
+                            muted ||
+                                (!currentSession.startsWith("p2p:") &&
+                                    !currentSession.startsWith("g:")),
+                        )}
+                        {toolButton(
                             recording ? "停止录音并发送" : "语音消息",
                             recording ? (
                                 <SquareIcon className="size-5" />
@@ -877,6 +952,46 @@ export const uiComposerSetup = async (ctx: Context) => {
                             showHint("红包已发出");
                         } finally {
                             setPacketBusy(false);
+                        }
+                    }}
+                />
+                <TransferCreateDialog
+                    open={transferOpen}
+                    sessionId={session}
+                    toUsername={peerName}
+                    balance={balance}
+                    busy={transferBusy}
+                    onClose={() => setTransferOpen(false)}
+                    onSubmit={async (params) => {
+                        setTransferBusy(true);
+                        try {
+                            await money.transfer.send(params);
+                            setTransferOpen(false);
+                            showHint("转账已发出，等待对方确认收款");
+                        } finally {
+                            setTransferBusy(false);
+                        }
+                    }}
+                    onTopup={async (amount) => {
+                        const next = await money.transfer.topup({ amount });
+                        setBalance(next.balance);
+                        showHint(`充值成功，余额 ${formatMoney(next.balance)}`);
+                    }}
+                />
+                <AABillCreateDialog
+                    open={billOpen}
+                    sessionId={session}
+                    busy={billBusy}
+                    members={billMembers.filter((m) => m.username !== me)}
+                    onClose={() => setBillOpen(false)}
+                    onSubmit={async (params) => {
+                        setBillBusy(true);
+                        try {
+                            await money.aa.create(params);
+                            setBillOpen(false);
+                            showHint("AA 账单已发起");
+                        } finally {
+                            setBillBusy(false);
                         }
                     }}
                 />

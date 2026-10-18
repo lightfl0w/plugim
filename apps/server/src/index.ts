@@ -5,6 +5,7 @@ import { autoDiscoverPlugins, Context } from "@plugim/core";
 import { readInstallConfig } from "./installConfig";
 import { installLifecycle } from "./lifecycle";
 import { installFileLogger } from "./logger";
+import { aaPlugin } from "./plugins/aa";
 import { adminPlugin } from "./plugins/admin";
 import { auditPlugin } from "./plugins/audit";
 import { authPlugin } from "./plugins/auth";
@@ -28,6 +29,7 @@ import { screenPlugin } from "./plugins/screen";
 import { stickersPlugin } from "./plugins/stickers";
 import { storagePlugin } from "./plugins/storage";
 import { tasksPlugin } from "./plugins/tasks";
+import { transferPlugin } from "./plugins/transfer";
 import { updatePlugin } from "./plugins/update";
 import { webPlugin } from "./plugins/web";
 
@@ -84,6 +86,7 @@ const lifecycle = installLifecycle({
 
 await autoDiscoverPlugins(ctx, [
     adminPlugin,
+    aaPlugin,
     auditPlugin,
     authPlugin,
     backupPlugin,
@@ -106,6 +109,7 @@ await autoDiscoverPlugins(ctx, [
     tasksPlugin,
     webPlugin,
     containerPlugin,
+    transferPlugin,
     updatePlugin,
     metricsPlugin,
 ]);

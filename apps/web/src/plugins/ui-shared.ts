@@ -339,6 +339,9 @@ export const messageLabel = (
     if (type === "file") return fileName ? `[文件] ${fileName}` : "[文件]";
     if (type === "merge") return "[聊天记录]";
     if (type === "moment") return "[动态]";
+    if (type === "redpacket") return "[红包]";
+    if (type === "transfer") return "[转账]";
+    if (type === "aabill") return "[AA 账单]";
     if (type === "notice") return "[群公告]";
     return null;
 };

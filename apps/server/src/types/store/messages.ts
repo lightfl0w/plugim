@@ -1,4 +1,5 @@
 import type {
+    AABillInfo,
     ChatMessage,
     FileMeta,
     LinkPreview,
@@ -6,6 +7,7 @@ import type {
     MessageQuote,
     MessageReactions,
     RedPacketInfo,
+    TransferInfo,
 } from "@plugim/protocol";
 import type { MessageTrendPoint } from "../shared";
 
@@ -20,6 +22,8 @@ export interface MessageStore {
         file?: FileMeta | null;
         link?: LinkPreview | null;
         redPacket?: RedPacketInfo | null;
+        transfer?: TransferInfo | null;
+        aaBill?: AABillInfo | null;
     }): Promise<ChatMessage>;
 
     list(

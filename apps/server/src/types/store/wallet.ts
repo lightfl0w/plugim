@@ -55,85 +55,125 @@ export interface RedPacketStore {
     }): Promise<RedPacketClaimResult>;
 
     expireIfNeeded(now: string): Promise<string[]>;
+
+    claimBack(
+        redPacketId: string,
+        input: { at: string },
+    ): Promise<{
+        status: RedPacketRow["status"];
+        remaining: number;
+        remainCount: number;
+        claimedCount: number;
+    }>;
 }
 
-export interface AABillStore {
-    create(input: {
-        id: string;
-        creatorId: string;
-        sessionId: string;
-        description: string;
-        totalAmount: number;
-        participantIds: string[];
-        splitType: "equal" | "custom";
-        customSplits?: Record<string, number>;
-        deadline: string;
-    }): Promise<void>;
+export type TransferState = "pending" | "accepted" | "rejected" | "refunded";
 
-    getById(id: string): Promise<null | {
+export interface TransferRow {
+    id: string;
+    sessionId: string;
+    fromId: string;
+    toId: string;
+    amount: number;
+    message?: string | null;
+    state: TransferState;
+    createdAt: string;
+    expiredAt: string;
+}
+
+export type TransferCreateResult =
+    | { ok: true; transfer: TransferRow }
+    | {
+          ok: false;
+          reason: "missing" | "insufficient" | "duplicate" | "frozen";
+      };
+
+export type TransferSettleResult =
+    | { ok: true; transfer: TransferRow }
+    | { ok: false; reason: "missing" | "conflict" };
+
+export interface AABillRow {
+    id: string;
+    sessionId: string;
+    creatorId: string;
+    description: string;
+    totalAmount: number;
+    settledAmount: number;
+    participantIds: string[];
+    splitType: "equal" | "custom";
+    customSplits: Record<string, number>;
+    status: "pending" | "settled" | "cancelled";
+    createdAt: string;
+    deadline: string;
+}
+
+export interface AAPaymentRow {
+    id: string;
+    billId: string;
+    payerId: string;
+    amount: number;
+    paidAt: string;
+}
+
+export type AAPayResult =
+    | { ok: true; bill: AABillRow; payment: AAPaymentRow }
+    | {
+          ok: false;
+          reason:
+              | "missing"
+              | "closed"
+              | "duplicate"
+              | "amount"
+              | "insufficient";
+      };
+
+export interface WalletStore {
+    balanceOf(userId: string): Promise<number>;
+    balancesOf(userIds: string[]): Promise<Record<string, number>>;
+    adjustBalance(userId: string, delta: number): Promise<number>;
+
+    transferCreate(input: {
         id: string;
-        creatorId: string;
         sessionId: string;
-        description: string;
-        totalAmount: number;
-        settledAmount: number;
-        participantIds: string[];
-        splitType: "equal" | "custom";
-        customSplits?: Record<string, number>;
-        deadline: string;
-        status: "pending" | "settled" | "cancelled";
+        fromId: string;
+        toId: string;
+        amount: number;
+        message?: string;
         createdAt: string;
-    }>;
-
-    addPayment(billId: string, payerId: string, amount: number): Promise<void>;
-    updateStatus(
+        expiredAt: string;
+    }): Promise<TransferCreateResult>;
+    transferGet(id: string): Promise<TransferRow | null>;
+    transferSettle(
         id: string,
-        status: "pending" | "settled" | "cancelled",
-    ): Promise<void>;
-    cancel(id: string): Promise<void>;
-    listParticipantsPayments(
-        billId: string,
-        userIds: string[],
-    ): Promise<Record<string, number>>;
-    overdueBills(): Promise<string[]>;
-}
+        action: "accept" | "reject",
+    ): Promise<TransferSettleResult>;
+    transferExpireIfNeeded(): Promise<string[]>;
+    transferListForUser(userId: string): Promise<TransferRow[]>;
+    transferListSession(sessionId: string): Promise<TransferRow[]>;
 
-export interface TransferStore {
-    create(input: {
+    aaCreate(input: {
         id: string;
-        fromId: string;
-        toId: string;
-        amount: number;
-        message?: string;
+        sessionId: string;
+        creatorId: string;
+        description: string;
+        totalAmount: number;
+        participantIds: string[];
+        splitType: "equal" | "custom";
+        customSplits: Record<string, number>;
+        deadline: string;
         createdAt: string;
-        expiredAt: string;
     }): Promise<void>;
-
-    getById(id: string): Promise<null | {
-        id: string;
-        fromId: string;
-        toId: string;
+    aaGetById(id: string): Promise<AABillRow | null>;
+    aaListSession(sessionId: string): Promise<AABillRow[]>;
+    aaListForUser(userId: string): Promise<AABillRow[]>;
+    aaPayments(billId: string): Promise<AAPaymentRow[]>;
+    aaPay(input: {
+        billId: string;
+        payerId: string;
+        paymentId: string;
         amount: number;
-        message?: string;
-        state: "pending" | "accepted" | "rejected" | "refunded";
-        createdAt: string;
-        expiredAt: string;
-    }>;
-
-    accept(id: string): Promise<boolean>;
-    reject(id: string): Promise<boolean>;
-    refund(id: string): Promise<boolean>;
-    expireIfNeeded(): Promise<string[]>;
-    listForUser(userId: string): Promise<
-        Array<{
-            id: string;
-            fromId: string;
-            toId: string;
-            amount: number;
-            message?: string;
-            state: string;
-            createdAt: string;
-            expiredAt: string;
-        }>
-    >;
+        paidAt: string;
+    }): Promise<AAPayResult>;
+    aaCancel(id: string): Promise<boolean>;
+    aaOverdue(): Promise<AABillRow[]>;
 }

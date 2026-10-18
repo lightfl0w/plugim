@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Context } from "@plugim/core";
 import { Hono } from "hono";
+import { aaPlugin } from "../src/plugins/aa";
 import { adminPlugin } from "../src/plugins/admin";
 import { auditPlugin } from "../src/plugins/audit";
 import { authPlugin } from "../src/plugins/auth";
@@ -21,6 +22,7 @@ import { redpacketPlugin } from "../src/plugins/redpacket";
 import { screenPlugin } from "../src/plugins/screen";
 import { storagePlugin } from "../src/plugins/storage";
 import { tasksPlugin } from "../src/plugins/tasks";
+import { transferPlugin } from "../src/plugins/transfer";
 import type { AuthUser, RpcHandler } from "../src/types";
 
 export interface RecordedEvent {
@@ -144,6 +146,8 @@ export const createTestApp = async (
     ctx.plugin(pushPlugin);
     ctx.plugin(chatPlugin);
     ctx.plugin(redpacketPlugin);
+    ctx.plugin(transferPlugin);
+    ctx.plugin(aaPlugin);
     ctx.plugin(linkPreviewPlugin);
     ctx.plugin(momentsPlugin);
     ctx.plugin(screenPlugin);

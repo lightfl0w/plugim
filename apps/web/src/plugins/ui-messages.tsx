@@ -5,6 +5,7 @@ import type {
     MergedChat,
     MergePayload,
     MomentShare,
+    TransferInfo,
 } from "@plugim/protocol";
 import {
     MENTION_ALL,
@@ -54,8 +55,15 @@ import type { CacheService } from "./cache";
 import type { ConnStatus, RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
+import type { AAService, TransferService } from "./money";
 import type { RedPacketService } from "./redpacket";
 import type { PendingEvent, PendingMessage, SenderService } from "./sender";
+import {
+    AABillCard,
+    AABillOpenDialog,
+    TransferCard,
+    TransferOpenDialog,
+} from "./ui-money";
 import { RedPacketCard, RedPacketOpenDialog } from "./ui-redpacket";
 import {
     formatBytes,
@@ -338,6 +346,18 @@ interface MessageActions {
     openMerge: (payload: MergePayload) => void;
     openMoment: (author: string) => void;
     openRedPacket: (redPacketId: string) => void;
+    openTransfer: (transferId: string) => void;
+    openAABill: (billId: string) => void;
+    transferStates: Record<string, TransferInfo["state"]>;
+    billStates: Record<string, "pending" | "settled" | "cancelled">;
+    billSettled: Record<string, number>;
+    packetLive: Record<
+        string,
+        {
+            status: "active" | "exhausted" | "expired";
+            claimedCount: number;
+        }
+    >;
     claimedAmounts: Record<string, number>;
 }
 
@@ -656,9 +676,43 @@ const MessageGroupRow = memo(
                                                             message.redPacket.id
                                                         ]
                                                     }
+                                                    live={
+                                                        actions.packetLive[
+                                                            message.redPacket.id
+                                                        ]
+                                                    }
                                                     onOpen={
                                                         actions.openRedPacket
                                                     }
+                                                />
+                                            ) : (
+                                                <p>{message.content}</p>
+                                            )
+                                        ) : media === "transfer" ? (
+                                            message.transfer ? (
+                                                <TransferCard
+                                                    message={message}
+                                                    mine={mine}
+                                                    states={
+                                                        actions.transferStates
+                                                    }
+                                                    onOpen={
+                                                        actions.openTransfer
+                                                    }
+                                                />
+                                            ) : (
+                                                <p>{message.content}</p>
+                                            )
+                                        ) : media === "aabill" ? (
+                                            message.aaBill ? (
+                                                <AABillCard
+                                                    message={message}
+                                                    mine={mine}
+                                                    states={actions.billStates}
+                                                    settled={
+                                                        actions.billSettled
+                                                    }
+                                                    onOpen={actions.openAABill}
                                                 />
                                             ) : (
                                                 <p>{message.content}</p>
@@ -916,6 +970,98 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [claimedAmounts, setClaimedAmounts] = useState<
             Record<string, number>
         >({});
+        const transfers = ctx.get<TransferService>("transfer");
+        const aaService = ctx.get<AAService>("aa");
+        const [openTransferId, setOpenTransferId] = useState<string | null>(
+            null,
+        );
+        const [transferStates, setTransferStates] = useState<
+            Record<string, TransferInfo["state"]>
+        >({});
+        const [openBillId, setOpenBillId] = useState<string | null>(null);
+        const [billStates, setBillStates] = useState<
+            Record<string, "pending" | "settled" | "cancelled">
+        >({});
+        const [billSettled, setBillSettled] = useState<Record<string, number>>(
+            {},
+        );
+        const [packetLive, setPacketLive] = useState<
+            Record<
+                string,
+                {
+                    status: "active" | "exhausted" | "expired";
+                    claimedCount: number;
+                }
+            >
+        >({});
+        useEffect(() => {
+            const offPacket = ctx.on("server:redpacket:update", (raw) => {
+                const payload = raw as {
+                    id?: string;
+                    remaining?: number;
+                    remainCount?: number;
+                    status?: string;
+                    claimedCount?: number;
+                };
+                if (!payload?.id) return;
+                const id = payload.id;
+                const status: "active" | "exhausted" | "expired" =
+                    payload.status === "expired"
+                        ? "expired"
+                        : payload.status === "exhausted"
+                          ? "exhausted"
+                          : (payload.remainCount ?? 1) <= 0
+                            ? "exhausted"
+                            : "active";
+                setPacketLive((prev) => ({
+                    ...prev,
+                    [id]: {
+                        status,
+                        claimedCount: payload.claimedCount ?? 0,
+                    },
+                }));
+            });
+            const offTransfer = ctx.on("server:transfer:update", (raw) => {
+                const payload = raw as {
+                    id?: string;
+                    state?: TransferInfo["state"];
+                };
+                if (!payload?.id || !payload.state) return;
+                const id = payload.id;
+                const state = payload.state;
+                setTransferStates((prev) => ({
+                    ...prev,
+                    [id]: state,
+                }));
+            });
+            const offBill = ctx.on("server:aabill:update", (raw) => {
+                const payload = raw as {
+                    id?: string;
+                    status?: "pending" | "settled" | "cancelled" | "overdue";
+                    settledAmount?: number;
+                };
+                if (!payload?.id) return;
+                const id = payload.id;
+                if (payload.settledAmount !== undefined)
+                    setBillSettled((prev) => ({
+                        ...prev,
+                        [id]: payload.settledAmount as number,
+                    }));
+                if (payload.status && payload.status !== "overdue")
+                    setBillStates((prev) => ({
+                        ...prev,
+                        [id]: payload.status as
+                            | "pending"
+                            | "settled"
+                            | "cancelled",
+                    }));
+            });
+            return () => {
+                offPacket();
+                offTransfer();
+                offBill();
+            };
+        }, []);
         const [essenceIds, setEssenceIds] = useState<Set<string>>(new Set());
         const [groupTitles, setGroupTitles] = useState<Record<string, string>>(
             {},
@@ -1712,6 +1858,12 @@ export const uiMessagesSetup = async (ctx: Context) => {
             openMerge: (payload) => openMergeStack(payload),
             openMoment: (author) => ctx.emit("ui:moments:open", { author }),
             openRedPacket: (redPacketId) => setOpenPacketId(redPacketId),
+            openTransfer: (transferId) => setOpenTransferId(transferId),
+            openAABill: (billId) => setOpenBillId(billId),
+            transferStates,
+            billStates,
+            billSettled,
+            packetLive,
             claimedAmounts,
         };
         const actions: MessageActions = {
@@ -1728,6 +1880,12 @@ export const uiMessagesSetup = async (ctx: Context) => {
             openMerge: (payload) => actionsRef.current?.openMerge(payload),
             openMoment: (author) => actionsRef.current?.openMoment(author),
             openRedPacket: (id) => actionsRef.current?.openRedPacket(id),
+            openTransfer: (id) => actionsRef.current?.openTransfer(id),
+            openAABill: (id) => actionsRef.current?.openAABill(id),
+            transferStates,
+            billStates,
+            billSettled,
+            packetLive,
             claimedAmounts,
         };
 
@@ -2421,6 +2579,36 @@ export const uiMessagesSetup = async (ctx: Context) => {
                             [id]: value,
                         }));
                         setOpenPacketId(null);
+                    }}
+                />
+                <TransferOpenDialog
+                    open={openTransferId !== null}
+                    transferId={openTransferId ?? ""}
+                    myId={user?.id ?? ""}
+                    service={transfers}
+                    onClose={() => setOpenTransferId(null)}
+                    onSettled={(id, state) =>
+                        setTransferStates((prev) => ({
+                            ...prev,
+                            [id]: state,
+                        }))
+                    }
+                />
+                <AABillOpenDialog
+                    open={openBillId !== null}
+                    billId={openBillId ?? ""}
+                    myId={user?.id ?? ""}
+                    service={aaService}
+                    onClose={() => setOpenBillId(null)}
+                    onChanged={(id, detail) => {
+                        setBillStates((prev) => ({
+                            ...prev,
+                            [id]: detail.bill.status,
+                        }));
+                        setBillSettled((prev) => ({
+                            ...prev,
+                            [id]: detail.bill.settledAmount,
+                        }));
                     }}
                 />
             </>

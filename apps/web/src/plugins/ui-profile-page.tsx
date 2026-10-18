@@ -12,9 +12,10 @@ import {
     SmartphoneIcon,
     SunIcon,
     VolumeIcon,
+    WalletIcon,
 } from "lucide-react";
 import type { FC, ReactNode } from "react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import {
@@ -30,8 +31,10 @@ import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
+import type { MoneyApi } from "./money";
 import type { ThemeMode, ThemeService } from "./theme";
 import type { AdminService } from "./ui-admin";
+import { formatMoney, parseMoneyInput } from "./ui-redpacket";
 import { isSoundEnabled, setSoundEnabled, showAlert } from "./ui-shared";
 
 const THEME_OPTIONS: { value: ThemeMode; label: string; icon: ReactNode }[] = [
@@ -83,6 +86,115 @@ export const createProfilePage = (ctx: Context): FC => {
     const friends = ctx.get<FriendsService>("friends");
     const admin = ctx.get<AdminService>("admin");
     const rpc = ctx.get<RpcService>("rpc");
+    const money = ctx.get<MoneyApi>("money");
+
+    const WalletSection = () => {
+        const [balance, setBalance] = useState<number | null>(null);
+        const [pendingIn, setPendingIn] = useState(0);
+        const [amount, setAmount] = useState("100");
+        const [busy, setBusy] = useState(false);
+        const [error, setError] = useState("");
+
+        const load = useCallback(async () => {
+            try {
+                const next = await money.transfer.list();
+                setBalance(next.balance);
+                setPendingIn(
+                    next.transfers.filter(
+                        (t) => t.action === "received" && t.state === "pending",
+                    ).length,
+                );
+            } catch {
+                setBalance(null);
+            }
+        }, []);
+
+        useEffect(() => {
+            void load();
+            const off = ctx.on("server:transfer:update", () => {
+                void load();
+            });
+            return () => {
+                off();
+            };
+        }, [load]);
+
+        const cents = parseMoneyInput(amount);
+        return (
+            <section className={section}>
+                <div className={cn(rowClass, "border-b border-border")}>
+                    <WalletIcon className="size-4 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-sm">我的余额</p>
+                        <p className="text-xs text-muted-foreground">
+                            {balance === null
+                                ? "加载中…"
+                                : `可用 ${formatMoney(balance)}${
+                                      pendingIn > 0
+                                          ? ` · ${pendingIn} 笔待收款`
+                                          : ""
+                                  }`}
+                        </p>
+                    </div>
+                </div>
+                <div className="flex items-end gap-2 p-3">
+                    <label htmlFor="wallet-topup" className="flex flex-1 flex-col gap-1">
+                        <span className="text-xs text-muted-foreground">
+                            充值金额（元）
+                        </span>
+                        <Input
+                            id="wallet-topup"
+                            value={amount}
+                            inputMode="decimal"
+                            className={cn(error && "border-destructive")}
+                            onChange={(event) => {
+                                setAmount(event.target.value);
+                                setError("");
+                            }}
+                        />
+                    </label>
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy || cents === null}
+                        onClick={async () => {
+                            if (cents === null) return;
+                            setBusy(true);
+                            setError("");
+                            try {
+                                const next = await money.transfer.topup({
+                                    amount: cents,
+                                });
+                                setBalance(next.balance);
+                                showAlert(
+                                    `充值成功，余额 ${formatMoney(next.balance)}`,
+                                );
+                                await load();
+                            } catch (err) {
+                                setError(
+                                    err instanceof Error
+                                        ? err.message
+                                        : "充值失败",
+                                );
+                            } finally {
+                                setBusy(false);
+                            }
+                        }}
+                    >
+                        充值
+                    </Button>
+                </div>
+                <p className="px-4 pb-3 text-xs text-muted-foreground">
+                    余额与转账为演示用的虚拟账本，不涉及任何真实资金。
+                </p>
+                {error ? (
+                    <p className="px-4 pb-3 text-xs text-destructive">
+                        {error}
+                    </p>
+                ) : null}
+            </section>
+        );
+    };
 
     const useUser = () =>
         useSyncExternalStore(
@@ -416,6 +528,7 @@ export const createProfilePage = (ctx: Context): FC => {
                             </div>
                         </section>
 
+                        <WalletSection />
                         <section className={section}>
                             <div
                                 className={cn(

@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Plugin } from "@plugim/core";
 import type {
+    AABillInfo,
     FileMeta,
     GroupRole,
     LinkPreview,
@@ -9,6 +10,7 @@ import type {
     MessageReactions,
     MomentVisibility,
     RedPacketInfo,
+    TransferInfo,
 } from "@plugim/protocol";
 import Database from "better-sqlite3";
 import {
@@ -46,6 +48,9 @@ import {
 } from "drizzle-orm/sqlite-core";
 import postgres from "postgres";
 import type {
+    AABillRow,
+    AAPaymentRow,
+    AAPayResult,
     AccountsStore,
     AdminUserRow,
     AuditRow,
@@ -78,7 +83,12 @@ import type {
     RedPacketRow,
     RedPacketStore,
     SettingsStore,
+    TransferCreateResult,
+    TransferRow,
+    TransferSettleResult,
+    TransferState,
     UserWithHash,
+    WalletStore,
 } from "../types";
 import type { AppConfig } from "./config";
 
@@ -96,6 +106,8 @@ const messagesSqlite = sqliteTable("messages", {
     link: sqliteText("link"),
     reactions: sqliteText("reactions"),
     redPacket: sqliteText("red_packet"),
+    transfer: sqliteText("transfer"),
+    aaBill: sqliteText("aa_bill"),
 });
 
 const messagesPg = pgTable("messages", {
@@ -114,6 +126,8 @@ const messagesPg = pgTable("messages", {
     link: pgText("link"),
     reactions: pgText("reactions"),
     redPacket: pgText("red_packet"),
+    transfer: pgText("transfer"),
+    aaBill: pgText("aa_bill"),
 });
 
 const redPacketsSqlite = sqliteTable("red_packets", {
@@ -186,10 +200,95 @@ const usersSqlite = sqliteTable("users", {
     tokenVersion: integer("token_version").notNull().default(0),
     deptId: sqliteText("dept_id"),
     title: sqliteText("title"),
+    balance: integer("balance").notNull().default(0),
     mustChangePassword: integer("must_change_password", { mode: "boolean" })
         .notNull()
         .default(false),
 });
+
+const transfersSqlite = sqliteTable("transfers", {
+    id: sqliteText("id").primaryKey(),
+    session: sqliteText("session").notNull(),
+    fromId: sqliteText("from_id").notNull(),
+    toId: sqliteText("to_id").notNull(),
+    amount: integer("amount").notNull(),
+    message: sqliteText("message"),
+    state: sqliteText("state").notNull(),
+    createdAt: integer("created_at").notNull(),
+    expiredAt: integer("expired_at").notNull(),
+});
+
+const transfersPg = pgTable("transfers", {
+    id: pgText("id").primaryKey(),
+    session: pgText("session").notNull(),
+    fromId: pgText("from_id").notNull(),
+    toId: pgText("to_id").notNull(),
+    amount: pgInteger("amount").notNull(),
+    message: pgText("message"),
+    state: pgText("state").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+    expiredAt: timestamp("expired_at", { withTimezone: true }).notNull(),
+});
+
+const aaBillsSqlite = sqliteTable("aa_bills", {
+    id: sqliteText("id").primaryKey(),
+    session: sqliteText("session").notNull(),
+    creatorId: sqliteText("creator_id").notNull(),
+    description: sqliteText("description").notNull(),
+    totalAmount: integer("total_amount").notNull(),
+    settledAmount: integer("settled_amount").notNull().default(0),
+    participantIds: sqliteText("participant_ids").notNull(),
+    splitType: sqliteText("split_type").notNull(),
+    customSplits: sqliteText("custom_splits"),
+    status: sqliteText("status").notNull(),
+    createdAt: integer("created_at").notNull(),
+    deadline: integer("deadline").notNull(),
+});
+
+const aaBillsPg = pgTable("aa_bills", {
+    id: pgText("id").primaryKey(),
+    session: pgText("session").notNull(),
+    creatorId: pgText("creator_id").notNull(),
+    description: pgText("description").notNull(),
+    totalAmount: pgInteger("total_amount").notNull(),
+    settledAmount: pgInteger("settled_amount").notNull().default(0),
+    participantIds: pgText("participant_ids").notNull(),
+    splitType: pgText("split_type").notNull(),
+    customSplits: pgText("custom_splits"),
+    status: pgText("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+    deadline: timestamp("deadline", { withTimezone: true }).notNull(),
+});
+
+const aaPaymentsSqlite = sqliteTable(
+    "aa_payments",
+    {
+        id: sqliteText("id").primaryKey(),
+        billId: sqliteText("bill_id").notNull(),
+        payerId: sqliteText("payer_id").notNull(),
+        amount: integer("amount").notNull(),
+        paidAt: integer("paid_at").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.billId, table.payerId] })],
+);
+
+const aaPaymentsPg = pgTable(
+    "aa_payments",
+    {
+        id: pgText("id").primaryKey(),
+        billId: pgText("bill_id").notNull(),
+        payerId: pgText("payer_id").notNull(),
+        amount: pgInteger("amount").notNull(),
+        paidAt: timestamp("paid_at", { withTimezone: true })
+            .notNull()
+            .defaultNow(),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.billId, table.payerId] })],
+);
 
 const usersPg = pgTable("users", {
     id: pgText("id").primaryKey(),
@@ -203,6 +302,7 @@ const usersPg = pgTable("users", {
     tokenVersion: pgInteger("token_version").notNull().default(0),
     deptId: pgText("dept_id"),
     title: pgText("title"),
+    balance: pgInteger("balance").notNull().default(0),
     mustChangePassword: pgBoolean("must_change_password")
         .notNull()
         .default(false),
@@ -664,7 +764,9 @@ CREATE TABLE IF NOT EXISTS messages (
   file TEXT,
   link TEXT,
   reactions TEXT,
-  red_packet TEXT
+  red_packet TEXT,
+  transfer TEXT,
+  aa_bill TEXT
 );
 CREATE TABLE IF NOT EXISTS red_packets (
   id TEXT PRIMARY KEY,
@@ -689,6 +791,43 @@ CREATE TABLE IF NOT EXISTS red_packet_records (
   claimed_at INTEGER NOT NULL,
   PRIMARY KEY (red_packet_id, claimer_id)
 );
+CREATE INDEX IF NOT EXISTS red_packet_records_idx ON red_packet_records (red_packet_id);
+CREATE TABLE IF NOT EXISTS transfers (
+  id TEXT PRIMARY KEY,
+  session TEXT NOT NULL,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  message TEXT,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expired_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS transfers_session_idx ON transfers (session, created_at);
+CREATE INDEX IF NOT EXISTS transfers_to_idx ON transfers (to_id, state);
+CREATE TABLE IF NOT EXISTS aa_bills (
+  id TEXT PRIMARY KEY,
+  session TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  total_amount INTEGER NOT NULL,
+  settled_amount INTEGER NOT NULL DEFAULT 0,
+  participant_ids TEXT NOT NULL,
+  split_type TEXT NOT NULL,
+  custom_splits TEXT,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  deadline INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS aa_bills_session_idx ON aa_bills (session, created_at);
+CREATE TABLE IF NOT EXISTS aa_payments (
+  id TEXT NOT NULL,
+  bill_id TEXT NOT NULL,
+  payer_id TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  paid_at INTEGER NOT NULL,
+  PRIMARY KEY (bill_id, payer_id)
+);
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -700,6 +839,7 @@ CREATE TABLE IF NOT EXISTS users (
   token_version INTEGER NOT NULL DEFAULT 0,
   dept_id TEXT,
   title TEXT,
+  balance INTEGER NOT NULL DEFAULT 0,
   must_change_password INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS departments (
@@ -870,7 +1010,9 @@ CREATE TABLE IF NOT EXISTS messages (
   file TEXT,
   link TEXT,
   reactions TEXT,
-  red_packet TEXT
+  red_packet TEXT,
+  transfer TEXT,
+  aa_bill TEXT
 );
 CREATE TABLE IF NOT EXISTS red_packets (
   id TEXT PRIMARY KEY,
@@ -895,6 +1037,43 @@ CREATE TABLE IF NOT EXISTS red_packet_records (
   claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (red_packet_id, claimer_id)
 );
+CREATE INDEX IF NOT EXISTS red_packet_records_idx ON red_packet_records (red_packet_id);
+CREATE TABLE IF NOT EXISTS transfers (
+  id TEXT PRIMARY KEY,
+  session TEXT NOT NULL,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  message TEXT,
+  state TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expired_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS transfers_session_idx ON transfers (session, created_at);
+CREATE INDEX IF NOT EXISTS transfers_to_idx ON transfers (to_id, state);
+CREATE TABLE IF NOT EXISTS aa_bills (
+  id TEXT PRIMARY KEY,
+  session TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  total_amount INTEGER NOT NULL,
+  settled_amount INTEGER NOT NULL DEFAULT 0,
+  participant_ids TEXT NOT NULL,
+  split_type TEXT NOT NULL,
+  custom_splits TEXT,
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deadline TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS aa_bills_session_idx ON aa_bills (session, created_at);
+CREATE TABLE IF NOT EXISTS aa_payments (
+  id TEXT NOT NULL,
+  bill_id TEXT NOT NULL,
+  payer_id TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  paid_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (bill_id, payer_id)
+);
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -906,6 +1085,7 @@ CREATE TABLE IF NOT EXISTS users (
   token_version INTEGER NOT NULL DEFAULT 0,
   dept_id TEXT,
   title TEXT,
+  balance INTEGER NOT NULL DEFAULT 0,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE IF NOT EXISTS departments (
@@ -1324,17 +1504,80 @@ interface MessageDbRow {
     link: string | null;
     reactions: string | null;
     redPacket: string | null;
+    transfer: string | null;
+    aaBill: string | null;
 }
 
-const parseRedPacket = (raw: unknown): RedPacketInfo | null => {
+const parseJsonField = <T>(
+    raw: unknown,
+    guard: (v: T) => boolean,
+): T | null => {
     if (typeof raw !== "string" || !raw) return null;
     try {
-        const parsed = JSON.parse(raw) as Partial<RedPacketInfo>;
-        if (!parsed.id || !parsed.senderId) return null;
-        return parsed as RedPacketInfo;
+        const parsed = JSON.parse(raw) as T;
+        return guard(parsed) ? parsed : null;
     } catch {
         return null;
     }
+};
+
+const parseRedPacket = (raw: unknown): RedPacketInfo | null =>
+    parseJsonField<RedPacketInfo>(
+        raw,
+        (v) => typeof v.id === "string" && typeof v.senderId === "string",
+    );
+
+const parseTransfer = (raw: unknown): TransferInfo | null =>
+    parseJsonField<TransferInfo>(
+        raw,
+        (v) => typeof v.id === "string" && typeof v.fromId === "string",
+    );
+
+const parseAABill = (raw: unknown): AABillInfo | null =>
+    parseJsonField<AABillInfo>(
+        raw,
+        (v) => typeof v.id === "string" && typeof v.creatorId === "string",
+    );
+
+const parseIdList = (raw: string | null): string[] => {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        return Array.isArray(parsed)
+            ? parsed.filter((item): item is string => typeof item === "string")
+            : [];
+    } catch {
+        return [];
+    }
+};
+
+const parseSplitMap = (raw: string | null): Record<string, number> => {
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+            return {};
+        return Object.fromEntries(
+            Object.entries(parsed as Record<string, unknown>)
+                .filter(([, v]) => typeof v === "number")
+                .map(([k, v]) => [k, v as number]),
+        );
+    } catch {
+        return {};
+    }
+};
+
+const EMPTY_CLAIM_BACK = {
+    status: "expired" as const,
+    remaining: 0,
+    remainCount: 0,
+    claimedCount: 0,
+};
+
+const splitOf = (bill: AABillRow, userId: string): number | null => {
+    if (!bill.participantIds.includes(userId)) return null;
+    if (bill.splitType === "custom") return bill.customSplits[userId] ?? null;
+    return Math.floor(bill.totalAmount / bill.participantIds.length);
 };
 
 const messageRowToChat = (row: MessageDbRow) => ({
@@ -1351,6 +1594,8 @@ const messageRowToChat = (row: MessageDbRow) => ({
     link: parseLink(row.link),
     reactions: parseReactions(row.reactions),
     redPacket: parseRedPacket(row.redPacket),
+    transfer: parseTransfer(row.transfer),
+    aaBill: parseAABill(row.aaBill),
 });
 
 const pgPacketToRow = (
@@ -1389,6 +1634,7 @@ export const storagePlugin: Plugin = {
         "departments",
         "audits",
         "redPackets",
+        "wallet",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -1408,6 +1654,7 @@ export const storagePlugin: Plugin = {
         let departments: DepartmentsStore;
         let audits: AuditStore;
         let redPackets: RedPacketStore;
+        let wallet: WalletStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -1461,6 +1708,9 @@ export const storagePlugin: Plugin = {
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
             );
             await client.unsafe(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS balance INTEGER NOT NULL DEFAULT 0",
+            );
+            await client.unsafe(
                 "ALTER TABLE moments ADD COLUMN IF NOT EXISTS video TEXT",
             );
             await client.unsafe(
@@ -1471,6 +1721,12 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS red_packet TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS transfer TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS aa_bill TEXT",
             );
             await client.unsafe(
                 "ALTER TABLE group_members ADD COLUMN IF NOT EXISTS title TEXT",
@@ -1553,8 +1809,16 @@ export const storagePlugin: Plugin = {
             store = {
                 async save(input) {
                     const id = crypto.randomUUID();
-                    const { quote, mentions, file, link, redPacket, ...rest } =
-                        input;
+                    const {
+                        quote,
+                        mentions,
+                        file,
+                        link,
+                        redPacket,
+                        transfer,
+                        aaBill,
+                        ...rest
+                    } = input;
                     const rows = await db
                         .insert(messagesPg)
                         .values({
@@ -1567,6 +1831,10 @@ export const storagePlugin: Plugin = {
                             redPacket: redPacket
                                 ? JSON.stringify(redPacket)
                                 : null,
+                            transfer: transfer
+                                ? JSON.stringify(transfer)
+                                : null,
+                            aaBill: aaBill ? JSON.stringify(aaBill) : null,
                         })
                         .returning();
                     return messageRowToChat(rows[0]);
@@ -3207,6 +3475,465 @@ export const storagePlugin: Plugin = {
                         );
                     return rows.map((row) => row.id);
                 },
+                async claimBack(redPacketId, input) {
+                    const packet = await db
+                        .select({
+                            remaining: redPacketsPg.remaining,
+                            remainCount: redPacketsPg.remainCount,
+                            status: redPacketsPg.status,
+                        })
+                        .from(redPacketsPg)
+                        .where(eq(redPacketsPg.id, redPacketId))
+                        .limit(1);
+                    const row = packet[0];
+                    if (!row) return { ...EMPTY_CLAIM_BACK };
+                    const records = await db
+                        .select({ claimedAt: redPacketRecordsPg.claimedAt })
+                        .from(redPacketRecordsPg)
+                        .where(eq(redPacketRecordsPg.redPacketId, redPacketId))
+                        .orderBy(desc(redPacketRecordsPg.claimedAt))
+                        .limit(1);
+                    const claimedCount = await db
+                        .select({ id: redPacketRecordsPg.id })
+                        .from(redPacketRecordsPg)
+                        .where(eq(redPacketRecordsPg.redPacketId, redPacketId));
+                    const count = claimedCount.length;
+                    if (row.status !== "active")
+                        return {
+                            status: row.status as RedPacketRow["status"],
+                            remaining: row.remaining,
+                            remainCount: row.remainCount,
+                            claimedCount: count,
+                        };
+                    const latest = records[0]?.claimedAt;
+                    if (
+                        latest &&
+                        latest.getTime() > new Date(input.at).getTime()
+                    )
+                        return {
+                            status: row.status as RedPacketRow["status"],
+                            remaining: row.remaining,
+                            remainCount: row.remainCount,
+                            claimedCount: count,
+                        };
+                    await db
+                        .update(redPacketsPg)
+                        .set({ status: "expired" })
+                        .where(eq(redPacketsPg.id, redPacketId));
+                    return {
+                        status: "expired" as const,
+                        remaining: row.remaining,
+                        remainCount: row.remainCount,
+                        claimedCount: count,
+                    };
+                },
+            };
+
+            const transferRowOf = (
+                row: typeof transfersPg.$inferSelect,
+            ): TransferRow => ({
+                id: row.id,
+                sessionId: row.session,
+                fromId: row.fromId,
+                toId: row.toId,
+                amount: row.amount,
+                message: row.message,
+                state: row.state as TransferState,
+                createdAt: row.createdAt.toISOString(),
+                expiredAt: row.expiredAt.toISOString(),
+            });
+
+            const billRowOf = (
+                row: typeof aaBillsPg.$inferSelect,
+            ): AABillRow => ({
+                id: row.id,
+                sessionId: row.session,
+                creatorId: row.creatorId,
+                description: row.description,
+                totalAmount: row.totalAmount,
+                settledAmount: row.settledAmount,
+                participantIds: parseIdList(row.participantIds),
+                splitType: row.splitType as AABillRow["splitType"],
+                customSplits: parseSplitMap(row.customSplits),
+                status: row.status as AABillRow["status"],
+                createdAt: row.createdAt.toISOString(),
+                deadline: row.deadline.toISOString(),
+            });
+
+            const paymentRowOf = (
+                row: typeof aaPaymentsPg.$inferSelect,
+            ): AAPaymentRow => ({
+                id: row.id,
+                billId: row.billId,
+                payerId: row.payerId,
+                amount: row.amount,
+                paidAt: row.paidAt.toISOString(),
+            });
+
+            const pgBalance = async (userId: string): Promise<number> => {
+                const rows = await db
+                    .select({ balance: usersPg.balance })
+                    .from(usersPg)
+                    .where(eq(usersPg.id, userId))
+                    .limit(1);
+                return rows[0]?.balance ?? 0;
+            };
+
+            const pgAddBalance = async (
+                tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+                userId: string,
+                delta: number,
+            ): Promise<void> => {
+                if (delta === 0) return;
+                await tx
+                    .update(usersPg)
+                    .set({ balance: sql`${usersPg.balance} + ${delta}` })
+                    .where(eq(usersPg.id, userId));
+            };
+
+            wallet = {
+                async balanceOf(userId) {
+                    return pgBalance(userId);
+                },
+                async balancesOf(userIds) {
+                    if (userIds.length === 0) return {};
+                    const rows = await db
+                        .select({
+                            id: usersPg.id,
+                            balance: usersPg.balance,
+                        })
+                        .from(usersPg)
+                        .where(inArray(usersPg.id, userIds));
+                    return Object.fromEntries(
+                        rows.map((row) => [row.id, row.balance]),
+                    );
+                },
+                async adjustBalance(userId, delta) {
+                    return db.transaction(async (tx) => {
+                        const rows = await tx
+                            .select({ balance: usersPg.balance })
+                            .from(usersPg)
+                            .where(eq(usersPg.id, userId))
+                            .limit(1)
+                            .for("update");
+                        const current = rows[0];
+                        if (!current) throw new Error("用户不存在");
+                        const next = current.balance + delta;
+                        if (next < 0) throw new Error("余额不足");
+                        await tx
+                            .update(usersPg)
+                            .set({ balance: next })
+                            .where(eq(usersPg.id, userId));
+                        return next;
+                    });
+                },
+                async transferCreate(input) {
+                    return db.transaction(async (tx) => {
+                        const dup = await tx
+                            .select({ id: transfersPg.id })
+                            .from(transfersPg)
+                            .where(eq(transfersPg.id, input.id))
+                            .limit(1);
+                        if (dup.length > 0)
+                            return {
+                                ok: false as const,
+                                reason: "duplicate" as const,
+                            };
+                        const rows = await tx
+                            .select({ balance: usersPg.balance })
+                            .from(usersPg)
+                            .where(eq(usersPg.id, input.fromId))
+                            .limit(1)
+                            .for("update");
+                        if (rows.length === 0)
+                            return {
+                                ok: false as const,
+                                reason: "missing" as const,
+                            };
+                        if (rows[0].balance < input.amount)
+                            return {
+                                ok: false as const,
+                                reason: "insufficient" as const,
+                            };
+                        await pgAddBalance(tx, input.fromId, -input.amount);
+                        const inserted = await tx
+                            .insert(transfersPg)
+                            .values({
+                                id: input.id,
+                                session: input.sessionId,
+                                fromId: input.fromId,
+                                toId: input.toId,
+                                amount: input.amount,
+                                message: input.message ?? null,
+                                state: "pending",
+                                createdAt: new Date(input.createdAt),
+                                expiredAt: new Date(input.expiredAt),
+                            })
+                            .returning();
+                        return {
+                            ok: true as const,
+                            transfer: transferRowOf(inserted[0]),
+                        };
+                    });
+                },
+                async transferGet(id) {
+                    const rows = await db
+                        .select()
+                        .from(transfersPg)
+                        .where(eq(transfersPg.id, id))
+                        .limit(1);
+                    return rows[0] ? transferRowOf(rows[0]) : null;
+                },
+                async transferSettle(id, action) {
+                    return db.transaction(async (tx) => {
+                        const rows = await tx
+                            .select()
+                            .from(transfersPg)
+                            .where(eq(transfersPg.id, id))
+                            .limit(1)
+                            .for("update");
+                        const row = rows[0];
+                        if (!row)
+                            return {
+                                ok: false as const,
+                                reason: "missing" as const,
+                            };
+                        if (row.state !== "pending")
+                            return {
+                                ok: false as const,
+                                reason: "conflict" as const,
+                            };
+                        const next: TransferState =
+                            action === "accept" ? "accepted" : "rejected";
+                        if (action === "accept")
+                            await pgAddBalance(tx, row.toId, row.amount);
+                        else await pgAddBalance(tx, row.fromId, row.amount);
+                        const updated = await tx
+                            .update(transfersPg)
+                            .set({ state: next })
+                            .where(eq(transfersPg.id, id))
+                            .returning();
+                        return {
+                            ok: true as const,
+                            transfer: transferRowOf(updated[0]),
+                        };
+                    });
+                },
+                async transferExpireIfNeeded() {
+                    const rows = await db
+                        .select()
+                        .from(transfersPg)
+                        .where(
+                            and(
+                                eq(transfersPg.state, "pending"),
+                                lte(transfersPg.expiredAt, new Date()),
+                            ),
+                        );
+                    if (rows.length === 0) return [];
+                    await db.transaction(async (tx) => {
+                        for (const row of rows) {
+                            await pgAddBalance(tx, row.fromId, row.amount);
+                            await tx
+                                .update(transfersPg)
+                                .set({ state: "refunded" })
+                                .where(eq(transfersPg.id, row.id));
+                        }
+                    });
+                    return rows.map((row) => row.id);
+                },
+                async transferListForUser(userId) {
+                    const rows = await db
+                        .select()
+                        .from(transfersPg)
+                        .where(
+                            or(
+                                eq(transfersPg.fromId, userId),
+                                eq(transfersPg.toId, userId),
+                            ),
+                        )
+                        .orderBy(desc(transfersPg.createdAt))
+                        .limit(200);
+                    return rows.map(transferRowOf);
+                },
+                async transferListSession(sessionId) {
+                    const rows = await db
+                        .select()
+                        .from(transfersPg)
+                        .where(eq(transfersPg.session, sessionId))
+                        .orderBy(desc(transfersPg.createdAt))
+                        .limit(100);
+                    return rows.map(transferRowOf);
+                },
+                async aaCreate(input) {
+                    await db.insert(aaBillsPg).values({
+                        id: input.id,
+                        session: input.sessionId,
+                        creatorId: input.creatorId,
+                        description: input.description,
+                        totalAmount: input.totalAmount,
+                        settledAmount: 0,
+                        participantIds: JSON.stringify(input.participantIds),
+                        splitType: input.splitType,
+                        customSplits: JSON.stringify(input.customSplits),
+                        status: "pending",
+                        createdAt: new Date(input.createdAt),
+                        deadline: new Date(input.deadline),
+                    });
+                },
+                async aaGetById(id) {
+                    const rows = await db
+                        .select()
+                        .from(aaBillsPg)
+                        .where(eq(aaBillsPg.id, id))
+                        .limit(1);
+                    return rows[0] ? billRowOf(rows[0]) : null;
+                },
+                async aaListSession(sessionId) {
+                    const rows = await db
+                        .select()
+                        .from(aaBillsPg)
+                        .where(eq(aaBillsPg.session, sessionId))
+                        .orderBy(desc(aaBillsPg.createdAt))
+                        .limit(100);
+                    return rows.map(billRowOf);
+                },
+                async aaListForUser(userId) {
+                    const rows = await db
+                        .select()
+                        .from(aaBillsPg)
+                        .where(
+                            sql`${aaBillsPg.creatorId} = ${userId} OR ${aaBillsPg.participantIds} LIKE ${`%${userId}%`}`,
+                        )
+                        .orderBy(desc(aaBillsPg.createdAt))
+                        .limit(200);
+                    return rows
+                        .map(billRowOf)
+                        .filter(
+                            (bill) =>
+                                bill.creatorId === userId ||
+                                bill.participantIds.includes(userId),
+                        );
+                },
+                async aaPayments(billId) {
+                    const rows = await db
+                        .select()
+                        .from(aaPaymentsPg)
+                        .where(eq(aaPaymentsPg.billId, billId))
+                        .orderBy(asc(aaPaymentsPg.paidAt));
+                    return rows.map(paymentRowOf);
+                },
+                async aaPay(input) {
+                    return db.transaction(async (tx): Promise<AAPayResult> => {
+                        const rows = await tx
+                            .select()
+                            .from(aaBillsPg)
+                            .where(eq(aaBillsPg.id, input.billId))
+                            .limit(1)
+                            .for("update");
+                        const bill = rows[0];
+                        if (!bill)
+                            return {
+                                ok: false as const,
+                                reason: "missing" as const,
+                            };
+                        if (bill.status !== "pending")
+                            return {
+                                ok: false as const,
+                                reason: "closed" as const,
+                            };
+                        const dup = await tx
+                            .select({ id: aaPaymentsPg.id })
+                            .from(aaPaymentsPg)
+                            .where(
+                                and(
+                                    eq(aaPaymentsPg.billId, input.billId),
+                                    eq(aaPaymentsPg.payerId, input.payerId),
+                                ),
+                            )
+                            .limit(1);
+                        if (dup.length > 0)
+                            return {
+                                ok: false as const,
+                                reason: "duplicate" as const,
+                            };
+                        const shares = splitOf(billRowOf(bill), input.payerId);
+                        if (shares === null || shares !== input.amount)
+                            return {
+                                ok: false as const,
+                                reason: "amount" as const,
+                            };
+                        const payerRows = await tx
+                            .select({ balance: usersPg.balance })
+                            .from(usersPg)
+                            .where(eq(usersPg.id, input.payerId))
+                            .limit(1)
+                            .for("update");
+                        if (payerRows.length === 0)
+                            return {
+                                ok: false as const,
+                                reason: "missing" as const,
+                            };
+                        if (payerRows[0].balance < input.amount)
+                            return {
+                                ok: false as const,
+                                reason: "insufficient" as const,
+                            };
+                        await pgAddBalance(tx, input.payerId, -input.amount);
+                        await pgAddBalance(tx, bill.creatorId, input.amount);
+                        const inserted = await tx
+                            .insert(aaPaymentsPg)
+                            .values({
+                                id: input.paymentId,
+                                billId: input.billId,
+                                payerId: input.payerId,
+                                amount: input.amount,
+                                paidAt: new Date(input.paidAt),
+                            })
+                            .returning();
+                        const settledAmount = bill.settledAmount + input.amount;
+                        const done = settledAmount >= bill.totalAmount;
+                        const updated = await tx
+                            .update(aaBillsPg)
+                            .set({
+                                settledAmount,
+                                status: done ? "settled" : "pending",
+                            })
+                            .where(eq(aaBillsPg.id, input.billId))
+                            .returning();
+                        return {
+                            ok: true as const,
+                            bill: billRowOf(updated[0]),
+                            payment: paymentRowOf(inserted[0]),
+                        };
+                    });
+                },
+                async aaCancel(id) {
+                    const updated = await db
+                        .update(aaBillsPg)
+                        .set({ status: "cancelled" })
+                        .where(
+                            and(
+                                eq(aaBillsPg.id, id),
+                                eq(aaBillsPg.status, "pending"),
+                            ),
+                        )
+                        .returning();
+                    return updated.length > 0;
+                },
+                async aaOverdue() {
+                    const rows = await db
+                        .select()
+                        .from(aaBillsPg)
+                        .where(
+                            and(
+                                eq(aaBillsPg.status, "pending"),
+                                lt(aaBillsPg.deadline, new Date()),
+                            ),
+                        )
+                        .orderBy(desc(aaBillsPg.createdAt))
+                        .limit(100);
+                    return rows.map(billRowOf);
+                },
             };
 
             ctx.log.info(`storage driver: postgres (${config.dbUrl})`);
@@ -3233,6 +3960,8 @@ export const storagePlugin: Plugin = {
                 "link",
                 "reactions",
                 "red_packet",
+                "transfer",
+                "aa_bill",
             ]) {
                 if (!messageColumns.some((item) => item.name === col)) {
                     const type = col === "recalled_at" ? "INTEGER" : "TEXT";
@@ -3251,6 +3980,7 @@ export const storagePlugin: Plugin = {
                 ["dept_id", "TEXT"],
                 ["title", "TEXT"],
                 ["must_change_password", "INTEGER NOT NULL DEFAULT 0"],
+                ["balance", "INTEGER NOT NULL DEFAULT 0"],
             ]) {
                 if (!userColumns.some((item) => item.name === col)) {
                     client.exec(`ALTER TABLE users ADD COLUMN ${col} ${type}`);
@@ -3370,6 +4100,8 @@ export const storagePlugin: Plugin = {
                         file: meta,
                         link,
                         redPacket,
+                        transfer,
+                        aaBill,
                         ...rest
                     } = input;
                     await db.insert(messagesSqlite).values({
@@ -3380,6 +4112,8 @@ export const storagePlugin: Plugin = {
                         file: meta ? JSON.stringify(meta) : null,
                         link: link ? JSON.stringify(link) : null,
                         redPacket: redPacket ? JSON.stringify(redPacket) : null,
+                        transfer: transfer ? JSON.stringify(transfer) : null,
+                        aaBill: aaBill ? JSON.stringify(aaBill) : null,
                         createdAt: now,
                     });
                     return {
@@ -3390,6 +4124,8 @@ export const storagePlugin: Plugin = {
                         file: meta ?? null,
                         link: link ?? null,
                         redPacket: redPacket ?? null,
+                        transfer: transfer ?? null,
+                        aaBill: aaBill ?? null,
                         createdAt: new Date(now).toISOString(),
                         recalledAt: null,
                     };
@@ -5205,6 +5941,447 @@ export const storagePlugin: Plugin = {
                         );
                     return rows.map((row) => row.id);
                 },
+                async claimBack(redPacketId, input) {
+                    const rows = await db
+                        .select({
+                            remaining: redPacketsSqlite.remaining,
+                            remainCount: redPacketsSqlite.remainCount,
+                            status: redPacketsSqlite.status,
+                            claimedAt: redPacketRecordsSqlite.claimedAt,
+                        })
+                        .from(redPacketsSqlite)
+                        .leftJoin(
+                            redPacketRecordsSqlite,
+                            eq(redPacketRecordsSqlite.redPacketId, redPacketId),
+                        )
+                        .where(eq(redPacketsSqlite.id, redPacketId))
+                        .limit(1);
+                    const row = rows[0];
+                    if (!row) return { ...EMPTY_CLAIM_BACK };
+                    const claimedCount = rows.length;
+                    if (row.status !== "active")
+                        return {
+                            status: row.status as RedPacketRow["status"],
+                            remaining: row.remaining,
+                            remainCount: row.remainCount,
+                            claimedCount,
+                        };
+                    const latest = new Date(
+                        rows[claimedCount - 1]?.claimedAt ?? input.at,
+                    ).getTime();
+                    if (latest > new Date(input.at).getTime())
+                        return {
+                            status: row.status as RedPacketRow["status"],
+                            remaining: row.remaining,
+                            remainCount: row.remainCount,
+                            claimedCount,
+                        };
+                    await db
+                        .update(redPacketsSqlite)
+                        .set({ status: "expired" })
+                        .where(eq(redPacketsSqlite.id, redPacketId));
+                    return {
+                        status: "expired" as const,
+                        remaining: row.remaining,
+                        remainCount: row.remainCount,
+                        claimedCount,
+                    };
+                },
+            };
+
+            const sqTransferRowOf = (
+                row: typeof transfersSqlite.$inferSelect,
+            ): TransferRow => ({
+                id: row.id,
+                sessionId: row.session,
+                fromId: row.fromId,
+                toId: row.toId,
+                amount: row.amount,
+                message: row.message,
+                state: row.state as TransferState,
+                createdAt: new Date(row.createdAt).toISOString(),
+                expiredAt: new Date(row.expiredAt).toISOString(),
+            });
+
+            const sqBillRowOf = (
+                row: typeof aaBillsSqlite.$inferSelect,
+            ): AABillRow => ({
+                id: row.id,
+                sessionId: row.session,
+                creatorId: row.creatorId,
+                description: row.description,
+                totalAmount: row.totalAmount,
+                settledAmount: row.settledAmount,
+                participantIds: parseIdList(row.participantIds),
+                splitType: row.splitType as AABillRow["splitType"],
+                customSplits: parseSplitMap(row.customSplits),
+                status: row.status as AABillRow["status"],
+                createdAt: new Date(row.createdAt).toISOString(),
+                deadline: new Date(row.deadline).toISOString(),
+            });
+
+            const sqPaymentRowOf = (
+                row: typeof aaPaymentsSqlite.$inferSelect,
+            ): AAPaymentRow => ({
+                id: row.id,
+                billId: row.billId,
+                payerId: row.payerId,
+                amount: row.amount,
+                paidAt: new Date(row.paidAt).toISOString(),
+            });
+
+            const sqAddBalance = (
+                tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+                userId: string,
+                delta: number,
+            ): void => {
+                if (delta === 0) return;
+                tx.update(usersSqlite)
+                    .set({ balance: sql`${usersSqlite.balance} + ${delta}` })
+                    .where(eq(usersSqlite.id, userId))
+                    .run();
+            };
+
+            const sqBalanceRow = (
+                tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+                userId: string,
+            ): number | null => {
+                const row = tx
+                    .select({ balance: usersSqlite.balance })
+                    .from(usersSqlite)
+                    .where(eq(usersSqlite.id, userId))
+                    .limit(1)
+                    .get() as { balance: number } | undefined;
+                return row ? row.balance : null;
+            };
+
+            wallet = {
+                async balanceOf(userId) {
+                    const rows = await db
+                        .select({ balance: usersSqlite.balance })
+                        .from(usersSqlite)
+                        .where(eq(usersSqlite.id, userId))
+                        .limit(1);
+                    return rows[0]?.balance ?? 0;
+                },
+                async balancesOf(userIds) {
+                    if (userIds.length === 0) return {};
+                    const rows = await db
+                        .select({
+                            id: usersSqlite.id,
+                            balance: usersSqlite.balance,
+                        })
+                        .from(usersSqlite)
+                        .where(inArray(usersSqlite.id, userIds));
+                    return Object.fromEntries(
+                        rows.map((row) => [row.id, row.balance]),
+                    );
+                },
+                async adjustBalance(userId, delta) {
+                    return db.transaction((tx) => {
+                        const current = sqBalanceRow(tx, userId);
+                        if (current === null) throw new Error("用户不存在");
+                        const next = current + delta;
+                        if (next < 0) throw new Error("余额不足");
+                        tx.update(usersSqlite)
+                            .set({ balance: next })
+                            .where(eq(usersSqlite.id, userId))
+                            .run();
+                        return next;
+                    });
+                },
+                async transferCreate(input) {
+                    return db.transaction((tx): TransferCreateResult => {
+                        const dup = tx
+                            .select({ id: transfersSqlite.id })
+                            .from(transfersSqlite)
+                            .where(eq(transfersSqlite.id, input.id))
+                            .limit(1)
+                            .get();
+                        if (dup)
+                            return { ok: false as const, reason: "duplicate" };
+                        const current = sqBalanceRow(tx, input.fromId);
+                        if (current === null)
+                            return { ok: false as const, reason: "missing" };
+                        if (current < input.amount)
+                            return {
+                                ok: false as const,
+                                reason: "insufficient",
+                            };
+                        sqAddBalance(tx, input.fromId, -input.amount);
+                        tx.insert(transfersSqlite)
+                            .values({
+                                id: input.id,
+                                session: input.sessionId,
+                                fromId: input.fromId,
+                                toId: input.toId,
+                                amount: input.amount,
+                                message: input.message ?? null,
+                                state: "pending",
+                                createdAt: new Date(input.createdAt).getTime(),
+                                expiredAt: new Date(input.expiredAt).getTime(),
+                            })
+                            .run();
+                        const row = tx
+                            .select()
+                            .from(transfersSqlite)
+                            .where(eq(transfersSqlite.id, input.id))
+                            .get() as typeof transfersSqlite.$inferSelect;
+                        return {
+                            ok: true as const,
+                            transfer: sqTransferRowOf(row),
+                        };
+                    });
+                },
+                async transferGet(id) {
+                    const row = await db
+                        .select()
+                        .from(transfersSqlite)
+                        .where(eq(transfersSqlite.id, id))
+                        .limit(1);
+                    return row[0] ? sqTransferRowOf(row[0]) : null;
+                },
+                async transferSettle(id, action) {
+                    return db.transaction((tx): TransferSettleResult => {
+                        const row = tx
+                            .select()
+                            .from(transfersSqlite)
+                            .where(eq(transfersSqlite.id, id))
+                            .limit(1)
+                            .get() as
+                            | typeof transfersSqlite.$inferSelect
+                            | undefined;
+                        if (!row)
+                            return { ok: false as const, reason: "missing" };
+                        if (row.state !== "pending")
+                            return { ok: false as const, reason: "conflict" };
+                        const next: TransferState =
+                            action === "accept" ? "accepted" : "rejected";
+                        if (action === "accept")
+                            sqAddBalance(tx, row.toId, row.amount);
+                        else sqAddBalance(tx, row.fromId, row.amount);
+                        tx.update(transfersSqlite)
+                            .set({ state: next })
+                            .where(eq(transfersSqlite.id, id))
+                            .run();
+                        return {
+                            ok: true as const,
+                            transfer: sqTransferRowOf({ ...row, state: next }),
+                        };
+                    });
+                },
+                async transferExpireIfNeeded() {
+                    const now = Date.now();
+                    const rows = await db
+                        .select()
+                        .from(transfersSqlite)
+                        .where(
+                            and(
+                                eq(transfersSqlite.state, "pending"),
+                                lte(transfersSqlite.expiredAt, now),
+                            ),
+                        );
+                    if (rows.length === 0) return [];
+                    db.transaction((tx) => {
+                        for (const row of rows) {
+                            sqAddBalance(tx, row.fromId, row.amount);
+                            tx.update(transfersSqlite)
+                                .set({ state: "refunded" })
+                                .where(eq(transfersSqlite.id, row.id))
+                                .run();
+                        }
+                    });
+                    return rows.map((row) => row.id);
+                },
+                async transferListForUser(userId) {
+                    const rows = await db
+                        .select()
+                        .from(transfersSqlite)
+                        .where(
+                            or(
+                                eq(transfersSqlite.fromId, userId),
+                                eq(transfersSqlite.toId, userId),
+                            ),
+                        )
+                        .orderBy(desc(transfersSqlite.createdAt))
+                        .limit(200);
+                    return rows.map(sqTransferRowOf);
+                },
+                async transferListSession(sessionId) {
+                    const rows = await db
+                        .select()
+                        .from(transfersSqlite)
+                        .where(eq(transfersSqlite.session, sessionId))
+                        .orderBy(desc(transfersSqlite.createdAt))
+                        .limit(100);
+                    return rows.map(sqTransferRowOf);
+                },
+                async aaCreate(input) {
+                    await db.insert(aaBillsSqlite).values({
+                        id: input.id,
+                        session: input.sessionId,
+                        creatorId: input.creatorId,
+                        description: input.description,
+                        totalAmount: input.totalAmount,
+                        settledAmount: 0,
+                        participantIds: JSON.stringify(input.participantIds),
+                        splitType: input.splitType,
+                        customSplits: JSON.stringify(input.customSplits),
+                        status: "pending",
+                        createdAt: new Date(input.createdAt).getTime(),
+                        deadline: new Date(input.deadline).getTime(),
+                    });
+                },
+                async aaGetById(id) {
+                    const row = await db
+                        .select()
+                        .from(aaBillsSqlite)
+                        .where(eq(aaBillsSqlite.id, id))
+                        .limit(1);
+                    return row[0] ? sqBillRowOf(row[0]) : null;
+                },
+                async aaListSession(sessionId) {
+                    const rows = await db
+                        .select()
+                        .from(aaBillsSqlite)
+                        .where(eq(aaBillsSqlite.session, sessionId))
+                        .orderBy(desc(aaBillsSqlite.createdAt))
+                        .limit(100);
+                    return rows.map(sqBillRowOf);
+                },
+                async aaListForUser(userId) {
+                    const rows = await db
+                        .select()
+                        .from(aaBillsSqlite)
+                        .where(
+                            or(
+                                eq(aaBillsSqlite.creatorId, userId),
+                                sql`${aaBillsSqlite.participantIds} LIKE ${`%${userId}%`}`,
+                            ),
+                        )
+                        .orderBy(desc(aaBillsSqlite.createdAt))
+                        .limit(200);
+                    return rows
+                        .map(sqBillRowOf)
+                        .filter(
+                            (bill) =>
+                                bill.creatorId === userId ||
+                                bill.participantIds.includes(userId),
+                        );
+                },
+                async aaPayments(billId) {
+                    const rows = await db
+                        .select()
+                        .from(aaPaymentsSqlite)
+                        .where(eq(aaPaymentsSqlite.billId, billId))
+                        .orderBy(asc(aaPaymentsSqlite.paidAt));
+                    return rows.map(sqPaymentRowOf);
+                },
+                async aaPay(input) {
+                    return db.transaction((tx): AAPayResult => {
+                        const bill = tx
+                            .select()
+                            .from(aaBillsSqlite)
+                            .where(eq(aaBillsSqlite.id, input.billId))
+                            .get() as
+                            | typeof aaBillsSqlite.$inferSelect
+                            | undefined;
+                        if (!bill)
+                            return { ok: false as const, reason: "missing" };
+                        if (bill.status !== "pending")
+                            return { ok: false as const, reason: "closed" };
+                        const dup = tx
+                            .select({ id: aaPaymentsSqlite.id })
+                            .from(aaPaymentsSqlite)
+                            .where(
+                                and(
+                                    eq(aaPaymentsSqlite.billId, input.billId),
+                                    eq(aaPaymentsSqlite.payerId, input.payerId),
+                                ),
+                            )
+                            .get();
+                        if (dup)
+                            return { ok: false as const, reason: "duplicate" };
+                        const shares = splitOf(
+                            sqBillRowOf(bill),
+                            input.payerId,
+                        );
+                        if (shares === null || shares !== input.amount)
+                            return { ok: false as const, reason: "amount" };
+                        const current = sqBalanceRow(tx, input.payerId);
+                        if (current === null)
+                            return { ok: false as const, reason: "missing" };
+                        if (current < input.amount)
+                            return {
+                                ok: false as const,
+                                reason: "insufficient",
+                            };
+                        sqAddBalance(tx, input.payerId, -input.amount);
+                        sqAddBalance(tx, bill.creatorId, input.amount);
+                        tx.insert(aaPaymentsSqlite)
+                            .values({
+                                id: input.paymentId,
+                                billId: input.billId,
+                                payerId: input.payerId,
+                                amount: input.amount,
+                                paidAt: new Date(input.paidAt).getTime(),
+                            })
+                            .run();
+                        const settledAmount = bill.settledAmount + input.amount;
+                        const done = settledAmount >= bill.totalAmount;
+                        const status = done ? "settled" : "pending";
+                        tx.update(aaBillsSqlite)
+                            .set({ settledAmount, status })
+                            .where(eq(aaBillsSqlite.id, input.billId))
+                            .run();
+                        const payment = tx
+                            .select()
+                            .from(aaPaymentsSqlite)
+                            .where(
+                                and(
+                                    eq(aaPaymentsSqlite.billId, input.billId),
+                                    eq(aaPaymentsSqlite.payerId, input.payerId),
+                                ),
+                            )
+                            .get() as typeof aaPaymentsSqlite.$inferSelect;
+                        return {
+                            ok: true as const,
+                            bill: sqBillRowOf({
+                                ...bill,
+                                settledAmount,
+                                status,
+                            }),
+                            payment: sqPaymentRowOf(payment),
+                        };
+                    });
+                },
+                async aaCancel(id) {
+                    const changed = await db
+                        .update(aaBillsSqlite)
+                        .set({ status: "cancelled" })
+                        .where(
+                            and(
+                                eq(aaBillsSqlite.id, id),
+                                eq(aaBillsSqlite.status, "pending"),
+                            ),
+                        )
+                        .returning({ id: aaBillsSqlite.id });
+                    return changed.length > 0;
+                },
+                async aaOverdue() {
+                    const rows = await db
+                        .select()
+                        .from(aaBillsSqlite)
+                        .where(
+                            and(
+                                eq(aaBillsSqlite.status, "pending"),
+                                lt(aaBillsSqlite.deadline, Date.now()),
+                            ),
+                        )
+                        .orderBy(desc(aaBillsSqlite.createdAt))
+                        .limit(100);
+                    return rows.map(sqBillRowOf);
+                },
             };
 
             ctx.log.info(`storage driver: sqlite (${file})`);
@@ -5225,6 +6402,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<DepartmentsStore>("departments", departments);
         ctx.provide<AuditStore>("audits", audits);
         ctx.provide<RedPacketStore>("redPackets", redPackets);
+        ctx.provide<WalletStore>("wallet", wallet);
         return undefined;
     },
 };

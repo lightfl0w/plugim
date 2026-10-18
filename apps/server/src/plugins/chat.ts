@@ -28,6 +28,7 @@ import type {
     LinkPreviewService,
     MessageStore,
     ReadsStore,
+    RedPacketStore,
 } from "../types";
 import type { AppConfig } from "./config";
 import type { PushService } from "./push";
@@ -70,6 +71,7 @@ export const chatPlugin: Plugin = {
         "reads",
         "push",
         "link-preview",
+        "redPackets",
     ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
@@ -78,6 +80,7 @@ export const chatPlugin: Plugin = {
         const accounts = ctx.get<AccountsStore>("accounts");
         const friendships = ctx.get<FriendsStore>("friendships");
         const groups = ctx.get<GroupsStore>("groups");
+        const redPackets = ctx.get<RedPacketStore>("redPackets");
         const reads = ctx.get<ReadsStore>("reads");
         const push = ctx.get<PushService>("push");
         const linkPreview = ctx.get<LinkPreviewService>("link-preview");
@@ -118,6 +121,8 @@ export const chatPlugin: Plugin = {
             if (payload.kind === "merge") return "[合并转发]";
             if (payload.kind === "moment") return "[动态分享]";
             if (payload.kind === "redpacket") return "[红包]";
+            if (payload.kind === "transfer") return "[转账]";
+            if (payload.kind === "aabill") return "[AA 账单]";
             if (payload.kind === "notice") return "[群公告]";
             if (payload.kind === "file")
                 return payload.file?.name
@@ -620,6 +625,20 @@ export const chatPlugin: Plugin = {
 
             const recalledAt = await store.markRecalled(id);
             if (!recalledAt) throw new Error("消息不存在");
+
+            if (message.redPacket) {
+                const packetId = message.redPacket.id;
+                const revoked = await redPackets.claimBack(packetId, {
+                    at: recalledAt,
+                });
+                gateway.broadcast("redpacket:update", {
+                    id: packetId,
+                    status: revoked.status,
+                    remaining: revoked.remaining,
+                    remainCount: revoked.remainCount,
+                    claimedCount: revoked.claimedCount,
+                });
+            }
 
             if (message.session.startsWith("p2p:")) {
                 const [a, b] = message.session.slice(4).split("|");

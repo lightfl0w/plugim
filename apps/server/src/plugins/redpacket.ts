@@ -308,17 +308,27 @@ export const redpacketPlugin: Plugin = {
                     value as string,
                 ]),
             );
+            const bestId =
+                records.length === 0
+                    ? null
+                    : records.reduce((best, item) =>
+                          item.amount > best.amount ? item : best,
+                      ).claimerId;
+            const list = records.map((r) => ({
+                userId: r.claimerId,
+                username:
+                    remarkById.get(r.claimerId) ??
+                    nameById.get(r.claimerId) ??
+                    "已注销用户",
+                amount: r.amount,
+                claimedAt: r.claimedAt,
+                isMe: r.claimerId === me.id,
+                isBest: row.type === "lucky" && r.claimerId === bestId,
+            }));
             const detail: RedPacketDetail = {
                 packet: await summarize(row, me.id),
-                records: records.map((r) => ({
-                    userId: r.claimerId,
-                    username:
-                        remarkById.get(r.claimerId) ??
-                        nameById.get(r.claimerId) ??
-                        "已注销用户",
-                    amount: r.amount,
-                    claimedAt: r.claimedAt,
-                })),
+                bestClaimerId: bestId,
+                records: list,
             };
             return detail;
         });

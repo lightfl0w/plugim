@@ -12,6 +12,8 @@ export type MessageKind =
     | "merge"
     | "moment"
     | "redpacket"
+    | "transfer"
+    | "aabill"
     | "system"
     | "notice";
 
@@ -56,6 +58,7 @@ export interface ChatMessage {
 
     redPacket?: RedPacketInfo | null;
     transfer?: TransferInfo | null;
+    aaBill?: AABillInfo | null;
 }
 
 export type MessageReactions = Record<string, string[]>;
@@ -328,6 +331,8 @@ export type ServerEventName =
     | "group:call"
     | "group:call:signal"
     | "redpacket:update"
+    | "transfer:update"
+    | "aabill:update"
     | "moment:update";
 
 export interface TypingEvent {
@@ -613,11 +618,14 @@ export interface RedPacketSummary {
 
 export interface RedPacketDetail {
     packet: RedPacketSummary;
+    bestClaimerId: string | null;
     records: {
         userId: string;
         username: string;
         amount: number;
         claimedAt: string;
+        isMe?: boolean;
+        isBest?: boolean;
     }[];
 }
 
@@ -644,6 +652,20 @@ export interface AABill {
     createdAt: string;
 }
 
+export interface AABillInfo {
+    id: string;
+    sessionId: string;
+    creatorId: string;
+    description: string;
+    totalAmount: number;
+    settledAmount: number;
+    participantIds: string[];
+    splitType: "equal" | "custom";
+    status: "pending" | "settled" | "cancelled";
+    createdAt: string;
+    deadline: string;
+}
+
 export interface AAPayment {
     id: string;
     billId: string;
@@ -661,6 +683,36 @@ export interface TransferInfo {
     state: "pending" | "accepted" | "rejected" | "refunded";
     createdAt: string;
     expiredAt: string;
+}
+
+export interface TransferSummary extends TransferInfo {
+    sessionId: string;
+    myId: string;
+    fromName: string;
+    toName: string;
+    action: "sent" | "received";
+}
+
+export interface AABillDetail {
+    bill: AABill;
+    share: number;
+    paidAmount: number;
+    paid: boolean;
+    overdue: boolean;
+    creatorName: string;
+    payments: {
+        userId: string;
+        username: string;
+        amount: number;
+        paidAt: string;
+    }[];
+    members: {
+        userId: string;
+        username: string;
+        share: number;
+        paidAmount: number;
+        paid: boolean;
+    }[];
 }
 
 export interface RedPacketCreateParams {
@@ -695,6 +747,21 @@ export interface AABillCreateParams {
 export interface AAPayBillParams {
     billId: string;
     amount: number;
+}
+
+export interface TransferSendParams {
+    sessionId: string;
+    toUsername: string;
+    amount: number;
+    message?: string;
+}
+
+export interface TransferActionParams {
+    transferId: string;
+}
+
+export interface AABillDetailParams {
+    billId: string;
 }
 
 export interface TransferCreateParams {

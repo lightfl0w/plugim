@@ -66,10 +66,16 @@ export type {
     SettingsStore,
 } from "./store/settings";
 export type {
-    AABillStore,
+    AABillRow,
+    AAPaymentRow,
+    AAPayResult,
     RedPacketClaimResult,
     RedPacketClaimRow,
     RedPacketRow,
     RedPacketStore,
-    TransferStore,
+    TransferCreateResult,
+    TransferRow,
+    TransferSettleResult,
+    TransferState,
+    WalletStore,
 } from "./store/wallet";

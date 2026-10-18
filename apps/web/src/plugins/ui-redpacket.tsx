@@ -66,28 +66,45 @@ export const RedPacketCard = ({
     message,
     mine,
     claimedAmount,
+    live,
     onOpen,
 }: {
     message: ChatMessage;
     mine: boolean;
     claimedAmount?: number | null;
+    live?: {
+        status: "active" | "exhausted" | "expired";
+        claimedCount: number;
+    };
     onOpen: (packetId: string) => void;
 }) => {
     const packet = message.redPacket;
     if (!packet) return null;
+    const status = live?.status ?? packet.status;
     const done =
         claimedAmount !== undefined && claimedAmount !== null
             ? true
-            : packet.status !== "active";
+            : status !== "active";
+    const label = done
+        ? claimedAmount != null
+            ? `已领取 ${formatMoney(claimedAmount)}`
+            : status === "expired"
+              ? "已过期"
+              : "已被领完"
+        : status === "active" && (live?.claimedCount ?? 0) > 0
+          ? `点击领取 · 已领 ${live?.claimedCount}/${packet.totalCount}`
+          : "点击领取";
     return (
         <button
             type="button"
             onClick={() => onOpen(packet.id)}
             className={cn(
                 "flex w-60 flex-col gap-1 rounded-lg p-2.5 text-left transition-colors",
-                mine
-                    ? "bg-rose-500/90 text-white hover:bg-rose-500"
-                    : "bg-rose-500 text-white hover:bg-rose-600",
+                done && claimedAmount == null && !mine
+                    ? "bg-rose-500/70 text-white/90 hover:bg-rose-500/70"
+                    : mine
+                      ? "bg-rose-500/90 text-white hover:bg-rose-500"
+                      : "bg-rose-500 text-white hover:bg-rose-600",
             )}
         >
             <span className="flex items-center gap-1.5">
@@ -96,13 +113,7 @@ export const RedPacketCard = ({
                     {message.content || packet.message || "恭喜发财，大吉大利"}
                 </span>
             </span>
-            <span className="text-xs text-white/80">
-                {done
-                    ? claimedAmount != null
-                        ? `已领取 ${formatMoney(claimedAmount)}`
-                        : "已被领完"
-                    : "点击领取"}
-            </span>
+            <span className="text-xs text-white/80">{label}</span>
         </button>
     );
 };
@@ -224,11 +235,12 @@ export const RedPacketCreateDialog = ({
                 </div>
 
                 <div className="flex flex-col gap-3">
-                    <label className="flex flex-col gap-1.5">
+                    <label htmlFor="rp-amount" className="flex flex-col gap-1.5">
                         <span className="text-sm text-muted-foreground">
                             红包金额（元）
                         </span>
                         <Input
+                            id="rp-amount"
                             value={total}
                             inputMode="decimal"
                             placeholder="0.00"
@@ -242,11 +254,12 @@ export const RedPacketCreateDialog = ({
                         ) : null}
                     </label>
 
-                    <label className="flex flex-col gap-1.5">
+                    <label htmlFor="rp-count" className="flex flex-col gap-1.5">
                         <span className="text-sm text-muted-foreground">
                             红包个数
                         </span>
                         <Input
+                            id="rp-count"
                             value={count}
                             inputMode="numeric"
                             className={cn(countError && "border-destructive")}
@@ -269,11 +282,12 @@ export const RedPacketCreateDialog = ({
                         ) : null}
                     </label>
 
-                    <label className="flex flex-col gap-1.5">
+                    <label htmlFor="rp-message" className="flex flex-col gap-1.5">
                         <span className="text-sm text-muted-foreground">
                             留言
                         </span>
                         <Textarea
+                            id="rp-message"
                             value={blessing}
                             rows={2}
                             maxLength={50}
@@ -364,6 +378,12 @@ export const RedPacketOpenDialog = ({
     const claimed = amount !== null;
     const finished = packet ? packet.status !== "active" : false;
     const canClaim = packet && !mine && !claimed && packet.status === "active";
+    const ordered = detail
+        ? [
+              ...detail.records.filter((r) => r.isMe),
+              ...detail.records.filter((r) => !r.isMe),
+          ]
+        : [];
 
     const claim = async () => {
         if (claiming) return;
@@ -443,18 +463,33 @@ export const RedPacketOpenDialog = ({
                             </Button>
                         </div>
                     ) : null}
-                    {detail && detail.records.length > 0 ? (
+                    {ordered.length > 0 ? (
                         <ul className="divide-y divide-border">
-                            {detail.records.map((record) => (
+                            {ordered.map((record) => (
                                 <li
                                     key={`${record.userId}-${record.claimedAt}`}
-                                    className="flex items-center justify-between px-4 py-2.5"
+                                    className={cn(
+                                        "flex items-center justify-between px-4 py-2.5",
+                                        record.isMe &&
+                                            "bg-amber-50/70 dark:bg-amber-950/30",
+                                    )}
                                 >
-                                    <span className="flex min-w-0 items-center gap-2">
+                                    <span className="flex min-w-0 items-center gap-1.5">
                                         <CheckCircle2Icon className="size-4 shrink-0 text-amber-500" />
-                                        <span className="truncate text-sm">
+                                        <span
+                                            className={cn(
+                                                "truncate text-sm",
+                                                record.isMe &&
+                                                    "font-medium text-amber-700 dark:text-amber-400",
+                                            )}
+                                        >
                                             {record.username}
                                         </span>
+                                        {record.isBest ? (
+                                            <span className="shrink-0 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                                手气最佳
+                                            </span>
+                                        ) : null}
                                     </span>
                                     <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
                                         {formatMoney(record.amount)}
