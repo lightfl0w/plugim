@@ -8,6 +8,7 @@ import type {
     DepartmentsStore,
     GatewayService,
     GroupsStore,
+    SettingsStore,
 } from "../types";
 import { requireAdmin } from "./admin";
 
@@ -69,17 +70,30 @@ const cleanName = (raw: unknown): string => {
     return name;
 };
 
+const requireEnterprise = async (settings: SettingsStore): Promise<void> => {
+    if ((await settings.get("app_mode")) === "chat")
+        throw new Error("当前为聊天模式，企业通讯录功能未开放");
+};
+
 export const orgPlugin: Plugin = {
     name: "org",
     description: "组织架构与企业通讯录",
     provides: ["org"],
-    inject: ["gateway", "accounts", "groups", "departments", "audit"],
+    inject: [
+        "gateway",
+        "accounts",
+        "groups",
+        "departments",
+        "audit",
+        "settings",
+    ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
         const accounts = ctx.get<AccountsStore>("accounts");
         const groups = ctx.get<GroupsStore>("groups");
         const departments = ctx.get<DepartmentsStore>("departments");
         const audit = ctx.get<AuditService>("audit");
+        const settings = ctx.get<SettingsStore>("settings");
 
         const treeData = async () => {
             const [rows, counts] = await Promise.all([
@@ -120,11 +134,13 @@ export const orgPlugin: Plugin = {
         };
 
         gateway.rpc("org.tree", async (_raw, conn) => {
+            await requireEnterprise(settings);
             requireUser(conn);
             return treeData();
         });
 
         gateway.rpc("org.directory", async (_raw, conn) => {
+            await requireEnterprise(settings);
             requireUser(conn);
             const [departmentsList, users] = await Promise.all([
                 treeData(),
@@ -147,6 +163,7 @@ export const orgPlugin: Plugin = {
         });
 
         gateway.rpc("admin.department.create", async (raw, conn) => {
+            await requireEnterprise(settings);
             const me = await requireAdmin(conn, accounts);
             const params = raw as unknown as {
                 name?: unknown;
@@ -172,6 +189,7 @@ export const orgPlugin: Plugin = {
         });
 
         gateway.rpc("admin.department.rename", async (raw, conn) => {
+            await requireEnterprise(settings);
             const me = await requireAdmin(conn, accounts);
             const params = raw as unknown as {
                 id?: unknown;
@@ -195,6 +213,7 @@ export const orgPlugin: Plugin = {
         });
 
         gateway.rpc("admin.department.move", async (raw, conn) => {
+            await requireEnterprise(settings);
             const me = await requireAdmin(conn, accounts);
             const params = raw as unknown as {
                 id?: unknown;
@@ -233,6 +252,7 @@ export const orgPlugin: Plugin = {
         });
 
         gateway.rpc("admin.department.delete", async (raw, conn) => {
+            await requireEnterprise(settings);
             const me = await requireAdmin(conn, accounts);
             const id = String((raw as { id?: unknown }).id ?? "");
             const rows = await departments.listAll();
@@ -254,6 +274,7 @@ export const orgPlugin: Plugin = {
         });
 
         gateway.rpc("admin.user.assign", async (raw, conn) => {
+            await requireEnterprise(settings);
             const me = await requireAdmin(conn, accounts);
             const params = raw as unknown as {
                 userId?: unknown;
@@ -282,6 +303,7 @@ export const orgPlugin: Plugin = {
         });
 
         gateway.rpc("admin.department.group", async (raw, conn) => {
+            await requireEnterprise(settings);
             const me = await requireAdmin(conn, accounts);
             const id = String((raw as { id?: unknown }).id ?? "");
             const rows = await departments.listAll();
@@ -313,6 +335,7 @@ export const orgPlugin: Plugin = {
         });
 
         gateway.rpc("admin.department.group.sync", async (raw, conn) => {
+            await requireEnterprise(settings);
             const me = await requireAdmin(conn, accounts);
             const id = String((raw as { id?: unknown }).id ?? "");
             const rows = await departments.listAll();
