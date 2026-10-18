@@ -22,6 +22,6 @@ export default defineConfig({
             "postgres",
             "drizzle-orm",
         ],
-        alwaysBundle: ["@plugim/core", "@plugim/protocol"],
+        alwaysBundle: [/^@plugim\//],
     },
 });
