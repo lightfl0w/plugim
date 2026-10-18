@@ -15,6 +15,7 @@ import {
 import {
     AlertCircleIcon,
     ArrowDownIcon,
+    BellOffIcon,
     CheckIcon,
     ChevronLeftIcon,
     ClockIcon,
@@ -24,6 +25,7 @@ import {
     ForwardIcon,
     ListChecksIcon,
     MegaphoneIcon,
+    PencilIcon,
     RotateCcwIcon,
     SmilePlusIcon,
     StarIcon,
@@ -78,6 +80,7 @@ import type { UiService } from "./ui-types";
 
 const PAGE_SIZE = 30;
 const RECALL_WINDOW_MS = 2 * 60 * 1000;
+const EDIT_WINDOW_MS = 10 * 60 * 1000;
 const STAMP_GAP_MS = 5 * 60 * 1000;
 const AT_BOTTOM_PX = 80;
 
@@ -817,6 +820,18 @@ const MessageGroupRow = memo(
                                                 {message.quote.content}
                                             </div>
                                         ) : null}
+                                        {message.editedAt ? (
+                                            <span
+                                                className={cn(
+                                                    "mt-0.5 block text-[10px]",
+                                                    mine
+                                                        ? "text-white/70"
+                                                        : "text-muted-foreground/80",
+                                                )}
+                                            >
+                                                已编辑
+                                            </span>
+                                        ) : null}
                                     </BubbleContent>
                                 </Bubble>
                                 {message.reactions &&
@@ -931,6 +946,13 @@ export const uiMessagesSetup = async (ctx: Context) => {
             y: number;
         } | null>(null);
         const menuRef = useRef<HTMLDivElement>(null);
+        const [editing, setEditing] = useState<{
+            id: string;
+            content: string;
+        } | null>(null);
+        const [editText, setEditText] = useState("");
+        const [editError, setEditError] = useState<string | null>(null);
+        const [editBusy, setEditBusy] = useState(false);
         const [menuHeight, setMenuHeight] = useState(160);
         const paletteRef = useRef<HTMLDivElement>(null);
         const [pending, setPending] = useState<PendingMessage[]>([]);
@@ -1760,6 +1782,20 @@ export const uiMessagesSetup = async (ctx: Context) => {
             !message.recalledAt &&
             Date.now() - Date.parse(message.createdAt) <= RECALL_WINDOW_MS;
 
+        const canEdit = (message: ChatMessage) =>
+            message.sender === me &&
+            !message.recalledAt &&
+            (message.kind ?? "text") === "text" &&
+            Date.now() - Date.parse(message.createdAt) <= EDIT_WINDOW_MS;
+
+        const startEdit = (message: ChatMessage) => {
+            setEditing({
+                id: message.id,
+                content: message.content,
+            });
+            setEditError(null);
+        };
+
         const reEdit = (message: ChatMessage) => {
             ctx.emit("ui:chat:draft:set", { content: message.content });
         };
@@ -1803,6 +1839,33 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 .catch((err) =>
                     showHint(err instanceof Error ? err.message : String(err)),
                 );
+        };
+
+        const submitEdit = async () => {
+            if (!editing || editBusy) return;
+            const content = editText.trim();
+            if (!content) {
+                setEditError("消息内容不能为空");
+                return;
+            }
+            if (content === editing.content) {
+                setEditError("内容没有变化");
+                return;
+            }
+            setEditBusy(true);
+            setEditError(null);
+            try {
+                await rpc.call("message.edit", {
+                    id: editing.id,
+                    content,
+                });
+                setEditing(null);
+                showHint("已编辑");
+            } catch (err) {
+                setEditError(err instanceof Error ? err.message : "编辑失败");
+            } finally {
+                setEditBusy(false);
+            }
         };
 
         const react = (id: string, emoji: string) => {
@@ -2291,6 +2354,39 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                   () => void recall(menu.message),
                               )
                             : null}
+                        {canEdit(menu.message)
+                            ? menuItem(
+                                  "edit",
+                                  <PencilIcon className="size-4" />,
+                                  menu.message.editedAt ? "再次编辑" : "编辑",
+                                  () => {
+                                      setEditText(menu.message.content);
+                                      startEdit(menu.message);
+                                  },
+                              )
+                            : null}
+                        {session
+                            ? menuItem(
+                                  "mute",
+                                  <BellOffIcon className="size-4" />,
+                                  "静音此会话",
+                                  () => {
+                                      void rpc
+                                          .call("dnd.mute", {
+                                              session,
+                                              on: true,
+                                          })
+                                          .then(() => showHint("已静音该会话"))
+                                          .catch((err) =>
+                                              showHint(
+                                                  err instanceof Error
+                                                      ? err.message
+                                                      : "操作失败",
+                                              ),
+                                          );
+                                  },
+                              )
+                            : null}
                         {!menu.message.recalledAt &&
                         session.startsWith("g:") &&
                         groupInfo &&
@@ -2335,6 +2431,75 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                 {emoji}
                             </button>
                         ))}
+                    </div>
+                ) : null}
+
+                {editing ? (
+                    <div
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="编辑消息"
+                        onKeyDown={(e) => {
+                            if (e.key === "Escape") setEditing(null);
+                        }}
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget) setEditing(null);
+                        }}
+                    >
+                        <div className="flex w-full max-w-md flex-col rounded-xl border border-border bg-card shadow-xl">
+                            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                                <p className="flex-1 text-sm font-semibold">
+                                    编辑消息
+                                </p>
+                                <button
+                                    type="button"
+                                    aria-label="关闭"
+                                    className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+                                    onClick={() => setEditing(null)}
+                                >
+                                    <XIcon className="size-4" />
+                                </button>
+                            </div>
+                            <div className="px-4 py-3">
+                                <textarea
+                                    value={editText}
+                                    onChange={(e) =>
+                                        setEditText(e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter" && !e.shiftKey) {
+                                            e.preventDefault();
+                                            void submitEdit();
+                                        }
+                                    }}
+                                    rows={5}
+                                    className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                                />
+                                {editError ? (
+                                    <p className="mt-1.5 text-xs text-destructive">
+                                        {editError}
+                                    </p>
+                                ) : null}
+                            </div>
+                            <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+                                <button
+                                    type="button"
+                                    className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
+                                    onClick={() => setEditing(null)}
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={editBusy}
+                                    className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-60"
+                                    onClick={() => void submitEdit()}
+                                >
+                                    {editBusy ? "提交中…" : "保存"}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 ) : null}
 

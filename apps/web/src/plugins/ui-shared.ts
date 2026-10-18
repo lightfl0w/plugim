@@ -139,6 +139,9 @@ export const isPopupWindow = (): boolean =>
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("popup") === "1";
 
+export const apiOrigin = (): string =>
+    import.meta.env.DEV ? "http://localhost:3000" : window.location.origin;
+
 export const detachedChatUrl = (session: string): string => {
     const url = new URL("/chat", window.location.origin);
     url.searchParams.set("session", session);

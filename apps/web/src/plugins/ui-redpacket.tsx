@@ -235,7 +235,10 @@ export const RedPacketCreateDialog = ({
                 </div>
 
                 <div className="flex flex-col gap-3">
-                    <label htmlFor="rp-amount" className="flex flex-col gap-1.5">
+                    <label
+                        htmlFor="rp-amount"
+                        className="flex flex-col gap-1.5"
+                    >
                         <span className="text-sm text-muted-foreground">
                             红包金额（元）
                         </span>
@@ -282,7 +285,10 @@ export const RedPacketCreateDialog = ({
                         ) : null}
                     </label>
 
-                    <label htmlFor="rp-message" className="flex flex-col gap-1.5">
+                    <label
+                        htmlFor="rp-message"
+                        className="flex flex-col gap-1.5"
+                    >
                         <span className="text-sm text-muted-foreground">
                             留言
                         </span>

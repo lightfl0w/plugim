@@ -19,5 +19,7 @@ export interface AccountsStore {
         title: string | null,
     ): Promise<void>;
     setMustChange(id: string, on: boolean): Promise<void>;
+    totpOf(id: string): Promise<string | null>;
+    setTotp(id: string, secret: string | null): Promise<void>;
     count(): Promise<number>;
 }

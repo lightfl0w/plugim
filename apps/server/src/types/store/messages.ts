@@ -65,6 +65,7 @@ export interface MessageStore {
 
     byId(id: string): Promise<ChatMessage | null>;
     markRecalled(id: string): Promise<string | null>;
+    edit(id: string, content: string, at: string): Promise<ChatMessage | null>;
     setReactions(
         id: string,
         reactions: MessageReactions | null,

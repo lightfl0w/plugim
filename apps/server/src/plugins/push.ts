@@ -1,4 +1,5 @@
 import type { Plugin } from "@plugim/core";
+import type { DndSettings, DndState } from "@plugim/protocol";
 import webpush from "web-push";
 import type {
     AuthUser,
@@ -13,6 +14,7 @@ import type { AppConfig } from "./config";
 const VAPID_PUBLIC = "vapid_public";
 const VAPID_PRIVATE = "vapid_private";
 const SUBJECT_FALLBACK = "mailto:admin@example.com";
+const DND_PREFIX = "dnd:";
 
 export interface PushPayload {
     title: string;
@@ -20,10 +22,82 @@ export interface PushPayload {
     session: string;
 }
 
+export interface DndService {
+    of(userId: string): Promise<DndSettings>;
+    save(userId: string, settings: DndSettings): Promise<DndState>;
+    suppressed(userIds: string[], session: string): Promise<string[]>;
+}
+
 export interface PushService {
     deliver(userIds: string[], payload: PushPayload): void;
     deliverAll(payload: PushPayload, exceptUserId: string): void;
 }
+
+const DEFAULT_DND: DndSettings = {
+    enabled: false,
+    start: "22:00",
+    end: "08:00",
+    mutedSessions: [],
+};
+
+const HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+export const normalizeDnd = (raw: unknown): DndSettings => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return { ...DEFAULT_DND };
+    const value = raw as Partial<DndSettings>;
+    const muted = Array.isArray(value.mutedSessions)
+        ? [
+              ...new Set(
+                  value.mutedSessions.filter(
+                      (item): item is string => typeof item === "string",
+                  ),
+              ),
+          ].slice(0, 500)
+        : [];
+    const start = HHMM_RE.test(String(value.start ?? ""))
+        ? String(value.start)
+        : DEFAULT_DND.start;
+    const end = HHMM_RE.test(String(value.end ?? ""))
+        ? String(value.end)
+        : DEFAULT_DND.end;
+    return {
+        enabled: value.enabled === true,
+        start,
+        end,
+        mutedSessions: muted,
+    };
+};
+
+const minutesOf = (hhmm: string): number => {
+    const [h, m] = hhmm.split(":");
+    return Number(h) * 60 + Number(m);
+};
+
+export const dndWindowActive = (settings: DndSettings, now: Date): boolean => {
+    if (!settings.enabled) return false;
+    const current = now.getHours() * 60 + now.getMinutes();
+    const start = minutesOf(settings.start);
+    const end = minutesOf(settings.end);
+    if (start === end) return false;
+    if (start < end) return current >= start && current < end;
+    return current >= start || current < end;
+};
+
+export const dndNextStart = (
+    settings: DndSettings,
+    now: Date,
+): string | null => {
+    if (!settings.enabled) return null;
+    const current = now.getHours() * 60 + now.getMinutes();
+    const start = minutesOf(settings.start);
+    if (current < start) {
+        const at = new Date(now);
+        at.setHours(Math.floor(start / 60), start % 60, 0, 0);
+        return at.toISOString();
+    }
+    return null;
+};
 
 const requireUser = (conn: ConnInfo): AuthUser => {
     if (!conn.user) throw new Error("未登录或登录已过期");
@@ -33,7 +107,7 @@ const requireUser = (conn: ConnInfo): AuthUser => {
 export const pushPlugin: Plugin = {
     name: "push",
     description: "Web Push 离线消息推送",
-    provides: ["push"],
+    provides: ["push", "dnd"],
     inject: ["config", "gateway", "pushes", "settings"],
     async apply(ctx) {
         const config = ctx.get<AppConfig>("config");
@@ -91,29 +165,154 @@ export const pushPlugin: Plugin = {
             );
         };
 
+        const dndCache = new Map<string, { at: number; value: DndSettings }>();
+        const DND_TTL_MS = 30_000;
+
+        const dndOf = async (userId: string): Promise<DndSettings> => {
+            const cached = dndCache.get(userId);
+            const now = Date.now();
+            if (cached && now - cached.at < DND_TTL_MS) return cached.value;
+            const raw = await settings.get(`${DND_PREFIX}${userId}`);
+            let parsed: unknown = null;
+            try {
+                parsed = raw ? JSON.parse(raw) : null;
+            } catch {
+                parsed = null;
+            }
+            const value = normalizeDnd(parsed);
+            if (dndCache.size > 5000) dndCache.clear();
+            dndCache.set(userId, { at: now, value });
+            return value;
+        };
+
+        const stateOf = (value: DndSettings): DndState => ({
+            settings: value,
+            active: dndWindowActive(value, new Date()),
+            nextStartAt: dndNextStart(value, new Date()),
+        });
+
+        const dndService: DndService = {
+            of: dndOf,
+            async save(userId, next) {
+                const value = normalizeDnd(next);
+                dndCache.set(userId, { at: Date.now(), value });
+                await settings.set(
+                    `${DND_PREFIX}${userId}`,
+                    JSON.stringify(value),
+                );
+                return stateOf(value);
+            },
+            async suppressed(userIds, session) {
+                const now = new Date();
+                const out: string[] = [];
+                for (const id of new Set(userIds)) {
+                    const value = await dndOf(id);
+                    if (value.mutedSessions.includes(session)) {
+                        out.push(id);
+                        continue;
+                    }
+                    if (dndWindowActive(value, now)) out.push(id);
+                }
+                return out;
+            },
+        };
+
+        ctx.provide<DndService>("dnd", dndService);
+
+        gateway.rpc("dnd.get", async (_raw, conn) => {
+            const user = requireUser(conn);
+            return stateOf(await dndOf(user.id));
+        });
+
+        gateway.rpc("dnd.set", async (raw, conn) => {
+            const user = requireUser(conn);
+            const params = raw as unknown as {
+                enabled?: unknown;
+                start?: unknown;
+                end?: unknown;
+                mutedSessions?: unknown;
+            };
+            const current = await dndOf(user.id);
+            const muted = Array.isArray(params.mutedSessions)
+                ? params.mutedSessions
+                      .filter(
+                          (item): item is string => typeof item === "string",
+                      )
+                      .slice(0, 500)
+                : current.mutedSessions;
+            const state = await dndService.save(user.id, {
+                enabled:
+                    params.enabled === undefined
+                        ? current.enabled
+                        : params.enabled === true,
+                start:
+                    params.start === undefined
+                        ? current.start
+                        : String(params.start),
+                end:
+                    params.end === undefined ? current.end : String(params.end),
+                mutedSessions: muted,
+            });
+            return state;
+        });
+
+        gateway.rpc("dnd.mute", async (raw, conn) => {
+            const user = requireUser(conn);
+            const { session, on } = raw as unknown as {
+                session?: unknown;
+                on?: unknown;
+            };
+            const target = String(session ?? "").trim();
+            if (!target) throw new Error("缺少会话");
+            const current = await dndOf(user.id);
+            const set = new Set(current.mutedSessions);
+            if (on === false) set.delete(target);
+            else set.add(target);
+            return dndService.save(user.id, {
+                ...current,
+                mutedSessions: [...set],
+            });
+        });
+
         ctx.provide<PushService>("push", {
             deliver(userIds, payload) {
-                const offline = [...new Set(userIds)].filter(
-                    (id) => !gateway.isUserOnline(id),
-                );
-                if (offline.length === 0) return;
-                void pushes
-                    .ofUsers(offline)
-                    .then((rows) => deliver(rows, payload))
+                const unique = [...new Set(userIds)];
+                void dndService
+                    .suppressed(unique, payload.session)
+                    .then((blocked) => {
+                        const allowed = unique.filter(
+                            (id) => !blocked.includes(id),
+                        );
+                        const offline = allowed.filter(
+                            (id) => !gateway.isUserOnline(id),
+                        );
+                        if (offline.length === 0) return;
+                        return pushes
+                            .ofUsers(offline)
+                            .then((rows) => deliver(rows, payload));
+                    })
                     .catch((err) => ctx.log.warn("push lookup failed", err));
             },
             deliverAll(payload, exceptUserId) {
                 void pushes
                     .ofAll()
                     .then((rows) =>
-                        deliver(
-                            rows.filter(
-                                (row) =>
-                                    row.userId !== exceptUserId &&
-                                    !gateway.isUserOnline(row.userId),
+                        dndService
+                            .suppressed(
+                                rows.map((row) => row.userId),
+                                payload.session,
+                            )
+                            .then((blocked) =>
+                                deliver(
+                                    rows.filter(
+                                        (row) =>
+                                            row.userId !== exceptUserId &&
+                                            !blocked.includes(row.userId) &&
+                                            !gateway.isUserOnline(row.userId),
+                                    ),
+                                    payload,
+                                ),
                             ),
-                            payload,
-                        ),
                     )
                     .catch((err) => ctx.log.warn("push lookup failed", err));
             },

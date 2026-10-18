@@ -3,6 +3,8 @@ import type { AuthUser } from "../shared";
 
 export interface ConnInfo {
     user: AuthUser | null;
+    userAgent?: string;
+    ip?: string;
 }
 
 export type RpcHandler = (
@@ -22,6 +24,8 @@ export interface GatewayService {
     onlineUserIds(): string[];
     isUserOnline(userId: string): boolean;
     kickUser(userId: string): void;
+    kickSession(sessionId: string, keepSessionId?: string): void;
+    onConnect(cb: (user: AuthUser) => void): () => void;
     onOffline(cb: (userId: string) => void): () => void;
     hono(): Hono;
 }

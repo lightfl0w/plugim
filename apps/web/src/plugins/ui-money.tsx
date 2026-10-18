@@ -125,7 +125,10 @@ export const TransferCreateDialog = ({
                         </span>
                     ) : null}
                 </p>
-                <label htmlFor="transfer-amount" className="flex flex-col gap-1.5">
+                <label
+                    htmlFor="transfer-amount"
+                    className="flex flex-col gap-1.5"
+                >
                     <span className="text-sm text-muted-foreground">
                         转账金额（元）
                     </span>
@@ -143,7 +146,10 @@ export const TransferCreateDialog = ({
                         </span>
                     ) : null}
                 </label>
-                <label htmlFor="transfer-message" className="mt-3 flex flex-col gap-1.5">
+                <label
+                    htmlFor="transfer-message"
+                    className="mt-3 flex flex-col gap-1.5"
+                >
                     <span className="text-sm text-muted-foreground">
                         转账说明（选填）
                     </span>
@@ -168,7 +174,10 @@ export const TransferCreateDialog = ({
 
                 {showTopup ? (
                     <div className="mt-2 flex items-end gap-2 rounded-lg bg-muted p-2.5">
-                        <label htmlFor="transfer-topup" className="flex flex-1 flex-col gap-1">
+                        <label
+                            htmlFor="transfer-topup"
+                            className="flex flex-1 flex-col gap-1"
+                        >
                             <span className="text-xs text-muted-foreground">
                                 充值金额（元，演示用，不涉及真实支付）
                             </span>
@@ -511,7 +520,10 @@ export const AABillCreateDialog = ({
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
             <DialogShell title="发起 AA 账单" onClose={onClose}>
-                <label htmlFor="aa-description" className="flex flex-col gap-1.5">
+                <label
+                    htmlFor="aa-description"
+                    className="flex flex-col gap-1.5"
+                >
                     <span className="text-sm text-muted-foreground">
                         账单说明
                     </span>
@@ -523,7 +535,10 @@ export const AABillCreateDialog = ({
                         onChange={(e) => setDescription(e.target.value)}
                     />
                 </label>
-                <label htmlFor="aa-total" className="mt-3 flex flex-col gap-1.5">
+                <label
+                    htmlFor="aa-total"
+                    className="mt-3 flex flex-col gap-1.5"
+                >
                     <span className="text-sm text-muted-foreground">
                         账单总额（元）
                     </span>

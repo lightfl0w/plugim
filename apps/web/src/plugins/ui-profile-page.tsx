@@ -78,7 +78,7 @@ const withTimeout = <T,>(promise: Promise<T>, ms: number, message: string) =>
     ]);
 
 const section = "rounded-xl border border-border bg-card";
-const rowClass = "flex items-center gap-3 px-4 py-3.5";
+const rowClass = "flex items-center gap-3 px-5 py-4";
 
 export const createProfilePage = (ctx: Context): FC => {
     const auth = ctx.get<AuthService>("auth");
@@ -125,7 +125,7 @@ export const createProfilePage = (ctx: Context): FC => {
                 <div className={cn(rowClass, "border-b border-border")}>
                     <WalletIcon className="size-4 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
-                        <p className="text-sm">我的余额</p>
+                        <p className="text-sm font-medium">我的余额</p>
                         <p className="text-xs text-muted-foreground">
                             {balance === null
                                 ? "加载中…"
@@ -138,7 +138,10 @@ export const createProfilePage = (ctx: Context): FC => {
                     </div>
                 </div>
                 <div className="flex items-end gap-2 p-3">
-                    <label htmlFor="wallet-topup" className="flex flex-1 flex-col gap-1">
+                    <label
+                        htmlFor="wallet-topup"
+                        className="flex flex-1 flex-col gap-1"
+                    >
                         <span className="text-xs text-muted-foreground">
                             充值金额（元）
                         </span>
@@ -275,7 +278,7 @@ export const createProfilePage = (ctx: Context): FC => {
                     onClick={() => setOpen((prev) => !prev)}
                 >
                     <KeyRoundIcon className="size-4 text-muted-foreground" />
-                    <p className="flex-1 text-sm">修改密码</p>
+                    <p className="flex-1 text-sm font-medium">修改密码</p>
                     <ChevronRightIcon
                         className={cn(
                             "size-4 text-muted-foreground transition-transform",
@@ -502,8 +505,8 @@ export const createProfilePage = (ctx: Context): FC => {
                     </Button>
                     <p className="text-sm font-semibold">用户中心</p>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                    <div className="mx-auto flex w-full max-w-xl flex-col gap-3">
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                    <div className="mx-auto flex w-full max-w-2xl flex-col gap-3">
                         <section className={cn(section, "overflow-hidden")}>
                             <div className="h-20 bg-primary/10" />
                             <div className="-mt-8 flex items-end gap-3 px-4 pb-4">
@@ -537,7 +540,9 @@ export const createProfilePage = (ctx: Context): FC => {
                                 )}
                             >
                                 <PaletteIcon className="size-4 text-muted-foreground" />
-                                <p className="flex-1 text-sm">主题外观</p>
+                                <p className="flex-1 text-sm font-medium">
+                                    主题外观
+                                </p>
                             </div>
                             <div className="flex gap-2 p-3">
                                 {THEME_OPTIONS.map((option) => (
@@ -570,7 +575,9 @@ export const createProfilePage = (ctx: Context): FC => {
                             >
                                 <BellIcon className="size-4 text-muted-foreground" />
                                 <div className="min-w-0 flex-1">
-                                    <p className="text-sm">桌面通知</p>
+                                    <p className="text-sm font-medium">
+                                        桌面通知
+                                    </p>
                                     <p className="text-xs text-muted-foreground">
                                         {notifyHint}
                                     </p>
@@ -592,7 +599,9 @@ export const createProfilePage = (ctx: Context): FC => {
                             >
                                 <VolumeIcon className="size-4 text-muted-foreground" />
                                 <div className="min-w-0 flex-1">
-                                    <p className="text-sm">新消息提示音</p>
+                                    <p className="text-sm font-medium">
+                                        新消息提示音
+                                    </p>
                                     <p className="text-xs text-muted-foreground">
                                         收到消息时播放短促提示音
                                     </p>
@@ -618,7 +627,9 @@ export const createProfilePage = (ctx: Context): FC => {
                             >
                                 <SmartphoneIcon className="size-4 text-muted-foreground" />
                                 <div className="min-w-0 flex-1">
-                                    <p className="text-sm">离线消息推送</p>
+                                    <p className="text-sm font-medium">
+                                        离线消息推送
+                                    </p>
                                     <p className="text-xs text-muted-foreground">
                                         {pushHint}
                                     </p>
@@ -647,13 +658,35 @@ export const createProfilePage = (ctx: Context): FC => {
                                 type="button"
                                 className={cn(
                                     rowClass,
+                                    "w-full border-t border-border text-left hover:bg-accent/60",
+                                )}
+                                onClick={() =>
+                                    void navigate("/settings/security")
+                                }
+                            >
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium">
+                                        安全与企业接入
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                        免打扰、多端设备、两步验证与机器人接入
+                                    </p>
+                                </div>
+                                <ChevronRightIcon className="size-4 text-muted-foreground" />
+                            </button>
+                            <button
+                                type="button"
+                                className={cn(
+                                    rowClass,
                                     "w-full text-left hover:bg-accent/60",
                                 )}
                                 onClick={() =>
                                     void navigate("/settings/plugins")
                                 }
                             >
-                                <p className="flex-1 text-sm">插件管理</p>
+                                <p className="flex-1 text-sm font-medium">
+                                    插件管理
+                                </p>
                                 <ChevronRightIcon className="size-4 text-muted-foreground" />
                             </button>
                             {isAdmin ? (
@@ -665,7 +698,9 @@ export const createProfilePage = (ctx: Context): FC => {
                                     )}
                                     onClick={() => void navigate("/admin")}
                                 >
-                                    <p className="flex-1 text-sm">后台管理</p>
+                                    <p className="flex-1 text-sm font-medium">
+                                        后台管理
+                                    </p>
                                     <ChevronRightIcon className="size-4 text-muted-foreground" />
                                 </button>
                             ) : null}

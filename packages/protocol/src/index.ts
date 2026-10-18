@@ -50,6 +50,8 @@ export interface ChatMessage {
     createdAt: string;
     seq?: number;
     recalledAt?: string | null;
+    editedAt?: string | null;
+    editCount?: number;
     quote?: MessageQuote | null;
     mentions?: string[] | null;
     kind?: MessageKind;
@@ -322,6 +324,7 @@ export type ServerEventName =
     | "message:new"
     | "message:update"
     | "message:recalled"
+    | "message:edited"
     | "friend:update"
     | "group:update"
     | "group:request"
@@ -829,3 +832,107 @@ export interface TransferRejectParams {
     transferId: string;
     reason?: string;
 }
+
+export interface MessageEditParams {
+    id: string;
+    content: string;
+}
+
+export interface MessageEditedEvent {
+    id: string;
+    session: string;
+    content: string;
+    editedAt: string;
+    editCount: number;
+}
+
+export interface DndSettings {
+    enabled: boolean;
+    start: string;
+    end: string;
+    mutedSessions: string[];
+}
+
+export interface DndState {
+    settings: DndSettings;
+    active: boolean;
+    nextStartAt: string | null;
+}
+
+export interface AuthDevice {
+    id: string;
+    label: string;
+    userAgent: string;
+    ip: string;
+    createdAt: string;
+    lastSeenAt: string;
+    current: boolean;
+}
+
+export interface AuthSessionsResult {
+    devices: AuthDevice[];
+    totpEnabled: boolean;
+}
+
+export interface TotpSetup {
+    secret: string;
+    otpauth: string;
+}
+
+export const BOT_SCOPES = [
+    "messages:read",
+    "messages:write",
+    "events",
+] as const;
+
+export type BotScope = (typeof BOT_SCOPES)[number];
+
+export interface BotApp {
+    id: string;
+    name: string;
+    owner: string;
+    scopes: BotScope[];
+    createdAt: string;
+    lastUsedAt: string | null;
+    tokenPreview: string;
+}
+
+export interface BotAppCreated extends BotApp {
+    token: string;
+}
+
+export interface BotHook {
+    id: string;
+    botId: string;
+    botName: string;
+    url: string;
+    events: string[];
+    enabled: boolean;
+    createdAt: string;
+    failures: number;
+    lastError: string | null;
+}
+
+export interface BotHookCreateParams {
+    name: string;
+    url: string;
+    events: string[];
+}
+
+export interface BotInboundParams {
+    session: string;
+    content: string;
+    kind?: MessageKind;
+    title?: string;
+}
+
+export const BOT_EVENTS = [
+    "message.new",
+    "message.recalled",
+    "message.edited",
+    "read.update",
+    "group.join",
+    "redpacket.update",
+] as const;
+
+export type BotEvent = (typeof BOT_EVENTS)[number];

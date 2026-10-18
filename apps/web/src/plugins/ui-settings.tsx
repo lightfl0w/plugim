@@ -1,11 +1,11 @@
 import type { Context } from "@plugim/core";
-import { ArrowLeftIcon } from "lucide-react";
 import { useEffect, useReducer, useSyncExternalStore } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import type { SettingsField, SettingsService, SettingsValue } from "./settings";
 import type { ThemeService } from "./theme";
+import { inputClass, PageShell, Panel, panelRow } from "./ui-layout";
 import type { UiService } from "./ui-types";
 
 interface AppearanceItem {
@@ -242,20 +242,6 @@ export const applyAppearance = (
 
 const useBump = () => useReducer((n: number) => n + 1, 0)[1];
 
-const BackButton = () => {
-    const navigate = useNavigate();
-    return (
-        <Button
-            variant="ghost"
-            size="icon-sm"
-            title="返回"
-            onClick={() => void navigate(-1)}
-        >
-            <ArrowLeftIcon />
-        </Button>
-    );
-};
-
 const useThemeDark = (theme: ThemeService) =>
     useSyncExternalStore(
         (cb) => theme.onChange(cb),
@@ -281,13 +267,15 @@ const ColorRow = ({
     const swatch = isDefault ? readTokenHex(item.varName, fallback) : stored;
     return (
         <div className={rowClass}>
-            <div className="min-w-0 flex-1">
-                <p className="text-sm">{item.label}</p>
-                <p className="text-xs text-muted-foreground">
+            <div className="min-w-0 flex-1 space-y-1">
+                <p className="text-sm font-medium leading-tight">
+                    {item.label}
+                </p>
+                <p className="text-xs leading-relaxed text-muted-foreground">
                     {dark ? "正在修改深色模式" : "正在修改浅色模式"}
                 </p>
             </div>
-            <span className="text-xs tabular-nums text-muted-foreground">
+            <span className="w-20 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
                 {swatch}
             </span>
             <input
@@ -297,7 +285,6 @@ const ColorRow = ({
                 className="size-9 cursor-pointer rounded-lg border border-border bg-transparent p-1"
             />
             <Button
-                size="sm"
                 variant="ghost"
                 disabled={isDefault}
                 onClick={() => settings.reset("views", key)}
@@ -321,9 +308,11 @@ const RadiusRow = ({
     const fallback = Number(item.defaults[0]);
     return (
         <div className={rowClass}>
-            <div className="min-w-0 flex-1">
-                <p className="text-sm">{item.label}</p>
-                <p className="text-xs text-muted-foreground">
+            <div className="min-w-0 flex-1 space-y-1">
+                <p className="text-sm font-medium leading-tight">
+                    {item.label}
+                </p>
+                <p className="text-xs leading-relaxed text-muted-foreground">
                     全部组件圆角，0 为直角
                 </p>
             </div>
@@ -345,7 +334,6 @@ const RadiusRow = ({
                 {item.unit}
             </span>
             <Button
-                size="sm"
                 variant="ghost"
                 disabled={value === fallback}
                 onClick={() => settings.reset("views", item.key)}
@@ -371,7 +359,9 @@ const GenericRow = ({
     if (field.kind === "boolean") {
         return (
             <div className={rowClass}>
-                <p className="min-w-0 flex-1 text-sm">{field.label}</p>
+                <p className="min-w-0 flex-1 text-sm font-medium leading-tight">
+                    {field.label}
+                </p>
                 <Switch
                     checked={Boolean(value)}
                     onToggle={() => settings.set(plugin, field.key, !value)}
@@ -382,13 +372,15 @@ const GenericRow = ({
     if (field.kind === "select" && field.options) {
         return (
             <div className={rowClass}>
-                <p className="min-w-0 flex-1 text-sm">{field.label}</p>
+                <p className="min-w-0 flex-1 text-sm font-medium leading-tight">
+                    {field.label}
+                </p>
                 <select
                     value={String(value)}
                     onChange={(e) =>
                         settings.set(plugin, field.key, e.target.value)
                     }
-                    className="rounded-lg border border-border bg-card px-2 py-1 text-sm"
+                    className={`${inputClass} min-w-40`}
                 >
                     {field.options.map((option) => (
                         <option key={option.value} value={option.value}>
@@ -402,7 +394,9 @@ const GenericRow = ({
     if (field.kind === "number") {
         return (
             <div className={rowClass}>
-                <p className="min-w-0 flex-1 text-sm">{field.label}</p>
+                <p className="min-w-0 flex-1 text-sm font-medium leading-tight">
+                    {field.label}
+                </p>
                 <input
                     type="number"
                     value={Number(value)}
@@ -412,14 +406,16 @@ const GenericRow = ({
                     onChange={(e) =>
                         settings.set(plugin, field.key, Number(e.target.value))
                     }
-                    className="w-24 rounded-lg border border-border bg-card px-2 py-1 text-sm"
+                    className={`${inputClass} w-28`}
                 />
             </div>
         );
     }
     return (
         <div className={rowClass}>
-            <p className="min-w-0 flex-1 text-sm">{field.label}</p>
+            <p className="min-w-0 flex-1 text-sm font-medium leading-tight">
+                {field.label}
+            </p>
             <span className="text-xs text-muted-foreground">
                 {String(value)}
             </span>
@@ -440,6 +436,7 @@ export const uiSettingsSetup = async (ctx: Context) => {
     const offTheme = theme.onChange(() => applyAppearance(settings, theme));
 
     const SettingsPage = () => {
+        const navigate = useNavigate();
         const bump = useBump();
         useEffect(() => {
             const offSettings = settings.onChange("*", bump);
@@ -449,74 +446,81 @@ export const uiSettingsSetup = async (ctx: Context) => {
                 offTheme();
             };
         }, [bump]);
-        const rowClass =
-            "flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0";
+        const rowClass = panelRow;
         const name = useParams().plugin ?? "";
         const group = settings.groups().find((item) => item.plugin === name);
         if (!group) {
             return (
-                <div className="flex h-full flex-col">
-                    <div className="flex h-12 min-h-12 shrink-0 items-center gap-1 border-b border-border px-3">
-                        <BackButton />
-                        <p className="text-sm font-semibold">插件设置</p>
-                    </div>
-                    <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+                <PageShell
+                    title="插件设置"
+                    subtitle={`插件 ${name || "未知"}`}
+                    onBack={() => void navigate(-1)}
+                >
+                    <div className="flex items-center justify-center rounded-xl border border-dashed border-border px-6 py-14 text-sm text-muted-foreground">
                         该插件没有可配置的设置项
                     </div>
-                </div>
+                </PageShell>
             );
         }
         const isViews = group.plugin === "views";
         return (
-            <div className="flex h-full flex-col">
-                <div className="flex h-12 min-h-12 shrink-0 items-center gap-1 border-b border-border px-3">
-                    <BackButton />
-                    <p className="text-sm font-semibold">{group.title}设置</p>
-                    <span className="text-xs text-muted-foreground">
-                        插件 {group.plugin}
-                    </span>
+            <PageShell
+                title={`${group.title}设置`}
+                subtitle={`插件 ${group.plugin} · ${
+                    isViews
+                        ? "即时生效，修改后自动应用到当前主题"
+                        : "修改后自动保存到本地"
+                }`}
+                onBack={() => void navigate(-1)}
+                nav={
                     <Button
-                        size="sm"
                         variant="ghost"
+                        size="sm"
                         className="ml-auto"
                         onClick={() => settings.resetPlugin(group.plugin)}
                     >
                         全部还原
                     </Button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                    <section className="mx-auto w-full max-w-xl overflow-hidden rounded-xl border border-border bg-card">
-                        {isViews
-                            ? APPEARANCE_ITEMS.map((item) =>
-                                  item.kind === "color" ? (
-                                      <ColorRow
-                                          key={item.key}
-                                          item={item}
-                                          theme={theme}
-                                          settings={settings}
-                                          rowClass={rowClass}
-                                      />
-                                  ) : (
-                                      <RadiusRow
-                                          key={item.key}
-                                          item={item}
-                                          settings={settings}
-                                          rowClass={rowClass}
-                                      />
-                                  ),
-                              )
-                            : group.fields.map((field) => (
-                                  <GenericRow
-                                      key={`${group.plugin}:${field.key}`}
-                                      plugin={group.plugin}
-                                      field={field}
+                }
+            >
+                <Panel
+                    title={group.title}
+                    desc={
+                        isViews
+                            ? "选择左侧色板即可实时预览，切换深浅色模式时分别生效。"
+                            : "以下为该插件提供的全部可配置项。"
+                    }
+                >
+                    {isViews
+                        ? APPEARANCE_ITEMS.map((item) =>
+                              item.kind === "color" ? (
+                                  <ColorRow
+                                      key={item.key}
+                                      item={item}
+                                      theme={theme}
                                       settings={settings}
                                       rowClass={rowClass}
                                   />
-                              ))}
-                    </section>
-                </div>
-            </div>
+                              ) : (
+                                  <RadiusRow
+                                      key={item.key}
+                                      item={item}
+                                      settings={settings}
+                                      rowClass={rowClass}
+                                  />
+                              ),
+                          )
+                        : group.fields.map((field) => (
+                              <GenericRow
+                                  key={`${group.plugin}:${field.key}`}
+                                  plugin={group.plugin}
+                                  field={field}
+                                  settings={settings}
+                                  rowClass={rowClass}
+                              />
+                          ))}
+                </Panel>
+            </PageShell>
         );
     };
 

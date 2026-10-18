@@ -10,6 +10,7 @@ import { adminPlugin } from "./plugins/admin";
 import { auditPlugin } from "./plugins/audit";
 import { authPlugin } from "./plugins/auth";
 import { backupPlugin } from "./plugins/backup";
+import { botsPlugin } from "./plugins/bots";
 import { chatPlugin } from "./plugins/chat";
 import { configPlugin } from "./plugins/config";
 import { containerPlugin } from "./plugins/container";
@@ -89,6 +90,7 @@ await autoDiscoverPlugins(ctx, [
     aaPlugin,
     auditPlugin,
     authPlugin,
+    botsPlugin,
     backupPlugin,
     chatPlugin,
     configPlugin,

@@ -42,6 +42,11 @@ const toStatus = (raw: unknown): PresenceStatus =>
         ? raw
         : "online";
 
+const clientIpOf = (req: unknown): string => {
+    const raw = req as { socket?: { remoteAddress?: string } } | null;
+    return String(raw?.socket?.remoteAddress ?? "").slice(0, 64);
+};
+
 const metricsOf = (ctx: { get<T>(name: string): T }): MetricsService | null => {
     try {
         return ctx.get<MetricsService>("metrics");
@@ -64,6 +69,7 @@ export const gatewayPlugin: Plugin = {
         const liveness = new WeakMap<NodeWebSocket, boolean>();
         const lastSeen = new Map<string, string>();
         const offlineListeners = new Set<(userId: string) => void>();
+        const connectListeners = new Set<(user: AuthUser) => void>();
         let verifyToken: TokenVerifier = nullVerifier;
         let metricsCache: MetricsService | null | undefined;
 
@@ -210,7 +216,11 @@ export const gatewayPlugin: Plugin = {
                 : null;
             const user = await verifyToken(token);
             try {
-                const result = await dispatch(method, params, { user });
+                const result = await dispatch(method, params, {
+                    user,
+                    userAgent: c.req.header("user-agent") ?? "",
+                    ip: clientIpOf(c.req.raw),
+                });
                 return c.json({ ok: true, result });
             } catch (err) {
                 return c.json(
@@ -230,6 +240,8 @@ export const gatewayPlugin: Plugin = {
             upgradeWebSocket((c) => {
                 const token =
                     new URL(c.req.url).searchParams.get("token") ?? null;
+                const userAgent = c.req.header("user-agent") ?? "";
+                const ip = clientIpOf(c.req.raw);
                 let connRaw: NodeWebSocket | undefined;
                 let connUser: AuthUser | null = null;
                 verifyToken(token)
@@ -260,6 +272,7 @@ export const gatewayPlugin: Plugin = {
                         raw.on("pong", () => liveness.set(raw, true));
                         if (connUser) {
                             lastSeen.set(connUser.id, connUser.username);
+                            for (const cb of connectListeners) cb(connUser);
                             if (!wasOnline)
                                 void announcePresence(connUser, true);
                         }
@@ -276,6 +289,8 @@ export const gatewayPlugin: Plugin = {
                         const raw = ws.raw as NodeWebSocket;
                         const conn: ConnInfo = {
                             user: identities.get(raw) ?? null,
+                            userAgent,
+                            ip,
                         };
                         wsReply(raw, frame.id, () =>
                             dispatch(frame.method, frame.params, conn),
@@ -364,6 +379,17 @@ export const gatewayPlugin: Plugin = {
             }
         };
 
+        const kickSession = (sessionId: string, keepSessionId?: string) => {
+            for (const [ws, user] of identities) {
+                if (user?.sessionId === sessionId) ws.close();
+                else if (
+                    keepSessionId !== undefined &&
+                    user?.sessionId === keepSessionId
+                )
+                    continue;
+            }
+        };
+
         const gatewayApi: GatewayService = {
             rpc,
             broadcast,
@@ -376,6 +402,11 @@ export const gatewayPlugin: Plugin = {
             onlineUserIds,
             isUserOnline,
             kickUser,
+            kickSession,
+            onConnect: (cb) => {
+                connectListeners.add(cb);
+                return () => connectListeners.delete(cb);
+            },
             onOffline: (cb) => {
                 offlineListeners.add(cb);
                 return () => offlineListeners.delete(cb);

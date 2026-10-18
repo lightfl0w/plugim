@@ -14,10 +14,13 @@ export interface AuthUser {
     id: string;
     username: string;
     mustChange?: boolean;
+    sessionId?: string;
 }
 
 export interface ConnInfo {
     user: AuthUser | null;
+    userAgent?: string;
+    ip?: string;
 }
 
 export type RpcHandler = (

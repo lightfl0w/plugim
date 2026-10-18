@@ -56,6 +56,14 @@ export type {
     GroupsStore,
     JoinRequestsStore,
 } from "./store/groups";
+export type {
+    AuthDeviceRow,
+    AuthSessionsStore,
+    BotAppRow,
+    BotHook,
+    BotHookRow,
+    BotsStore,
+} from "./store/identity";
 export type { MediaFileRow, MediaFilesStore } from "./store/media";
 export type { MessageStore } from "./store/messages";
 export type { MomentsStore } from "./store/moments";

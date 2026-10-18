@@ -7,6 +7,7 @@ import { aaPlugin } from "../src/plugins/aa";
 import { adminPlugin } from "../src/plugins/admin";
 import { auditPlugin } from "../src/plugins/audit";
 import { authPlugin } from "../src/plugins/auth";
+import { botsPlugin } from "../src/plugins/bots";
 import { chatPlugin } from "../src/plugins/chat";
 import type { AppConfig } from "../src/plugins/config";
 import { filesPlugin } from "../src/plugins/files";
@@ -97,6 +98,10 @@ export const createTestApp = async (
             onlineIds.delete(userId);
             events.push({ name: "kick", userId });
         },
+        kickSession: (sessionId: string) => {
+            events.push({ name: "kick:session", payload: sessionId });
+        },
+        onConnect: () => () => undefined,
         onOffline: (cb: (userId: string) => void) => {
             offlineListeners.add(cb);
             return () => offlineListeners.delete(cb);
@@ -144,6 +149,7 @@ export const createTestApp = async (
     ctx.plugin(groupPlugin);
     ctx.plugin(groupFilesPlugin);
     ctx.plugin(pushPlugin);
+    ctx.plugin(botsPlugin);
     ctx.plugin(chatPlugin);
     ctx.plugin(redpacketPlugin);
     ctx.plugin(transferPlugin);

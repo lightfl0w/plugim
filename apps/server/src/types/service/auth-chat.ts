@@ -12,6 +12,11 @@ export interface ChatService {
         session: string,
         payload: ChatSendPayload,
     ): Promise<ChatMessage>;
+    listFor(
+        user: AuthUser,
+        session: string,
+        limit: number,
+    ): Promise<ChatMessage[]>;
 }
 
 export interface GroupAclService {

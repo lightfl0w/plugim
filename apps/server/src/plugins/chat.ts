@@ -6,6 +6,8 @@ import type {
     HistoryParams,
     LinkPreview,
     MergePayload,
+    MessageEditedEvent,
+    MessageEditParams,
     MessageKind,
     MessageReactions,
     MessageReactParams,
@@ -35,6 +37,7 @@ import type {
     ReadsStore,
     RedPacketStore,
 } from "../types";
+import type { BotsService } from "./bots";
 import type { AppConfig } from "./config";
 import type { PushService } from "./push";
 
@@ -59,6 +62,7 @@ const LINK_BUDGET_MS = 2000;
 const MERGE_LINK_MAX = 5;
 const REACTIONS_MAX = 8;
 const CONTENT_MAX = 8000;
+const EDIT_WINDOW_MS = 10 * 60 * 1000;
 const MIME_RE = /^[\w.+-]+\/[\w.+-]+$/;
 const FILE_URL_RE = /^\/files\/[a-f0-9]{32}$/;
 
@@ -77,6 +81,7 @@ export const chatPlugin: Plugin = {
         "push",
         "link-preview",
         "redPackets",
+        "bots",
     ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
@@ -89,6 +94,7 @@ export const chatPlugin: Plugin = {
         const reads = ctx.get<ReadsStore>("reads");
         const push = ctx.get<PushService>("push");
         const linkPreview = ctx.get<LinkPreviewService>("link-preview");
+        const bots = ctx.get<BotsService>("botEvents");
 
         const resolveP2p = async (me: AuthUser, rawSession: string) => {
             const peerName = rawSession.slice(4).trim();
@@ -117,6 +123,30 @@ export const chatPlugin: Plugin = {
             const mine = members.find((m) => m.userId === me.id);
             if (!mine) throw new Error("你不在该群中");
             return { row, mine: mine.role };
+        };
+
+        const broadcastMessage = async (message: ChatMessage) => {
+            if (message.session.startsWith("p2p:")) {
+                const [a, b] = message.session.slice(4).split("|");
+                const userA = await accounts.byUsername(a);
+                const userB = await accounts.byUsername(b);
+                if (userA)
+                    gateway.emitToUser(userA.id, "message:update", {
+                        message: { ...message, session: `p2p:${b}` },
+                    });
+                if (userB)
+                    gateway.emitToUser(userB.id, "message:update", {
+                        message: { ...message, session: `p2p:${a}` },
+                    });
+                return;
+            }
+            if (message.session.startsWith("g:")) {
+                const ids = await groups.memberIdsOf(message.session.slice(2));
+                for (const uid of ids)
+                    gateway.emitToUser(uid, "message:update", { message });
+                return;
+            }
+            gateway.broadcast("message:update", { message });
         };
 
         const previewOf = (payload: ChatSendPayload): string => {
@@ -191,6 +221,10 @@ export const chatPlugin: Plugin = {
                 gateway.emitToUser(peer.id, "message:new", {
                     message: theirs,
                 });
+                bots.emit("message.new", {
+                    session: `p2p:${user.username}`,
+                    message: theirs,
+                });
                 push.deliver([peer.id], {
                     title: user.username,
                     body: previewOf(payload),
@@ -220,6 +254,10 @@ export const chatPlugin: Plugin = {
                     gateway.emitToUser(id, "message:new", {
                         message: saved,
                     });
+                bots.emit("message.new", {
+                    session: rawSession,
+                    message: saved,
+                });
                 push.deliver(
                     ids.filter((id) => id !== user.id),
                     {
@@ -238,6 +276,7 @@ export const chatPlugin: Plugin = {
                 link,
             });
             gateway.broadcast("message:new", { message: saved });
+            bots.emit("message.new", { session: rawSession, message: saved });
             push.deliverAll(
                 {
                     title: user.username,
@@ -589,27 +628,38 @@ export const chatPlugin: Plugin = {
         gateway.rpc("history.list", async (raw, conn) => {
             const user = requireUser(conn);
             const params = raw as unknown as HistoryParams;
-            const rawSession = params.session || config.defaultSession;
+            return historyFor(
+                user,
+                params.session || config.defaultSession,
+                Math.min(Number(params.limit ?? 50), 200),
+                params,
+            );
+        });
+
+        const historyFor = async (
+            user: AuthUser,
+            rawSession: string,
+            limit: number,
+            params?: HistoryParams,
+        ): Promise<ChatMessage[]> => {
             let session = rawSession;
             if (rawSession.startsWith("p2p:")) {
                 const peer = await resolveP2p(user, rawSession);
                 session = p2pKey(user.username, peer.username);
             } else if (rawSession.startsWith("g:")) {
                 await resolveGroup(user, rawSession);
+            } else if (rawSession && rawSession !== config.defaultSession) {
+                throw new Error("会话不存在");
             }
-            return store.list(
-                session,
-                Math.min(Number(params.limit ?? 50), 200),
-                {
-                    before: params.before,
-                    after: params.after,
-                    beforeId: params.beforeId,
-                    afterId: params.afterId,
-                    beforeSeq: params.beforeSeq,
-                    afterSeq: params.afterSeq,
-                },
-            );
-        });
+            return store.list(session, limit, {
+                before: params?.before,
+                after: params?.after,
+                beforeId: params?.beforeId,
+                afterId: params?.afterId,
+                beforeSeq: params?.beforeSeq,
+                afterSeq: params?.afterSeq,
+            });
+        };
 
         gateway.rpc("message.recall", async (raw, conn) => {
             const user = requireUser(conn);
@@ -680,9 +730,13 @@ export const chatPlugin: Plugin = {
                     recalledAt,
                 });
             }
+            bots.emit("message.recalled", {
+                id,
+                session: message.session,
+                recalledAt,
+            });
             return { id, recalledAt };
         });
-
         gateway.rpc("message.react", async (raw, conn) => {
             const user = requireUser(conn);
             const { id, emoji } = raw as unknown as MessageReactParams;
@@ -724,28 +778,48 @@ export const chatPlugin: Plugin = {
                 Object.keys(reactions).length > 0 ? reactions : null,
             );
             if (!updated) throw new Error("消息不存在");
-            if (message.session.startsWith("p2p:")) {
-                const [a, b] = message.session.slice(4).split("|");
-                const userA = await accounts.byUsername(a);
-                const userB = await accounts.byUsername(b);
-                if (userA)
-                    gateway.emitToUser(userA.id, "message:update", {
-                        message: { ...updated, session: `p2p:${b}` },
-                    });
-                if (userB)
-                    gateway.emitToUser(userB.id, "message:update", {
-                        message: { ...updated, session: `p2p:${a}` },
-                    });
-            } else if (message.session.startsWith("g:")) {
-                const ids = await groups.memberIdsOf(message.session.slice(2));
-                for (const uid of ids)
-                    gateway.emitToUser(uid, "message:update", {
-                        message: updated,
-                    });
-            } else {
-                gateway.broadcast("message:update", { message: updated });
-            }
+            await broadcastMessage(updated);
             return { message: updated };
+        });
+
+        gateway.rpc("message.edit", async (raw, conn) => {
+            const user = requireUser(conn);
+            const { id } = raw as unknown as MessageEditParams;
+            const content = String(
+                (raw as unknown as MessageEditParams).content ?? "",
+            ).trim();
+            if (!id) throw new Error("缺少消息");
+            if (!content) throw new Error("消息内容不能为空");
+            if (content.length > CONTENT_MAX)
+                throw new Error(`消息内容不能超过 ${CONTENT_MAX} 字`);
+            const message = await store.byId(id);
+            if (!message) throw new Error("消息不存在");
+            if (message.recalledAt) throw new Error("消息已撤回");
+            if (message.sender !== user.username)
+                throw new Error("只能编辑自己的消息");
+            const kind = message.kind ?? "text";
+            if (kind !== "text") throw new Error("只能编辑文字消息");
+            if (Date.now() - Date.parse(message.createdAt) > EDIT_WINDOW_MS)
+                throw new Error("已超过可编辑时限");
+            if (message.content === content) throw new Error("内容没有变化");
+            const editedAt = new Date().toISOString();
+            const updated = await store.edit(id, content, editedAt);
+            if (!updated) throw new Error("消息不存在");
+            await broadcastMessage(updated);
+            const payload = {
+                id: updated.id,
+                session: updated.session,
+                content: updated.content,
+                editedAt,
+                editCount: updated.editCount ?? 1,
+            } satisfies MessageEditedEvent;
+            gateway.broadcast("message:edited", payload);
+            bots.emit("message.edited", payload);
+            return {
+                message: updated,
+                editedAt,
+                editCount: updated.editCount ?? 1,
+            };
         });
 
         gateway.rpc("message.search", async (raw, conn) => {
@@ -935,6 +1009,10 @@ export const chatPlugin: Plugin = {
                 }
             }
             gateway.emitToUser(user.id, "read:update", payload);
+            bots.emit("read.update", {
+                ...payload,
+                storageSession: session,
+            });
             return { seq: effective, at };
         });
 
@@ -1050,7 +1128,7 @@ export const chatPlugin: Plugin = {
             return { sessions: out, at: new Date().toISOString() };
         });
 
-        ctx.provide<ChatService>("chat", { sendTo });
+        ctx.provide<ChatService>("chat", { sendTo, listFor: historyFor });
         return undefined;
     },
 };

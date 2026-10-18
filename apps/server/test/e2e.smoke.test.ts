@@ -8,6 +8,7 @@ import WebSocket from "ws";
 import { adminPlugin } from "../src/plugins/admin";
 import { auditPlugin } from "../src/plugins/audit";
 import { authPlugin } from "../src/plugins/auth";
+import { botsPlugin } from "../src/plugins/bots";
 import { chatPlugin } from "../src/plugins/chat";
 import type { AppConfig } from "../src/plugins/config";
 import { filesPlugin } from "../src/plugins/files";
@@ -107,6 +108,7 @@ const startServer = async (dbFile: string): Promise<LiveServer> => {
     ctx.plugin(friendsPlugin);
     ctx.plugin(groupFilesPlugin);
     ctx.plugin(groupPlugin);
+    ctx.plugin(botsPlugin);
     ctx.plugin(chatPlugin);
     ctx.plugin(momentsPlugin);
     ctx.plugin(screenPlugin);

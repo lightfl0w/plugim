@@ -5,7 +5,9 @@ const rpc = (ws, id, method, params) =>
 
 const open = (token) =>
     new Promise((resolve, reject) => {
-        const ws = new WebSocket(`${base}/ws?token=${encodeURIComponent(token)}`);
+        const ws = new WebSocket(
+            `${base}/ws?token=${encodeURIComponent(token)}`,
+        );
         const pending = new Map();
         const events = [];
         ws.onmessage = (evt) => {
@@ -90,7 +92,10 @@ const run = async () => {
         session: `p2p:ka${suffix}`,
         limit: 10,
     });
-    assert("history ordered by seq", list.map((m) => m.seq).join(",") === "1,2");
+    assert(
+        "history ordered by seq",
+        list.map((m) => m.seq).join(",") === "1,2",
+    );
 
     const summary = await b.call("chat.sessionList", {
         sessions: [`p2p:ka${suffix}`],
@@ -116,7 +121,10 @@ const run = async () => {
     const stale = await b.call("sync.delta", {
         cursors: [{ session: `p2p:ka${suffix}`, seq: 1 }],
     });
-    assert("delta is idempotent for same cursor", stale.sessions[0].messages.length === 1);
+    assert(
+        "delta is idempotent for same cursor",
+        stale.sessions[0].messages.length === 1,
+    );
 
     const readEvent = b.events.find((e) => e.name === "read:update");
     assert("read:update broadcast delivered", Boolean(readEvent), readEvent);
@@ -128,7 +136,11 @@ const run = async () => {
     const unreadAfter = await a.call("chat.sessionList", {
         sessions: [`p2p:kb${suffix}`],
     });
-    assert("counterparty sees the new unread", unreadAfter[0].unread === 1, unreadAfter[0]);
+    assert(
+        "counterparty sees the new unread",
+        unreadAfter[0].unread === 1,
+        unreadAfter[0],
+    );
 
     a.close();
     b.close();

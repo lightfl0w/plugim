@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import type { Plugin } from "@plugim/core";
 import type {
     AABillInfo,
+    BotScope,
     ChatMessage,
     FileMeta,
     GroupRole,
@@ -56,6 +57,11 @@ import type {
     AdminUserRow,
     AuditRow,
     AuditStore,
+    AuthDeviceRow,
+    AuthSessionsStore,
+    BotAppRow,
+    BotHookRow,
+    BotsStore,
     DepartmentRow,
     DepartmentsStore,
     EssenceItemRow,
@@ -101,6 +107,8 @@ const messagesSqlite = sqliteTable("messages", {
     seq: integer("seq").notNull().default(0),
     createdAt: integer("created_at").notNull(),
     recalledAt: integer("recalled_at"),
+    editedAt: integer("edited_at"),
+    editCount: integer("edit_count").notNull().default(0),
     quote: sqliteText("quote"),
     mentions: sqliteText("mentions"),
     kind: sqliteText("kind"),
@@ -122,6 +130,8 @@ const messagesPg = pgTable("messages", {
         .notNull()
         .defaultNow(),
     recalledAt: timestamp("recalled_at", { withTimezone: true }),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    editCount: pgInteger("edit_count").notNull().default(0),
     quote: pgText("quote"),
     mentions: pgText("mentions"),
     kind: pgText("kind"),
@@ -207,6 +217,7 @@ const usersSqlite = sqliteTable("users", {
     mustChangePassword: integer("must_change_password", { mode: "boolean" })
         .notNull()
         .default(false),
+    totpSecret: sqliteText("totp_secret"),
 });
 
 const transfersSqlite = sqliteTable("transfers", {
@@ -309,6 +320,7 @@ const usersPg = pgTable("users", {
     mustChangePassword: pgBoolean("must_change_password")
         .notNull()
         .default(false),
+    totpSecret: pgText("totp_secret"),
 });
 
 const departmentsSqlite = sqliteTable("departments", {
@@ -712,6 +724,82 @@ const momentReadsSqlite = sqliteTable("moment_reads", {
     seenAt: integer("seen_at").notNull(),
 });
 
+const authSessionsSqlite = sqliteTable("auth_sessions", {
+    id: sqliteText("id").primaryKey(),
+    userId: sqliteText("user_id").notNull(),
+    label: sqliteText("label").notNull().default(""),
+    userAgent: sqliteText("user_agent").notNull().default(""),
+    ip: sqliteText("ip").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+    lastSeenAt: integer("last_seen_at").notNull(),
+    revokedAt: integer("revoked_at"),
+});
+
+const botAppsSqlite = sqliteTable("bot_apps", {
+    id: sqliteText("id").primaryKey(),
+    ownerId: sqliteText("owner_id").notNull(),
+    name: sqliteText("name").notNull(),
+    tokenHash: sqliteText("token_hash").notNull(),
+    scopes: sqliteText("scopes").notNull(),
+    createdAt: integer("created_at").notNull(),
+    lastUsedAt: integer("last_used_at"),
+    revokedAt: integer("revoked_at"),
+});
+
+const botHooksSqlite = sqliteTable("bot_hooks", {
+    id: sqliteText("id").primaryKey(),
+    botId: sqliteText("bot_id").notNull(),
+    url: sqliteText("url").notNull(),
+    secret: sqliteText("secret").notNull(),
+    events: sqliteText("events").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    failures: integer("failures").notNull().default(0),
+    lastError: sqliteText("last_error"),
+    createdAt: integer("created_at").notNull(),
+});
+
+const authSessionsPg = pgTable("auth_sessions", {
+    id: pgText("id").primaryKey(),
+    userId: pgText("user_id").notNull(),
+    label: pgText("label").notNull().default(""),
+    userAgent: pgText("user_agent").notNull().default(""),
+    ip: pgText("ip").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
+
+const botAppsPg = pgTable("bot_apps", {
+    id: pgText("id").primaryKey(),
+    ownerId: pgText("owner_id").notNull(),
+    name: pgText("name").notNull(),
+    tokenHash: pgText("token_hash").notNull(),
+    scopes: pgText("scopes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+    lastUsedAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
+
+const botHooksPg = pgTable("bot_hooks", {
+    id: pgText("id").primaryKey(),
+    botId: pgText("bot_id").notNull(),
+    url: pgText("url").notNull(),
+    secret: pgText("secret").notNull(),
+    events: pgText("events").notNull(),
+    enabled: pgBoolean("enabled").notNull().default(true),
+    failures: pgInteger("failures").notNull().default(0),
+    lastError: pgText("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+});
+
 const momentReadsPg = pgTable("moment_reads", {
     userId: pgText("user_id").primaryKey(),
     seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
@@ -764,6 +852,8 @@ CREATE TABLE IF NOT EXISTS messages (
   seq INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   recalled_at INTEGER,
+  edited_at INTEGER,
+  edit_count INTEGER NOT NULL DEFAULT 0,
   quote TEXT,
   mentions TEXT,
   kind TEXT,
@@ -846,7 +936,8 @@ CREATE TABLE IF NOT EXISTS users (
   dept_id TEXT,
   title TEXT,
   balance INTEGER NOT NULL DEFAULT 0,
-  must_change_password INTEGER NOT NULL DEFAULT 0
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  totp_secret TEXT
 );
 CREATE TABLE IF NOT EXISTS departments (
   id TEXT PRIMARY KEY,
@@ -1000,7 +1091,41 @@ CREATE INDEX IF NOT EXISTS moment_audience_user_idx ON moment_audience (user_id)
 CREATE TABLE IF NOT EXISTS moment_reads (
   user_id TEXT PRIMARY KEY,
   seen_at INTEGER NOT NULL
-)`;
+);
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions (user_id, last_seen_at);
+CREATE TABLE IF NOT EXISTS bot_apps (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  scopes TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS bot_apps_owner_idx ON bot_apps (owner_id);
+CREATE TABLE IF NOT EXISTS bot_hooks (
+  id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  secret TEXT NOT NULL,
+  events TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  failures INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bot_hooks_bot_idx ON bot_hooks (bot_id, enabled)`;
 
 const CREATE_PG = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -1011,6 +1136,8 @@ CREATE TABLE IF NOT EXISTS messages (
   seq INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   recalled_at TIMESTAMPTZ,
+  edited_at TIMESTAMPTZ,
+  edit_count INTEGER NOT NULL DEFAULT 0,
   quote TEXT,
   mentions TEXT,
   kind TEXT,
@@ -1093,7 +1220,8 @@ CREATE TABLE IF NOT EXISTS users (
   dept_id TEXT,
   title TEXT,
   balance INTEGER NOT NULL DEFAULT 0,
-  must_change_password BOOLEAN NOT NULL DEFAULT FALSE
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+  totp_secret TEXT
 );
 CREATE TABLE IF NOT EXISTS departments (
   id TEXT PRIMARY KEY,
@@ -1247,7 +1375,41 @@ CREATE INDEX IF NOT EXISTS moment_audience_user_idx ON moment_audience (user_id)
 CREATE TABLE IF NOT EXISTS moment_reads (
   user_id TEXT PRIMARY KEY,
   seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)`;
+);
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions (user_id, last_seen_at);
+CREATE TABLE IF NOT EXISTS bot_apps (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  scopes TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS bot_apps_owner_idx ON bot_apps (owner_id);
+CREATE TABLE IF NOT EXISTS bot_hooks (
+  id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  secret TEXT NOT NULL,
+  events TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  failures INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS bot_hooks_bot_idx ON bot_hooks (bot_id, enabled)`;
 
 const toIso = (value: Date | number): string =>
     value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -1514,6 +1676,8 @@ interface MessageDbRow {
     redPacket: string | null;
     transfer: string | null;
     aaBill: string | null;
+    editedAt: Date | number | null;
+    editCount: number;
 }
 
 const parseJsonField = <T>(
@@ -1596,6 +1760,8 @@ const messageRowToChat = (row: MessageDbRow) => ({
     seq: row.seq,
     createdAt: toIso(row.createdAt),
     recalledAt: row.recalledAt === null ? null : toIso(row.recalledAt),
+    editedAt: row.editedAt === null ? null : toIso(row.editedAt),
+    editCount: row.editCount ?? 0,
     quote: parseQuote(row.quote),
     mentions: parseMentions(row.mentions),
     kind: (row.kind ?? "text") as "text",
@@ -1605,6 +1771,91 @@ const messageRowToChat = (row: MessageDbRow) => ({
     redPacket: parseRedPacket(row.redPacket),
     transfer: parseTransfer(row.transfer),
     aaBill: parseAABill(row.aaBill),
+});
+
+const authDeviceOf = (row: {
+    id: string;
+    label: string;
+    userAgent: string;
+    ip: string;
+    createdAt: Date | number;
+    lastSeenAt: Date | number;
+    revokedAt: Date | number | null;
+}): AuthDeviceRow => ({
+    id: row.id,
+    label: row.label,
+    userAgent: row.userAgent,
+    ip: row.ip,
+    createdAt: toIso(row.createdAt),
+    lastSeenAt: toIso(row.lastSeenAt),
+    revoked: row.revokedAt !== null,
+});
+
+const parseScopeList = (raw: string): BotScope[] => {
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed))
+            return parsed.filter(
+                (item): item is BotScope =>
+                    item === "messages:read" ||
+                    item === "messages:write" ||
+                    item === "events",
+            );
+    } catch {}
+    return [];
+};
+
+const serializeScopes = (scopes: BotScope[]): string =>
+    JSON.stringify([...new Set(scopes)]);
+
+const botAppOf = (
+    row: {
+        id: string;
+        ownerId: string;
+        name: string;
+        tokenHash: string;
+        scopes: string;
+        createdAt: Date | number;
+        lastUsedAt: Date | number | null;
+        revokedAt: Date | number | null;
+    },
+    owner: string,
+): BotAppRow => ({
+    id: row.id,
+    ownerId: row.ownerId,
+    owner,
+    name: row.name,
+    tokenHash: row.tokenHash,
+    scopes: parseScopeList(row.scopes),
+    createdAt: toIso(row.createdAt),
+    lastUsedAt: row.lastUsedAt === null ? null : toIso(row.lastUsedAt),
+    revoked: row.revokedAt !== null,
+});
+
+const botHookOf = (
+    row: {
+        id: string;
+        botId: string;
+        url: string;
+        secret: string;
+        events: string;
+        enabled: boolean;
+        failures: number;
+        lastError: string | null;
+        createdAt: Date | number;
+    },
+    botName: string,
+): BotHookRow => ({
+    id: row.id,
+    botId: row.botId,
+    botName,
+    url: row.url,
+    secret: row.secret,
+    events: parseIdList(row.events),
+    enabled: row.enabled,
+    failures: row.failures,
+    lastError: row.lastError ?? null,
+    createdAt: toIso(row.createdAt),
 });
 
 const pgPacketToRow = (
@@ -1644,6 +1895,8 @@ export const storagePlugin: Plugin = {
         "audits",
         "redPackets",
         "wallet",
+        "authSessions",
+        "bots",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -1664,6 +1917,8 @@ export const storagePlugin: Plugin = {
         let audits: AuditStore;
         let redPackets: RedPacketStore;
         let wallet: WalletStore;
+        let authSessions: AuthSessionsStore;
+        let bots: BotsStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -1742,6 +1997,15 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE reads ADD COLUMN IF NOT EXISTS seq INTEGER NOT NULL DEFAULT 0",
+            );
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ",
+            );
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS edit_count INTEGER NOT NULL DEFAULT 0",
+            );
+            await client.unsafe(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT",
             );
             await client.unsafe(
                 "CREATE INDEX IF NOT EXISTS messages_session_seq_idx ON messages (session, seq)",
@@ -2053,6 +2317,19 @@ export const storagePlugin: Plugin = {
                     const row = rows[0];
                     return row ? messageRowToChat(row) : null;
                 },
+                async edit(id, content, at) {
+                    const rows = await db
+                        .update(messagesPg)
+                        .set({
+                            content,
+                            editedAt: new Date(at),
+                            editCount: sql`${messagesPg.editCount} + 1`,
+                        })
+                        .where(eq(messagesPg.id, id))
+                        .returning();
+                    const row = rows[0];
+                    return row ? messageRowToChat(row) : null;
+                },
                 async search(params) {
                     const conds = [isNull(messagesPg.recalledAt)];
                     if (params.session)
@@ -2239,6 +2516,20 @@ export const storagePlugin: Plugin = {
                         .set({ mustChangePassword: on })
                         .where(eq(usersPg.id, id));
                 },
+                async totpOf(id) {
+                    const rows = await db
+                        .select({ secret: usersPg.totpSecret })
+                        .from(usersPg)
+                        .where(eq(usersPg.id, id))
+                        .limit(1);
+                    return rows[0]?.secret ?? null;
+                },
+                async setTotp(id, secret) {
+                    await db
+                        .update(usersPg)
+                        .set({ totpSecret: secret })
+                        .where(eq(usersPg.id, id));
+                },
                 async count() {
                     const rows = await db
                         .select({ id: usersPg.id })
@@ -2398,6 +2689,294 @@ export const storagePlugin: Plugin = {
                             }),
                         ),
                     };
+                },
+            };
+
+            authSessions = {
+                async create(input) {
+                    const now = new Date();
+                    await db.insert(authSessionsPg).values({
+                        id: input.id,
+                        userId: input.userId,
+                        label: input.label,
+                        userAgent: input.userAgent,
+                        ip: input.ip,
+                        createdAt: now,
+                        lastSeenAt: now,
+                    });
+                    return {
+                        id: input.id,
+                        label: input.label,
+                        userAgent: input.userAgent,
+                        ip: input.ip,
+                        createdAt: now.toISOString(),
+                        lastSeenAt: now.toISOString(),
+                        revoked: false,
+                    };
+                },
+                async touch(id) {
+                    await db
+                        .update(authSessionsPg)
+                        .set({ lastSeenAt: new Date() })
+                        .where(
+                            and(
+                                eq(authSessionsPg.id, id),
+                                isNull(authSessionsPg.revokedAt),
+                            ),
+                        );
+                },
+                async list(userId) {
+                    const rows = await db
+                        .select()
+                        .from(authSessionsPg)
+                        .where(eq(authSessionsPg.userId, userId))
+                        .orderBy(desc(authSessionsPg.lastSeenAt))
+                        .limit(50);
+                    return rows.map(authDeviceOf);
+                },
+                async rename(userId, id, label) {
+                    const rows = await db
+                        .update(authSessionsPg)
+                        .set({ label })
+                        .where(
+                            and(
+                                eq(authSessionsPg.id, id),
+                                eq(authSessionsPg.userId, userId),
+                            ),
+                        )
+                        .returning();
+                    return rows.length > 0;
+                },
+                async revoke(userId, id) {
+                    const rows = await db
+                        .update(authSessionsPg)
+                        .set({ revokedAt: new Date() })
+                        .where(
+                            and(
+                                eq(authSessionsPg.id, id),
+                                eq(authSessionsPg.userId, userId),
+                                isNull(authSessionsPg.revokedAt),
+                            ),
+                        )
+                        .returning();
+                    return rows.length > 0;
+                },
+                async revokeOthers(userId, keepId) {
+                    const rows = await db
+                        .update(authSessionsPg)
+                        .set({ revokedAt: new Date() })
+                        .where(
+                            and(
+                                eq(authSessionsPg.userId, userId),
+                                ne(authSessionsPg.id, keepId),
+                                isNull(authSessionsPg.revokedAt),
+                            ),
+                        )
+                        .returning();
+                    return rows.length;
+                },
+                async isActive(userId, id) {
+                    const rows = await db
+                        .select({ id: authSessionsPg.id })
+                        .from(authSessionsPg)
+                        .where(
+                            and(
+                                eq(authSessionsPg.id, id),
+                                eq(authSessionsPg.userId, userId),
+                                isNull(authSessionsPg.revokedAt),
+                            ),
+                        )
+                        .limit(1);
+                    return rows.length > 0;
+                },
+            };
+
+            bots = {
+                async createApp(input) {
+                    const id = crypto.randomUUID();
+                    const now = new Date();
+                    await db.insert(botAppsPg).values({
+                        id,
+                        ownerId: input.ownerId,
+                        name: input.name,
+                        tokenHash: input.tokenHash,
+                        scopes: serializeScopes(input.scopes),
+                        createdAt: now,
+                    });
+                    const owner = await accounts.byId(input.ownerId);
+                    return {
+                        id,
+                        ownerId: input.ownerId,
+                        owner: owner?.username ?? "",
+                        name: input.name,
+                        tokenHash: input.tokenHash,
+                        scopes: input.scopes,
+                        createdAt: now.toISOString(),
+                        lastUsedAt: null,
+                        revoked: false,
+                    };
+                },
+                async listApps(ownerId) {
+                    const rows = await db
+                        .select()
+                        .from(botAppsPg)
+                        .where(eq(botAppsPg.ownerId, ownerId))
+                        .orderBy(desc(botAppsPg.createdAt))
+                        .limit(50);
+                    const owner = await accounts.byId(ownerId);
+                    return rows.map((row) =>
+                        botAppOf(row, owner?.username ?? ""),
+                    );
+                },
+                async revokeApp(ownerId, id) {
+                    const rows = await db
+                        .update(botAppsPg)
+                        .set({ revokedAt: new Date() })
+                        .where(
+                            and(
+                                eq(botAppsPg.id, id),
+                                eq(botAppsPg.ownerId, ownerId),
+                                isNull(botAppsPg.revokedAt),
+                            ),
+                        )
+                        .returning();
+                    return rows.length > 0;
+                },
+                async byToken(tokenHash) {
+                    const rows = await db
+                        .select()
+                        .from(botAppsPg)
+                        .where(
+                            and(
+                                eq(botAppsPg.tokenHash, tokenHash),
+                                isNull(botAppsPg.revokedAt),
+                            ),
+                        )
+                        .limit(1);
+                    const row = rows[0];
+                    if (!row) return null;
+                    const owner = await accounts.byId(row.ownerId);
+                    await db
+                        .update(botAppsPg)
+                        .set({ lastUsedAt: new Date() })
+                        .where(eq(botAppsPg.id, row.id));
+                    return botAppOf(row, owner?.username ?? "");
+                },
+                async createHook(input) {
+                    const id = crypto.randomUUID();
+                    const now = new Date();
+                    await db.insert(botHooksPg).values({
+                        id,
+                        botId: input.botId,
+                        url: input.url,
+                        secret: input.secret,
+                        events: JSON.stringify(input.events),
+                        enabled: true,
+                        createdAt: now,
+                    });
+                    const bot = await db
+                        .select({ name: botAppsPg.name })
+                        .from(botAppsPg)
+                        .where(eq(botAppsPg.id, input.botId))
+                        .limit(1);
+                    return {
+                        id,
+                        botId: input.botId,
+                        botName: bot[0]?.name ?? "",
+                        url: input.url,
+                        secret: input.secret,
+                        events: input.events,
+                        enabled: true,
+                        failures: 0,
+                        lastError: null,
+                        createdAt: now.toISOString(),
+                    };
+                },
+                async listHooks(ownerId) {
+                    const rows = await db
+                        .select({ hook: botHooksPg, name: botAppsPg.name })
+                        .from(botHooksPg)
+                        .innerJoin(
+                            botAppsPg,
+                            eq(botAppsPg.id, botHooksPg.botId),
+                        )
+                        .where(eq(botAppsPg.ownerId, ownerId))
+                        .orderBy(desc(botHooksPg.createdAt))
+                        .limit(100);
+                    return rows.map((row) =>
+                        botHookOf(row.hook, row.name ?? ""),
+                    );
+                },
+                async setHookEnabled(ownerId, id, enabled) {
+                    const owned = await db
+                        .select({ id: botHooksPg.id })
+                        .from(botHooksPg)
+                        .innerJoin(
+                            botAppsPg,
+                            eq(botAppsPg.id, botHooksPg.botId),
+                        )
+                        .where(
+                            and(
+                                eq(botHooksPg.id, id),
+                                eq(botAppsPg.ownerId, ownerId),
+                            ),
+                        )
+                        .limit(1);
+                    if (owned.length === 0) return false;
+                    await db
+                        .update(botHooksPg)
+                        .set({ enabled, lastError: null })
+                        .where(eq(botHooksPg.id, id));
+                    return true;
+                },
+                async removeHook(ownerId, id) {
+                    const owned = await db
+                        .select({ id: botHooksPg.id })
+                        .from(botHooksPg)
+                        .innerJoin(
+                            botAppsPg,
+                            eq(botAppsPg.id, botHooksPg.botId),
+                        )
+                        .where(
+                            and(
+                                eq(botHooksPg.id, id),
+                                eq(botAppsPg.ownerId, ownerId),
+                            ),
+                        )
+                        .limit(1);
+                    if (owned.length === 0) return false;
+                    await db.delete(botHooksPg).where(eq(botHooksPg.id, id));
+                    return true;
+                },
+                async hooksOfEvent(event) {
+                    const rows = await db
+                        .select({ hook: botHooksPg, name: botAppsPg.name })
+                        .from(botHooksPg)
+                        .innerJoin(
+                            botAppsPg,
+                            eq(botAppsPg.id, botHooksPg.botId),
+                        )
+                        .where(
+                            and(
+                                eq(botHooksPg.enabled, true),
+                                isNull(botAppsPg.revokedAt),
+                            ),
+                        )
+                        .limit(500);
+                    return rows
+                        .filter((row) =>
+                            parseIdList(row.hook.events).includes(event),
+                        )
+                        .map((row) => botHookOf(row.hook, row.name ?? ""));
+                },
+                async reportHook(id, ok, error) {
+                    await db
+                        .update(botHooksPg)
+                        .set({
+                            failures: ok ? 0 : sql`${botHooksPg.failures} + 1`,
+                            lastError: error,
+                        })
+                        .where(eq(botHooksPg.id, id));
                 },
             };
 
@@ -4143,6 +4722,14 @@ export const storagePlugin: Plugin = {
                     );
                 }
             }
+            if (!messageColumns.some((item) => item.name === "edited_at"))
+                client.exec(
+                    "ALTER TABLE messages ADD COLUMN edited_at INTEGER",
+                );
+            if (!messageColumns.some((item) => item.name === "edit_count"))
+                client.exec(
+                    "ALTER TABLE messages ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0",
+                );
             if (!messageColumns.some((item) => item.name === "seq"))
                 client.exec(
                     "ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0",
@@ -4175,6 +4762,7 @@ export const storagePlugin: Plugin = {
                 ["title", "TEXT"],
                 ["must_change_password", "INTEGER NOT NULL DEFAULT 0"],
                 ["balance", "INTEGER NOT NULL DEFAULT 0"],
+                ["totp_secret", "TEXT"],
             ]) {
                 if (!userColumns.some((item) => item.name === col)) {
                     client.exec(`ALTER TABLE users ADD COLUMN ${col} ${type}`);
@@ -4526,6 +5114,19 @@ export const storagePlugin: Plugin = {
                     const row = rows[0];
                     return row ? messageRowToChat(row) : null;
                 },
+                async edit(id, content, at) {
+                    const rows = await db
+                        .update(messagesSqlite)
+                        .set({
+                            content,
+                            editedAt: new Date(at).getTime(),
+                            editCount: sql`${messagesSqlite.editCount} + 1`,
+                        })
+                        .where(eq(messagesSqlite.id, id))
+                        .returning();
+                    const row = rows[0];
+                    return row ? messageRowToChat(row) : null;
+                },
                 async search(params) {
                     const conds = [isNull(messagesSqlite.recalledAt)];
                     if (params.session)
@@ -4722,6 +5323,20 @@ export const storagePlugin: Plugin = {
                         .set({ mustChangePassword: on })
                         .where(eq(usersSqlite.id, id));
                 },
+                async totpOf(id) {
+                    const rows = await db
+                        .select({ secret: usersSqlite.totpSecret })
+                        .from(usersSqlite)
+                        .where(eq(usersSqlite.id, id))
+                        .limit(1);
+                    return rows[0]?.secret ?? null;
+                },
+                async setTotp(id, secret) {
+                    await db
+                        .update(usersSqlite)
+                        .set({ totpSecret: secret })
+                        .where(eq(usersSqlite.id, id));
+                },
                 async count() {
                     const rows = await db
                         .select({ id: usersSqlite.id })
@@ -4885,6 +5500,305 @@ export const storagePlugin: Plugin = {
                             }),
                         ),
                     };
+                },
+            };
+
+            authSessions = {
+                async create(input) {
+                    const now = Date.now();
+                    await db.insert(authSessionsSqlite).values({
+                        id: input.id,
+                        userId: input.userId,
+                        label: input.label,
+                        userAgent: input.userAgent,
+                        ip: input.ip,
+                        createdAt: now,
+                        lastSeenAt: now,
+                    });
+                    const iso = new Date(now).toISOString();
+                    return {
+                        id: input.id,
+                        label: input.label,
+                        userAgent: input.userAgent,
+                        ip: input.ip,
+                        createdAt: iso,
+                        lastSeenAt: iso,
+                        revoked: false,
+                    };
+                },
+                async touch(id) {
+                    await db
+                        .update(authSessionsSqlite)
+                        .set({ lastSeenAt: Date.now() })
+                        .where(
+                            and(
+                                eq(authSessionsSqlite.id, id),
+                                isNull(authSessionsSqlite.revokedAt),
+                            ),
+                        );
+                },
+                async list(userId) {
+                    const rows = await db
+                        .select()
+                        .from(authSessionsSqlite)
+                        .where(eq(authSessionsSqlite.userId, userId))
+                        .orderBy(desc(authSessionsSqlite.lastSeenAt))
+                        .limit(50);
+                    return rows.map(authDeviceOf);
+                },
+                async rename(userId, id, label) {
+                    const rows = await db
+                        .update(authSessionsSqlite)
+                        .set({ label })
+                        .where(
+                            and(
+                                eq(authSessionsSqlite.id, id),
+                                eq(authSessionsSqlite.userId, userId),
+                            ),
+                        )
+                        .returning();
+                    return rows.length > 0;
+                },
+                async revoke(userId, id) {
+                    const rows = await db
+                        .update(authSessionsSqlite)
+                        .set({ revokedAt: Date.now() })
+                        .where(
+                            and(
+                                eq(authSessionsSqlite.id, id),
+                                eq(authSessionsSqlite.userId, userId),
+                                isNull(authSessionsSqlite.revokedAt),
+                            ),
+                        )
+                        .returning();
+                    return rows.length > 0;
+                },
+                async revokeOthers(userId, keepId) {
+                    const rows = await db
+                        .update(authSessionsSqlite)
+                        .set({ revokedAt: Date.now() })
+                        .where(
+                            and(
+                                eq(authSessionsSqlite.userId, userId),
+                                ne(authSessionsSqlite.id, keepId),
+                                isNull(authSessionsSqlite.revokedAt),
+                            ),
+                        )
+                        .returning();
+                    return rows.length;
+                },
+                async isActive(userId, id) {
+                    const rows = await db
+                        .select({ id: authSessionsSqlite.id })
+                        .from(authSessionsSqlite)
+                        .where(
+                            and(
+                                eq(authSessionsSqlite.id, id),
+                                eq(authSessionsSqlite.userId, userId),
+                                isNull(authSessionsSqlite.revokedAt),
+                            ),
+                        )
+                        .limit(1);
+                    return rows.length > 0;
+                },
+            };
+
+            bots = {
+                async createApp(input) {
+                    const id = crypto.randomUUID();
+                    const now = Date.now();
+                    await db.insert(botAppsSqlite).values({
+                        id,
+                        ownerId: input.ownerId,
+                        name: input.name,
+                        tokenHash: input.tokenHash,
+                        scopes: serializeScopes(input.scopes),
+                        createdAt: now,
+                    });
+                    const owner = await accounts.byId(input.ownerId);
+                    return {
+                        id,
+                        ownerId: input.ownerId,
+                        owner: owner?.username ?? "",
+                        name: input.name,
+                        tokenHash: input.tokenHash,
+                        scopes: input.scopes,
+                        createdAt: new Date(now).toISOString(),
+                        lastUsedAt: null,
+                        revoked: false,
+                    };
+                },
+                async listApps(ownerId) {
+                    const rows = await db
+                        .select()
+                        .from(botAppsSqlite)
+                        .where(eq(botAppsSqlite.ownerId, ownerId))
+                        .orderBy(desc(botAppsSqlite.createdAt))
+                        .limit(50);
+                    const owner = await accounts.byId(ownerId);
+                    return rows.map((row) =>
+                        botAppOf(row, owner?.username ?? ""),
+                    );
+                },
+                async revokeApp(ownerId, id) {
+                    const rows = await db
+                        .update(botAppsSqlite)
+                        .set({ revokedAt: Date.now() })
+                        .where(
+                            and(
+                                eq(botAppsSqlite.id, id),
+                                eq(botAppsSqlite.ownerId, ownerId),
+                                isNull(botAppsSqlite.revokedAt),
+                            ),
+                        )
+                        .returning();
+                    return rows.length > 0;
+                },
+                async byToken(tokenHash) {
+                    const rows = await db
+                        .select()
+                        .from(botAppsSqlite)
+                        .where(
+                            and(
+                                eq(botAppsSqlite.tokenHash, tokenHash),
+                                isNull(botAppsSqlite.revokedAt),
+                            ),
+                        )
+                        .limit(1);
+                    const row = rows[0];
+                    if (!row) return null;
+                    const owner = await accounts.byId(row.ownerId);
+                    await db
+                        .update(botAppsSqlite)
+                        .set({ lastUsedAt: Date.now() })
+                        .where(eq(botAppsSqlite.id, row.id));
+                    return botAppOf(row, owner?.username ?? "");
+                },
+                async createHook(input) {
+                    const id = crypto.randomUUID();
+                    const now = Date.now();
+                    await db.insert(botHooksSqlite).values({
+                        id,
+                        botId: input.botId,
+                        url: input.url,
+                        secret: input.secret,
+                        events: JSON.stringify(input.events),
+                        enabled: true,
+                        createdAt: now,
+                    });
+                    const bot = await db
+                        .select({ name: botAppsSqlite.name })
+                        .from(botAppsSqlite)
+                        .where(eq(botAppsSqlite.id, input.botId))
+                        .limit(1);
+                    return {
+                        id,
+                        botId: input.botId,
+                        botName: bot[0]?.name ?? "",
+                        url: input.url,
+                        secret: input.secret,
+                        events: input.events,
+                        enabled: true,
+                        failures: 0,
+                        lastError: null,
+                        createdAt: new Date(now).toISOString(),
+                    };
+                },
+                async listHooks(ownerId) {
+                    const rows = await db
+                        .select({
+                            hook: botHooksSqlite,
+                            name: botAppsSqlite.name,
+                        })
+                        .from(botHooksSqlite)
+                        .innerJoin(
+                            botAppsSqlite,
+                            eq(botAppsSqlite.id, botHooksSqlite.botId),
+                        )
+                        .where(eq(botAppsSqlite.ownerId, ownerId))
+                        .orderBy(desc(botHooksSqlite.createdAt))
+                        .limit(100);
+                    return rows.map((row) =>
+                        botHookOf(row.hook, row.name ?? ""),
+                    );
+                },
+                async setHookEnabled(ownerId, id, enabled) {
+                    const owned = await db
+                        .select({ id: botHooksSqlite.id })
+                        .from(botHooksSqlite)
+                        .innerJoin(
+                            botAppsSqlite,
+                            eq(botAppsSqlite.id, botHooksSqlite.botId),
+                        )
+                        .where(
+                            and(
+                                eq(botHooksSqlite.id, id),
+                                eq(botAppsSqlite.ownerId, ownerId),
+                            ),
+                        )
+                        .limit(1);
+                    if (owned.length === 0) return false;
+                    await db
+                        .update(botHooksSqlite)
+                        .set({ enabled, lastError: null })
+                        .where(eq(botHooksSqlite.id, id));
+                    return true;
+                },
+                async removeHook(ownerId, id) {
+                    const owned = await db
+                        .select({ id: botHooksSqlite.id })
+                        .from(botHooksSqlite)
+                        .innerJoin(
+                            botAppsSqlite,
+                            eq(botAppsSqlite.id, botHooksSqlite.botId),
+                        )
+                        .where(
+                            and(
+                                eq(botHooksSqlite.id, id),
+                                eq(botAppsSqlite.ownerId, ownerId),
+                            ),
+                        )
+                        .limit(1);
+                    if (owned.length === 0) return false;
+                    await db
+                        .delete(botHooksSqlite)
+                        .where(eq(botHooksSqlite.id, id));
+                    return true;
+                },
+                async hooksOfEvent(event) {
+                    const rows = await db
+                        .select({
+                            hook: botHooksSqlite,
+                            name: botAppsSqlite.name,
+                        })
+                        .from(botHooksSqlite)
+                        .innerJoin(
+                            botAppsSqlite,
+                            eq(botAppsSqlite.id, botHooksSqlite.botId),
+                        )
+                        .where(
+                            and(
+                                eq(botHooksSqlite.enabled, true),
+                                isNull(botAppsSqlite.revokedAt),
+                            ),
+                        )
+                        .limit(500);
+                    return rows
+                        .filter((row) =>
+                            parseIdList(row.hook.events).includes(event),
+                        )
+                        .map((row) => botHookOf(row.hook, row.name ?? ""));
+                },
+                async reportHook(id, ok, error) {
+                    await db
+                        .update(botHooksSqlite)
+                        .set({
+                            failures: ok
+                                ? 0
+                                : sql`${botHooksSqlite.failures} + 1`,
+                            lastError: error,
+                        })
+                        .where(eq(botHooksSqlite.id, id));
                 },
             };
 
@@ -6745,6 +7659,8 @@ export const storagePlugin: Plugin = {
         ctx.provide<AuditStore>("audits", audits);
         ctx.provide<RedPacketStore>("redPackets", redPackets);
         ctx.provide<WalletStore>("wallet", wallet);
+        ctx.provide<AuthSessionsStore>("authSessions", authSessions);
+        ctx.provide<BotsStore>("bots", bots);
         return undefined;
     },
 };

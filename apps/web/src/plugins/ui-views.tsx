@@ -18,6 +18,7 @@ import { uiProfileSetup } from "./ui-profile";
 import { uiProfileCardSetup } from "./ui-profilecard";
 import { uiPwaSetup } from "./ui-pwa";
 import { uiScreenSetup } from "./ui-screen";
+import { uiSecuritySetup } from "./ui-security";
 import { uiSettingsSetup } from "./ui-settings";
 import { uiShellSetup } from "./ui-shell";
 import { uiSidebarSetup } from "./ui-sidebar";
@@ -28,6 +29,7 @@ const SECTIONS: { name: string; setup: UiSetup }[] = [
     { name: "主题外观", setup: themeSetup },
     { name: "安装向导", setup: uiInstallSetup },
     { name: "后台管理", setup: uiAdminSetup },
+    { name: "安全与企业接入", setup: uiSecuritySetup },
     { name: "设置中心", setup: uiSettingsSetup },
     { name: "登录注册", setup: uiAuthSetup },
     { name: "强制改密", setup: uiForcedPasswordSetup },

@@ -17,6 +17,7 @@ export default defineConfig({
             "/files": "http://localhost:3000",
             "/site": "http://localhost:3000",
             "/auth": "http://localhost:3000",
+            "/open": "http://localhost:3000",
             "/health": "http://localhost:3000",
             "/version": "http://localhost:3000",
             "/ws": { target: "ws://localhost:3000", ws: true },
