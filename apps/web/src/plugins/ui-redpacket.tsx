@@ -92,7 +92,7 @@ export const RedPacketCard = ({
               ? "已过期"
               : "已被领完"
         : status === "active" && (live?.claimedCount ?? 0) > 0
-          ? `点击领取 · 已领 ${live?.claimedCount}/${packet.totalCount}`
+          ? `点击领取 已领 ${live?.claimedCount}/${packet.totalCount}`
           : "点击领取";
     return (
         <button
@@ -515,7 +515,7 @@ export const RedPacketOpenDialog = ({
                 {packet ? (
                     <p className="border-t border-border px-4 py-2 text-center text-xs text-muted-foreground">
                         {packet.totalCount} 个红包 ·{" "}
-                        {formatMoney(packet.totalAmount)} · 已被领{" "}
+                        {formatMoney(packet.totalAmount)} 已被领{" "}
                         {packet.claimedCount} 个
                     </p>
                 ) : null}

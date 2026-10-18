@@ -435,7 +435,7 @@ export const AABillCard = ({
                     ? "已结清"
                     : status === "cancelled"
                       ? "已取消"
-                      : `已收 ${formatMoney(doneAmount)} · ${info.participantIds.length} 人`}
+                      : `已收 ${formatMoney(doneAmount)} ${info.participantIds.length} 人`}
             </span>
         </button>
     );
@@ -742,7 +742,7 @@ export const AABillOpenDialog = ({
                                 {bill.description}
                             </p>
                             <p className="mt-1 text-xs text-muted-foreground">
-                                {detail.creatorName} 发起 · 总额{" "}
+                                {detail.creatorName} 发起 总额{" "}
                                 <span className="tabular-nums">
                                     {formatMoney(bill.totalAmount)}
                                 </span>
@@ -753,11 +753,11 @@ export const AABillOpenDialog = ({
                                     {formatMoney(detail.bill.settledAmount)}
                                 </span>
                                 {bill.status === "settled"
-                                    ? " · 已结清"
+                                    ? " 已结清"
                                     : bill.status === "cancelled"
-                                      ? " · 已取消"
+                                      ? " 已取消"
                                       : detail.overdue
-                                        ? " · 已逾期"
+                                        ? " 已逾期"
                                         : ""}
                             </p>
                         </div>
@@ -780,7 +780,7 @@ export const AABillOpenDialog = ({
                                     </span>
                                     <span className="tabular-nums text-muted-foreground">
                                         {formatMoney(member.share)}
-                                        {member.paid ? " · 已付" : " · 未付"}
+                                        {member.paid ? " 已付" : " 未付"}
                                     </span>
                                 </li>
                             ))}

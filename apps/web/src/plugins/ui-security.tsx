@@ -296,7 +296,7 @@ export const uiSecuritySetup = async (ctx: Context) => {
                     <div key={device.id} className={panelRow}>
                         <Field
                             title={device.label}
-                            desc={`${formatTime(device.lastSeenAt)}${device.ip ? ` · ${device.ip}` : ""}`}
+                            desc={`${formatTime(device.lastSeenAt)}${device.ip ? ` ${device.ip}` : ""}`}
                         >
                             {device.current ? (
                                 <span className="mt-1 inline-flex w-fit rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
@@ -564,7 +564,7 @@ export const uiSecuritySetup = async (ctx: Context) => {
                                 title={app.name}
                                 desc={`${app.scopes
                                     .map((s) => SCOPE_LABELS[s])
-                                    .join("、")} · ${
+                                    .join("、")} ${
                                     app.lastUsedAt
                                         ? `最近使用 ${formatTime(app.lastUsedAt)}`
                                         : "尚未使用"
@@ -648,7 +648,7 @@ export const uiSecuritySetup = async (ctx: Context) => {
                                     .map((e) => EVENT_LABELS[e] ?? e)
                                     .join("、")}${
                                     hook.lastError
-                                        ? ` · 失败 ${hook.failures} 次：${hook.lastError}`
+                                        ? ` 失败 ${hook.failures} 次：${hook.lastError}`
                                         : ""
                                 }`}
                             />

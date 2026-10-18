@@ -291,7 +291,7 @@ export const createOrgPage = (ctx: Context): FC => {
                 member.title,
             ]
                 .filter(Boolean)
-                .join(" · ");
+                .join(" ");
             return (
                 <div
                     className="group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent"

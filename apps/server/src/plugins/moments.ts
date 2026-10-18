@@ -465,6 +465,8 @@ export const momentsPlugin: Plugin = {
             ];
             if (sessions.length === 0) throw new Error("请选择转发目标");
             if (sessions.length > 50) throw new Error("一次最多转发 50 个会话");
+            if (row.visibility !== "public")
+                throw new Error("仅公开动态可以分享");
             const share: MomentShare = {
                 moment: 1,
                 postId: row.id,
@@ -486,6 +488,18 @@ export const momentsPlugin: Plugin = {
                     }),
                 );
             return sent;
+        });
+
+        gateway.rpc("moment.get", async (raw, conn) => {
+            const me = requireUser(conn);
+            const postId = String(
+                (raw as unknown as MomentTargetParams).postId ?? "",
+            ).trim();
+            if (!postId) throw new Error("动态不存在或已被删除");
+            const row = await store.byId(postId);
+            if (row?.visibility !== "public")
+                throw new Error("动态不存在或仅好友可见");
+            return buildOne(row, me.id);
         });
 
         gateway.rpc("moment.unread", async (_raw, conn) => {

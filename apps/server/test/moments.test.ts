@@ -822,6 +822,38 @@ describe("moment forward", () => {
             ua.user,
         )) as { kind: string };
         expect(forged.kind).toBe("text");
+        await expect(
+            app.call(
+                "moment.forward",
+                { postId: post.id, sessions: [`p2p:${ub.user.username}`] },
+                ua.user,
+            ),
+        ).rejects.toThrow("仅公开动态可以分享");
+    });
+
+    it("lets anyone with the message view a shared public post", async () => {
+        const { app, ua } = await friendPair("fh", "fi");
+        const stranger = await app.register("fj");
+        const post = (await app.call(
+            "moment.publish",
+            { content: "公开可看" },
+            ua.user,
+        )) as MomentPost;
+        const fetched = (await app.call(
+            "moment.get",
+            { postId: post.id },
+            stranger.user,
+        )) as MomentPost;
+        expect(fetched.content).toBe("公开可看");
+        expect(fetched.author).toBe("fh");
+        const hidden = (await app.call(
+            "moment.publish",
+            { content: "私密", visibility: "friends" },
+            ua.user,
+        )) as MomentPost;
+        await expect(
+            app.call("moment.get", { postId: hidden.id }, stranger.user),
+        ).rejects.toThrow("动态不存在或仅好友可见");
     });
 
     it("dedupes targets and drops the sender's own session", async () => {

@@ -243,7 +243,7 @@ export const uiCallSetup = async (ctx: Context) => {
             if (relay) parts.push("中继");
             if (rtt != null) parts.push(`RTT ${Math.round(rtt)}ms`);
             if (recv + lost > 0) parts.push(`丢包 ${lossPct.toFixed(1)}%`);
-            set({ weak, net: parts.join(" · ") });
+            set({ weak, net: parts.join(" ") });
         } catch {
             void 0;
         }

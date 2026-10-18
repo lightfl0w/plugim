@@ -466,7 +466,7 @@ export const uiSettingsSetup = async (ctx: Context) => {
         return (
             <PageShell
                 title={`${group.title}设置`}
-                subtitle={`插件 ${group.plugin} · ${
+                subtitle={`插件 ${group.plugin} ${
                     isViews
                         ? "即时生效，修改后自动应用到当前主题"
                         : "修改后自动保存到本地"

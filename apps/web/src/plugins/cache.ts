@@ -132,6 +132,7 @@ export const cachePlugin: Plugin = {
                             ? "[消息已撤回]"
                             : message.content,
                         at,
+                        kind: message.kind,
                     };
                 }
                 const kvTx = db.transaction("kv", "readwrite");

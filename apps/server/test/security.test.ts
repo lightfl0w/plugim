@@ -37,7 +37,7 @@ describe("TOTP", () => {
             deviceLabelOf(
                 "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0 Safari/537.36",
             ),
-        ).toBe("Chrome · Windows");
+        ).toBe("Chrome Windows");
         expect(deviceLabelOf("curl/8.0")).toBe("curl");
     });
 });

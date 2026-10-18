@@ -131,7 +131,7 @@ export const createProfilePage = (ctx: Context): FC => {
                                 ? "加载中…"
                                 : `可用 ${formatMoney(balance)}${
                                       pendingIn > 0
-                                          ? ` · ${pendingIn} 笔待收款`
+                                          ? ` ${pendingIn} 笔待收款`
                                           : ""
                                   }`}
                         </p>

@@ -210,7 +210,7 @@ export const uiProfileCardSetup = async (ctx: Context) => {
                     ) : null}
                     {org && (org.dept || org.title) ? (
                         <p className="text-xs text-muted-foreground">
-                            {[org.dept, org.title].filter(Boolean).join(" · ")}
+                            {[org.dept, org.title].filter(Boolean).join(" ")}
                         </p>
                     ) : null}
                     {registered ? (

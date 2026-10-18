@@ -4,6 +4,7 @@ import type {
     GroupInfo,
     MergedChat,
     MergePayload,
+    MomentPost,
     MomentShare,
     TransferInfo,
 } from "@plugim/protocol";
@@ -57,11 +58,13 @@ import type { CacheService } from "./cache";
 import type { ConnStatus, RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
+import type { MomentsService } from "./moments";
 import type { AAService, TransferService } from "./money";
 import type { RedPacketService } from "./redpacket";
 import type { PendingEvent, PendingMessage, SenderService } from "./sender";
 import type { SessionsService } from "./sessions";
 import { Highlight } from "./ui-layout";
+import { createMomentCard } from "./ui-moments-page";
 import {
     AABillCard,
     AABillOpenDialog,
@@ -349,7 +352,7 @@ interface MessageActions {
     react: (id: string, emoji: string) => void;
     jumpToMessage: (id: string) => void;
     openMerge: (payload: MergePayload) => void;
-    openMoment: (author: string) => void;
+    openMoment: (postId: string) => void;
     openRedPacket: (redPacketId: string) => void;
     openTransfer: (transferId: string) => void;
     openAABill: (billId: string) => void;
@@ -643,12 +646,12 @@ const MessageGroupRow = memo(
                                                     )}
                                                     onClick={() =>
                                                         actions.openMoment(
-                                                            share.author,
+                                                            share.postId,
                                                         )
                                                     }
                                                 >
                                                     <span className="text-xs opacity-70">
-                                                        朋友圈 · {share.author}
+                                                        朋友圈 {share.author}
                                                     </span>
                                                     {share.text ? (
                                                         <span className="line-clamp-2 text-sm">
@@ -928,6 +931,8 @@ export const uiMessagesSetup = async (ctx: Context) => {
     const friends = ctx.get<FriendsService>("friends");
     const groups = ctx.get<GroupsService>("groups");
     const sessions = ctx.get<SessionsService>("sessions");
+    const moments = ctx.get<MomentsService>("moments");
+    const MomentCardView = createMomentCard(ctx);
 
     const Messages = () => {
         const { session } = useChatTarget();
@@ -1028,6 +1033,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [billStates, setBillStates] = useState<
             Record<string, "pending" | "settled" | "cancelled">
         >({});
+        const [viewMoment, setViewMoment] = useState<MomentPost | null>(null);
         const [billSettled, setBillSettled] = useState<Record<string, number>>(
             {},
         );
@@ -1971,7 +1977,16 @@ export const uiMessagesSetup = async (ctx: Context) => {
             react,
             jumpToMessage,
             openMerge: (payload) => openMergeStack(payload),
-            openMoment: (author) => ctx.emit("ui:moments:open", { author }),
+            openMoment: (postId) => {
+                void moments
+                    .getById(postId)
+                    .then((post) => setViewMoment(post))
+                    .catch((err) =>
+                        showHint(
+                            err instanceof Error ? err.message : String(err),
+                        ),
+                    );
+            },
             openRedPacket: (redPacketId) => setOpenPacketId(redPacketId),
             openTransfer: (transferId) => setOpenTransferId(transferId),
             openAABill: (billId) => setOpenBillId(billId),
@@ -2677,6 +2692,40 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                     {forwardBusy ? "转发中…" : "转发"}
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                ) : null}
+
+                {viewMoment ? (
+                    <div
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="查看动态"
+                        onKeyDown={(e) => {
+                            if (e.key === "Escape") setViewMoment(null);
+                        }}
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget)
+                                setViewMoment(null);
+                        }}
+                    >
+                        <div className="w-full max-w-md rounded-xl border border-border bg-card p-3 shadow-xl">
+                            <div className="mb-2 flex items-center justify-between">
+                                <p className="text-sm font-semibold">
+                                    朋友圈 {viewMoment.author}
+                                </p>
+                                <button
+                                    type="button"
+                                    aria-label="关闭"
+                                    title="关闭"
+                                    className="rounded-md p-1 text-muted-foreground hover:bg-accent"
+                                    onClick={() => setViewMoment(null)}
+                                >
+                                    <XIcon className="size-4" />
+                                </button>
+                            </div>
+                            <MomentCardView post={viewMoment} />
                         </div>
                     </div>
                 ) : null}

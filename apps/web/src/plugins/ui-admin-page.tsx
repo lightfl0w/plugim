@@ -963,7 +963,7 @@ export const createAdminPage = (ctx: Context): FC => {
         const orgLabelOf = (user: AdminUserRow) =>
             [user.deptId ? deptNameById.get(user.deptId) : null, user.title]
                 .filter(Boolean)
-                .join(" · ");
+                .join(" ");
 
         const submitDeptDialog = async () => {
             if (!deptDialog) return;
@@ -1387,7 +1387,7 @@ export const createAdminPage = (ctx: Context): FC => {
                                                             null,
                                                     ]
                                                         .filter(Boolean)
-                                                        .join(" · ")}
+                                                        .join(" ")}
                                                 </p>
                                             </div>
                                             <Button

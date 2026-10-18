@@ -119,7 +119,7 @@ describe("message label", () => {
     it("maps non-text kinds to bracket labels", () => {
         expect(messageLabel("notice", "周五开会")).toBe("[群公告]");
         expect(messageLabel("system", "own 禁言了 mem")).toBeNull();
-        expect(messageLabel("moment", "{}")).toBe("[动态]");
+        expect(messageLabel("moment", "{}")).toBe("[动态分享]");
         expect(messageLabel("merge", "{}")).toBe("[聊天记录]");
         expect(messageLabel("file", "/files/a", "报告.pdf")).toBe(
             "[文件] 报告.pdf",

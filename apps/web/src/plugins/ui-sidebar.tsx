@@ -74,11 +74,16 @@ const previewText = (
     content: string,
     kind?: string,
     fileName?: string | null,
-) =>
-    content.startsWith('{"merge":1')
+    sender?: string | null,
+) => {
+    const text = content.startsWith('{"merge":1')
         ? "[聊天记录]"
-        : (messageLabel(kind, content, fileName) ??
-          content.replace(/\s+/g, " "));
+        : content.startsWith('{"moment":1')
+          ? "[动态分享]"
+          : (messageLabel(kind, content, fileName) ??
+            content.replace(/\s+/g, " "));
+    return sender && text !== "[消息已撤回]" ? `${sender}: ${text}` : text;
+};
 
 function previewTime(at: number): string {
     const d = new Date(at);
@@ -290,7 +295,12 @@ const SessionsRow = memo(function SessionsRow({
                                 {draftText.replace(/\s+/g, " ")}
                             </>
                         ) : preview ? (
-                            previewText(preview.content, preview.kind)
+                            previewText(
+                                preview.content,
+                                preview.kind,
+                                null,
+                                isGroup ? preview.sender : null,
+                            )
                         ) : (
                             "暂无消息"
                         )}

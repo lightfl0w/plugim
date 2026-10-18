@@ -48,6 +48,7 @@ export interface MomentsService {
         before?: string,
         beforeId?: string,
     ): Promise<MomentSpaceResult>;
+    getById(postId: string): Promise<MomentPost>;
     onUpdate(cb: () => void): () => void;
 }
 
@@ -237,6 +238,8 @@ export const momentsPlugin: Plugin = {
                     ...(before ? { before, beforeId } : {}),
                 })) as MomentSpaceResult;
             },
+            getById: (postId) =>
+                rpc.call("moment.get", { postId }) as Promise<MomentPost>,
         });
 
         const notifyMomentUpdate = (payload: unknown) => {

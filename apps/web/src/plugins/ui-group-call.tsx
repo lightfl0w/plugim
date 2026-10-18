@@ -652,7 +652,7 @@ export const uiGroupCallSetup = async (ctx: Context) => {
                                 {s.groupName || "群通话"}
                             </p>
                             <span className="shrink-0 text-xs text-muted-foreground">
-                                {count} 人 · {fmt(s.seconds)}
+                                {count} 人 {fmt(s.seconds)}
                             </span>
                         </div>
                         <div className="grid max-h-80 grid-cols-2 gap-2 overflow-y-auto p-2">

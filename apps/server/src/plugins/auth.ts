@@ -132,7 +132,7 @@ export const deviceLabelOf = (userAgent: string): string => {
               : /Linux/.test(ua)
                 ? "Linux"
                 : "";
-    return os ? `${browser} · ${os}` : browser;
+    return os ? `${browser} ${os}` : browser;
 };
 
 const toStatus = (raw: unknown): PresenceStatus =>

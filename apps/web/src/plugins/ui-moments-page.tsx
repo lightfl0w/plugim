@@ -974,15 +974,17 @@ export const createMomentsPage = (ctx: Context): FC => {
                             ? post.comments.length
                             : "评论"}
                     </Button>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="gap-1.5"
-                        onClick={() => setSharing(true)}
-                    >
-                        <ShareIcon />
-                        分享
-                    </Button>
+                    {post.visibility === "public" ? (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() => setSharing(true)}
+                        >
+                            <ShareIcon />
+                            分享
+                        </Button>
+                    ) : null}
                 </div>
                 {post.likes.length > 0 ? (
                     <div className="mt-1.5 rounded-lg bg-muted/50 px-2 py-1.5">
@@ -1200,10 +1202,7 @@ export const createMomentsPage = (ctx: Context): FC => {
     return MomentsPage;
 };
 
-export const createSpacePage = (ctx: Context): FC => {
-    const moments = ctx.get<MomentsService>("moments");
-    const auth = ctx.get<AuthService>("auth");
-
+export const createMomentCard = (ctx: Context): FC<{ post: MomentPost }> => {
     const openMedia = (
         key: string,
         index: number,
@@ -1221,7 +1220,7 @@ export const createSpacePage = (ctx: Context): FC => {
         ctx.emit("ui:media:preview", { message });
     };
 
-    const SpaceCard = ({ post }: { post: MomentPost }) => (
+    const MomentCard = ({ post }: { post: MomentPost }) => (
         <section className="rounded-xl border border-border bg-card p-3">
             <header className="flex items-start gap-3">
                 <UserAvatar name={post.author} />
@@ -1321,6 +1320,14 @@ export const createSpacePage = (ctx: Context): FC => {
             ) : null}
         </section>
     );
+
+    return MomentCard;
+};
+
+export const createSpacePage = (ctx: Context): FC => {
+    const moments = ctx.get<MomentsService>("moments");
+    const auth = ctx.get<AuthService>("auth");
+    const SpaceCard = createMomentCard(ctx);
 
     const SpacePage = () => {
         const { username = "" } = useParams();
