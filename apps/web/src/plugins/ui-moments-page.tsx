@@ -6,11 +6,11 @@ import type {
     MomentVisibility,
 } from "@plugim/protocol";
 import {
-    ArrowLeftIcon,
     CheckIcon,
     FilmIcon,
     HeartIcon,
     ImagePlusIcon,
+    LinkIcon,
     MessageCircleIcon,
     RefreshCwIcon,
     ShareIcon,
@@ -18,8 +18,14 @@ import {
     XIcon,
 } from "lucide-react";
 import type { FC } from "react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import {
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
+    useSyncExternalStore,
+} from "react";
+import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
@@ -1098,7 +1104,7 @@ export const createMomentsPage = (ctx: Context): FC => {
         const state = useMomentsState();
         const me = useMe();
         const restoring = useRestoring();
-        const navigate = useNavigate();
+        const [copied, setCopied] = useState(false);
 
         useEffect(() => {
             moments.setViewing(true);
@@ -1107,6 +1113,14 @@ export const createMomentsPage = (ctx: Context): FC => {
 
         if (restoring && !me) return null;
         if (!me) return <Navigate to="/login" replace />;
+
+        const copyLink = async () => {
+            const { key } = await moments.spaceLink();
+            const url = `${window.location.origin}/space/${me}?k=${key}`;
+            await navigator.clipboard.writeText(url);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 2000);
+        };
 
         return (
             <div className="relative flex h-full flex-col">
@@ -1125,8 +1139,17 @@ export const createMomentsPage = (ctx: Context): FC => {
                     ) : null}
                     <Button
                         variant="ghost"
+                        size="sm"
+                        className="ml-auto gap-1.5 text-xs"
+                        title="复制我的空间链接，拿到链接的人无需加好友即可查看我的公开动态"
+                        onClick={() => void copyLink()}
+                    >
+                        <LinkIcon className="size-4" />
+                        {copied ? "已复制" : "空间链接"}
+                    </Button>
+                    <Button
+                        variant="ghost"
                         size="icon-sm"
-                        className="ml-auto"
                         title="刷新"
                         disabled={state.loading}
                         onClick={() => void moments.refresh()}
@@ -1175,4 +1198,237 @@ export const createMomentsPage = (ctx: Context): FC => {
     };
 
     return MomentsPage;
+};
+
+export const createSpacePage = (ctx: Context): FC => {
+    const moments = ctx.get<MomentsService>("moments");
+    const auth = ctx.get<AuthService>("auth");
+
+    const openMedia = (
+        key: string,
+        index: number,
+        kind: "image" | "video",
+        post: MomentPost,
+    ) => {
+        const message: ChatMessage = {
+            id: `${post.id}:${index}`,
+            session: "moment",
+            sender: post.author,
+            content: `/files/${key}`,
+            createdAt: post.createdAt,
+            kind,
+        };
+        ctx.emit("ui:media:preview", { message });
+    };
+
+    const SpaceCard = ({ post }: { post: MomentPost }) => (
+        <section className="rounded-xl border border-border bg-card p-3">
+            <header className="flex items-start gap-3">
+                <UserAvatar name={post.author} />
+                <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{post.author}</p>
+                    <p className="text-xs text-muted-foreground">
+                        {timeLabel(post.createdAt)}
+                    </p>
+                </div>
+            </header>
+            {post.content ? (
+                <p className="mt-2 text-sm break-words whitespace-pre-wrap">
+                    {post.content}
+                </p>
+            ) : null}
+            {post.link ? (
+                <a
+                    href={post.link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 flex items-center gap-3 overflow-hidden rounded-lg border border-border bg-muted/40 p-2 transition-colors hover:bg-accent/60"
+                >
+                    {post.link.image ? (
+                        <img
+                            src={post.link.image}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                            className="size-20 shrink-0 rounded-md bg-muted object-cover"
+                        />
+                    ) : null}
+                    <span className="min-w-0 flex-1">
+                        <span className="line-clamp-2 block text-sm font-medium">
+                            {post.link.title}
+                        </span>
+                        {post.link.description ? (
+                            <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+                                {post.link.description}
+                            </span>
+                        ) : null}
+                        <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                            {post.link.site}
+                        </span>
+                    </span>
+                </a>
+            ) : null}
+            {post.images.length > 0 ? (
+                <div
+                    className={cn(
+                        "mt-2 grid gap-1",
+                        gridClass(post.images.length),
+                    )}
+                >
+                    {post.images.map((key, index) => (
+                        <button
+                            key={key}
+                            type="button"
+                            className={cn(
+                                "overflow-hidden rounded-lg bg-muted",
+                                post.images.length === 1
+                                    ? "max-w-64"
+                                    : "aspect-square",
+                            )}
+                            onClick={() => openMedia(key, index, "image", post)}
+                        >
+                            <img
+                                src={`/files/${key}`}
+                                alt=""
+                                loading="lazy"
+                                className={cn(
+                                    "w-full object-cover",
+                                    post.images.length === 1
+                                        ? "max-h-72"
+                                        : "size-full",
+                                )}
+                            />
+                        </button>
+                    ))}
+                </div>
+            ) : null}
+            {post.video ? (
+                <button
+                    type="button"
+                    title="播放视频"
+                    className="mt-2 block w-full max-w-72 overflow-hidden rounded-lg bg-black"
+                    onClick={() =>
+                        openMedia(post.video as string, 0, "video", post)
+                    }
+                >
+                    <video
+                        src={`/files/${post.video}`}
+                        preload="metadata"
+                        muted
+                        playsInline
+                        className="max-h-72 w-full"
+                    />
+                </button>
+            ) : null}
+        </section>
+    );
+
+    const SpacePage = () => {
+        const { username = "" } = useParams();
+        const [search] = useSearchParams();
+        const key = search.get("k") ?? "";
+        const restoring = useSyncExternalStore(
+            (cb) => auth.onChange(cb),
+            () => auth.restoring(),
+        );
+        const [state, setState] = useState<{
+            posts: MomentPost[];
+            hasMore: boolean;
+            loading: boolean;
+            error: string;
+        }>({ posts: [], hasMore: false, loading: false, error: "" });
+        const stateRef = useRef(state);
+        stateRef.current = state;
+
+        const load = useCallback(
+            async (append: boolean) => {
+                if (!username || !key) return;
+                setState((prev) => ({ ...prev, loading: true, error: "" }));
+                const last = append
+                    ? stateRef.current.posts[stateRef.current.posts.length - 1]
+                    : null;
+                try {
+                    const result = await moments.viewSpace(
+                        username,
+                        key,
+                        last?.createdAt,
+                        last?.id,
+                    );
+                    setState((prev) => {
+                        if (!append)
+                            return {
+                                posts: result.posts,
+                                hasMore: result.hasMore,
+                                loading: false,
+                                error: "",
+                            };
+                        const seen = new Set(prev.posts.map((p) => p.id));
+                        return {
+                            posts: [
+                                ...prev.posts,
+                                ...result.posts.filter((p) => !seen.has(p.id)),
+                            ],
+                            hasMore: result.hasMore,
+                            loading: false,
+                            error: "",
+                        };
+                    });
+                } catch (err) {
+                    setState((prev) => ({
+                        ...prev,
+                        loading: false,
+                        error: err instanceof Error ? err.message : String(err),
+                    }));
+                }
+            },
+            [username, key],
+        );
+
+        useEffect(() => {
+            void load(false);
+        }, [load]);
+
+        return (
+            <div className="relative flex h-full flex-col">
+                <div className="flex h-12 min-h-12 shrink-0 items-center gap-1 border-b border-border px-3">
+                    <p className="text-sm font-semibold">{username} 的空间</p>
+                    <p className="ml-auto text-xs text-muted-foreground">
+                        公开动态
+                    </p>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                    <div className="mx-auto flex w-full max-w-2xl flex-col gap-3">
+                        {restoring
+                            ? null
+                            : state.posts.map((post) => (
+                                  <SpaceCard key={post.id} post={post} />
+                              ))}
+                        {state.posts.length === 0 &&
+                        !state.loading &&
+                        !state.error ? (
+                            <p className="py-10 text-center text-sm text-muted-foreground">
+                                这里还没有公开动态
+                            </p>
+                        ) : null}
+                        {state.hasMore ? (
+                            <Button
+                                variant="outline"
+                                className="w-full"
+                                disabled={state.loading}
+                                onClick={() => void load(true)}
+                            >
+                                {state.loading ? "加载中" : "加载更多"}
+                            </Button>
+                        ) : null}
+                        {state.error ? (
+                            <p className="py-10 text-center text-sm text-red-500">
+                                {state.error}
+                            </p>
+                        ) : null}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    return SpacePage;
 };

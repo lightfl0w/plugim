@@ -595,6 +595,25 @@ export interface MomentTimelineResult {
     hasMore: boolean;
 }
 
+export interface MomentSpaceLinkResult {
+    username: string;
+    key: string;
+}
+
+export interface MomentSpaceParams {
+    username: string;
+    key: string;
+    limit?: number;
+    before?: string;
+    beforeId?: string;
+}
+
+export interface MomentSpaceResult {
+    username: string;
+    posts: MomentPost[];
+    hasMore: boolean;
+}
+
 export interface MomentTargetParams {
     postId: string;
 }

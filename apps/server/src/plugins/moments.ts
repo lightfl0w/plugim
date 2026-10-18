@@ -26,6 +26,7 @@ import type {
     MediaFilesStore,
     MomentRow,
     MomentsStore,
+    SettingsStore,
 } from "../types";
 import type { PushService } from "./push";
 
@@ -68,6 +69,7 @@ export const momentsPlugin: Plugin = {
         "push",
         "link-preview",
         "chat",
+        "settings",
     ],
     async apply(ctx) {
         const gateway = ctx.get<GatewayService>("gateway");
@@ -78,6 +80,7 @@ export const momentsPlugin: Plugin = {
         const push = ctx.get<PushService>("push");
         const linkPreview = ctx.get<LinkPreviewService>("link-preview");
         const chat = ctx.get<ChatService>("chat");
+        const settings = ctx.get<SettingsStore>("settings");
 
         const friendIdsOf = async (userId: string): Promise<string[]> => {
             const edges = await friendships.edgesOf(userId);
@@ -155,26 +158,49 @@ export const momentsPlugin: Plugin = {
             return post;
         };
 
+        const spaceKeySetting = (userId: string) => `space_key:${userId}`;
+
+        const spaceKeyOf = async (userId: string): Promise<string | null> =>
+            await settings.get(spaceKeySetting(userId));
+
+        const ensureSpaceKey = async (userId: string): Promise<string> => {
+            const existing = await spaceKeyOf(userId);
+            if (existing) return existing;
+            const key = crypto.randomUUID();
+            await settings.set(spaceKeySetting(userId), key);
+            return key;
+        };
+
         const loadVisible = async (
             rawId: unknown,
             me: AuthUser,
+            spaceKey?: unknown,
         ): Promise<MomentRow> => {
             const postId = String(rawId ?? "").trim();
             if (!postId) throw new Error("动态不存在或已被删除");
             const row = await store.byId(postId);
             if (!row) throw new Error("动态不存在或已被删除");
-            if (row.authorId === me.id || row.visibility === "public")
-                return row;
-            if (row.visibility === "friends") {
-                const friendIds = await friendIdsOf(me.id);
-                if (friendIds.includes(row.authorId)) return row;
-            } else {
-                const audience = await store.audienceOf(row.id);
-                if (row.visibility === "partial" && audience.includes(me.id))
+            if (row.authorId === me.id) return row;
+            const friendIds = await friendIdsOf(me.id);
+            const isFriend = friendIds.includes(row.authorId);
+            if (row.visibility === "public") {
+                if (isFriend) return row;
+                const key = await spaceKeyOf(row.authorId);
+                if (
+                    typeof spaceKey === "string" &&
+                    spaceKey.length >= 16 &&
+                    key === spaceKey
+                )
                     return row;
-                if (row.visibility === "exclude" && !audience.includes(me.id))
-                    return row;
+                throw new Error("无权查看该动态");
             }
+            if (!isFriend) throw new Error("无权查看该动态");
+            if (row.visibility === "friends") return row;
+            const audience = await store.audienceOf(row.id);
+            if (row.visibility === "partial" && audience.includes(me.id))
+                return row;
+            if (row.visibility === "exclude" && !audience.includes(me.id))
+                return row;
             throw new Error("无权查看该动态");
         };
 
@@ -321,6 +347,49 @@ export const momentsPlugin: Plugin = {
             const posts = await build(rows.slice(0, limit), me.id);
             const result: MomentTimelineResult = { posts, hasMore };
             return result;
+        });
+
+        gateway.rpc("moment.space.link", async (_raw, conn) => {
+            const me = requireUser(conn);
+            const key = await ensureSpaceKey(me.id);
+            return { username: me.username, key };
+        });
+
+        gateway.rpc("moment.space.view", async (raw, conn) => {
+            const me = requireUser(conn);
+            const params = raw as unknown as {
+                username?: unknown;
+                key?: unknown;
+                limit?: unknown;
+                before?: unknown;
+                beforeId?: unknown;
+            };
+            const username =
+                typeof params.username === "string"
+                    ? params.username.trim().toLowerCase()
+                    : "";
+            if (!username) throw new Error("缺少用户名");
+            const owner = await accounts.byUsername(username);
+            if (!owner) throw new Error("用户不存在");
+            const key = typeof params.key === "string" ? params.key : "";
+            const expected = await spaceKeyOf(owner.id);
+            if (!expected || key !== expected)
+                throw new Error("空间链接无效或已失效");
+            const limit = clampLimit(params.limit);
+            const rows = await store.listPublic(owner.id, {
+                before:
+                    typeof params.before === "string"
+                        ? params.before
+                        : undefined,
+                beforeId:
+                    typeof params.beforeId === "string"
+                        ? params.beforeId
+                        : undefined,
+                limit: limit + 1,
+            });
+            const hasMore = rows.length > limit;
+            const posts = await build(rows.slice(0, limit), me.id);
+            return { username: owner.username, posts, hasMore };
         });
 
         gateway.rpc("moment.like", async (raw, conn) => {

@@ -28,10 +28,17 @@ export const uiMomentsSetup = async (ctx: Context) => {
         return { default: module.createMomentsPage(ctx) };
     });
 
+    const SpacePage = lazy(async () => {
+        const module = await import("./ui-moments-page");
+        return { default: module.createSpacePage(ctx) };
+    });
+
     const unregisterRoute = ui.registerRoute("/moments", MomentsPage);
+    const unregisterSpace = ui.registerRoute("/space/:username", SpacePage);
     const unregisterAlerts = ui.register("overlay", MomentsAlerts, 15);
     return () => {
         unregisterRoute();
+        unregisterSpace();
         unregisterAlerts();
     };
 };

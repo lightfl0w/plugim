@@ -2,6 +2,8 @@ import type { Plugin } from "@plugim/core";
 import type {
     LinkPreview,
     MomentPost,
+    MomentSpaceLinkResult,
+    MomentSpaceResult,
     MomentTimelineResult,
     MomentUnreadResult,
     MomentUpdateEvent,
@@ -39,6 +41,13 @@ export interface MomentsService {
     comment(postId: string, content: string): Promise<void>;
     removeComment(postId: string, commentId: string): Promise<void>;
     remove(postId: string): Promise<void>;
+    spaceLink(): Promise<MomentSpaceLinkResult>;
+    viewSpace(
+        username: string,
+        key: string,
+        before?: string,
+        beforeId?: string,
+    ): Promise<MomentSpaceResult>;
     onUpdate(cb: () => void): () => void;
 }
 
@@ -215,6 +224,18 @@ export const momentsPlugin: Plugin = {
             onUpdate(cb) {
                 listeners.add(cb);
                 return () => listeners.delete(cb);
+            },
+            spaceLink: () =>
+                rpc.call(
+                    "moment.space.link",
+                    {},
+                ) as Promise<MomentSpaceLinkResult>,
+            async viewSpace(username, key, before, beforeId) {
+                return (await rpc.call("moment.space.view", {
+                    username,
+                    key,
+                    ...(before ? { before, beforeId } : {}),
+                })) as MomentSpaceResult;
             },
         });
 

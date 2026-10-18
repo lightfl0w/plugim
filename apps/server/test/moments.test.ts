@@ -61,12 +61,29 @@ describe("moment timeline", () => {
         expect(other.posts).toEqual([]);
     });
 
-    it("shows public posts to everyone", async () => {
+    it("hides public posts from strangers unless they hold the space link", async () => {
         const { app, ua } = await friendPair("na", "nb");
         const stranger = await app.register("nc");
         await app.call("moment.publish", { content: "公开动态" }, ua.user);
-        const other = await feedOf(app, stranger.user);
-        expect(other.posts.map((post) => post.content)).toEqual(["公开动态"]);
+        expect((await feedOf(app, stranger.user)).posts).toEqual([]);
+        const link = (await app.call("moment.space.link", {}, ua.user)) as {
+            username: string;
+            key: string;
+        };
+        expect(link.username).toBe("na");
+        const space = (await app.call(
+            "moment.space.view",
+            { username: "na", key: link.key },
+            stranger.user,
+        )) as unknown as MomentTimelineResult;
+        expect(space.posts.map((post) => post.content)).toEqual(["公开动态"]);
+        await expect(
+            app.call(
+                "moment.space.view",
+                { username: "na", key: "wrong-key-wrong-key" },
+                stranger.user,
+            ),
+        ).rejects.toThrow("空间链接无效或已失效");
     });
 
     it("filters the feed by author without leaking friends-only posts", async () => {
@@ -80,8 +97,9 @@ describe("moment timeline", () => {
         await app.call("moment.publish", { content: "公开" }, ua.user);
         const friend = await feedOf(app, ub.user, { author: "oa" });
         expect(friend.posts).toHaveLength(2);
-        const other = await feedOf(app, stranger.user, { author: "oa" });
-        expect(other.posts.map((post) => post.content)).toEqual(["公开"]);
+        expect(
+            (await feedOf(app, stranger.user, { author: "oa" })).posts,
+        ).toEqual([]);
     });
 
     it("sorts newest first and reports hasMore", async () => {

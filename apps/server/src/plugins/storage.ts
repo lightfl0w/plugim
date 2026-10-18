@@ -3818,23 +3818,36 @@ export const storagePlugin: Plugin = {
             const momentVisibleFor = (viewerId: string, friendIds: string[]) =>
                 or(
                     eq(momentsPg.authorId, viewerId),
-                    and(
-                        inArray(momentsPg.visibility, ["public", "exclude"]),
-                        notExists(
-                            db
-                                .select()
-                                .from(momentAudiencePg)
-                                .where(
-                                    and(
-                                        eq(
-                                            momentAudiencePg.postId,
-                                            momentsPg.id,
-                                        ),
-                                        eq(momentAudiencePg.userId, viewerId),
-                                    ),
-                                ),
-                        ),
-                    ),
+                    ...(friendIds.length > 0
+                        ? [
+                              and(
+                                  inArray(momentsPg.authorId, friendIds),
+                                  and(
+                                      inArray(momentsPg.visibility, [
+                                          "public",
+                                          "exclude",
+                                      ]),
+                                      notExists(
+                                          db
+                                              .select()
+                                              .from(momentAudiencePg)
+                                              .where(
+                                                  and(
+                                                      eq(
+                                                          momentAudiencePg.postId,
+                                                          momentsPg.id,
+                                                      ),
+                                                      eq(
+                                                          momentAudiencePg.userId,
+                                                          viewerId,
+                                                      ),
+                                                  ),
+                                              ),
+                                      ),
+                                  ),
+                              ),
+                          ]
+                        : []),
                     and(
                         eq(momentsPg.visibility, "partial"),
                         exists(
@@ -3976,6 +3989,26 @@ export const storagePlugin: Plugin = {
                         .orderBy(desc(momentsPg.createdAt), desc(momentsPg.id))
                         .limit(limit);
                     return withMomentAudience(rows.map(momentToRow));
+                },
+                async listPublic(authorId, { before, beforeId, limit }) {
+                    const at = before ? new Date(before) : null;
+                    const rows = await db
+                        .select()
+                        .from(momentsPg)
+                        .where(
+                            and(
+                                eq(momentsPg.authorId, authorId),
+                                eq(momentsPg.visibility, "public"),
+                                at
+                                    ? beforeId
+                                        ? sql`(${momentsPg.createdAt} < ${at} OR (${momentsPg.createdAt} = ${at} AND ${momentsPg.id} < ${beforeId}))`
+                                        : lt(momentsPg.createdAt, at)
+                                    : undefined,
+                            ),
+                        )
+                        .orderBy(desc(momentsPg.createdAt), desc(momentsPg.id))
+                        .limit(limit);
+                    return rows.map(momentToRow);
                 },
                 async audienceOf(postId) {
                     const rows = await db
@@ -6806,29 +6839,36 @@ export const storagePlugin: Plugin = {
             const momentVisibleFor = (viewerId: string, friendIds: string[]) =>
                 or(
                     eq(momentsSqlite.authorId, viewerId),
-                    and(
-                        inArray(momentsSqlite.visibility, [
-                            "public",
-                            "exclude",
-                        ]),
-                        notExists(
-                            db
-                                .select()
-                                .from(momentAudienceSqlite)
-                                .where(
-                                    and(
-                                        eq(
-                                            momentAudienceSqlite.postId,
-                                            momentsSqlite.id,
-                                        ),
-                                        eq(
-                                            momentAudienceSqlite.userId,
-                                            viewerId,
-                                        ),
-                                    ),
-                                ),
-                        ),
-                    ),
+                    ...(friendIds.length > 0
+                        ? [
+                              and(
+                                  inArray(momentsSqlite.authorId, friendIds),
+                                  and(
+                                      inArray(momentsSqlite.visibility, [
+                                          "public",
+                                          "exclude",
+                                      ]),
+                                      notExists(
+                                          db
+                                              .select()
+                                              .from(momentAudienceSqlite)
+                                              .where(
+                                                  and(
+                                                      eq(
+                                                          momentAudienceSqlite.postId,
+                                                          momentsSqlite.id,
+                                                      ),
+                                                      eq(
+                                                          momentAudienceSqlite.userId,
+                                                          viewerId,
+                                                      ),
+                                                  ),
+                                              ),
+                                      ),
+                                  ),
+                              ),
+                          ]
+                        : []),
                     and(
                         eq(momentsSqlite.visibility, "partial"),
                         exists(
@@ -6982,6 +7022,29 @@ export const storagePlugin: Plugin = {
                         )
                         .limit(limit);
                     return withMomentAudience(rows.map(momentToRow));
+                },
+                async listPublic(authorId, { before, beforeId, limit }) {
+                    const at = before ? new Date(before).getTime() : null;
+                    const rows = await db
+                        .select()
+                        .from(momentsSqlite)
+                        .where(
+                            and(
+                                eq(momentsSqlite.authorId, authorId),
+                                eq(momentsSqlite.visibility, "public"),
+                                at === null
+                                    ? undefined
+                                    : beforeId
+                                      ? sql`(${momentsSqlite.createdAt} < ${at} OR (${momentsSqlite.createdAt} = ${at} AND ${momentsSqlite.id} < ${beforeId}))`
+                                      : lt(momentsSqlite.createdAt, at),
+                            ),
+                        )
+                        .orderBy(
+                            desc(momentsSqlite.createdAt),
+                            desc(momentsSqlite.id),
+                        )
+                        .limit(limit);
+                    return rows.map(momentToRow);
                 },
                 async audienceOf(postId) {
                     const rows = await db

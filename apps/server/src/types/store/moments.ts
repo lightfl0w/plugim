@@ -28,6 +28,11 @@ export interface MomentsStore {
         limit: number;
     }): Promise<MomentRow[]>;
 
+    listPublic(
+        authorId: string,
+        params: { before?: string; beforeId?: string; limit: number },
+    ): Promise<MomentRow[]>;
+
     audienceOf(postId: string): Promise<string[]>;
     unread(userId: string, friendIds: string[]): Promise<MomentUnreadRow>;
     markSeen(userId: string, at: string): Promise<void>;
