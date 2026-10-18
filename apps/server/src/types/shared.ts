@@ -2,7 +2,7 @@ import type {
     FileMeta,
     MessageKind,
     MessageQuote,
-    MessageReactions,
+    RedPacketInfo,
     User,
 } from "@plugim/protocol";
 
@@ -37,6 +37,7 @@ export interface ChatSendPayload {
     mentions: string[] | null;
     kind: MessageKind;
     file: FileMeta | null;
+    redPacket?: RedPacketInfo | null;
 }
 
 export interface UserWithHash extends User {

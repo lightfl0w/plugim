@@ -5,6 +5,7 @@ import type {
     MessageKind,
     MessageQuote,
     MessageReactions,
+    RedPacketInfo,
 } from "@plugim/protocol";
 import type { MessageTrendPoint } from "../shared";
 
@@ -18,6 +19,7 @@ export interface MessageStore {
         kind?: MessageKind;
         file?: FileMeta | null;
         link?: LinkPreview | null;
+        redPacket?: RedPacketInfo | null;
     }): Promise<ChatMessage>;
 
     list(

@@ -23,6 +23,7 @@ import { metricsPlugin } from "./plugins/metrics";
 import { momentsPlugin } from "./plugins/moments";
 import { orgPlugin } from "./plugins/org";
 import { pushPlugin } from "./plugins/push";
+import { redpacketPlugin } from "./plugins/redpacket";
 import { screenPlugin } from "./plugins/screen";
 import { stickersPlugin } from "./plugins/stickers";
 import { storagePlugin } from "./plugins/storage";
@@ -98,6 +99,7 @@ await autoDiscoverPlugins(ctx, [
     momentsPlugin,
     orgPlugin,
     pushPlugin,
+    redpacketPlugin,
     screenPlugin,
     storagePlugin,
     stickersPlugin,

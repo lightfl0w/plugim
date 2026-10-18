@@ -8,6 +8,7 @@ import type {
 } from "@plugim/protocol";
 import { MENTION_ALL, MENTION_ALL_LABEL } from "@plugim/protocol";
 import {
+    GiftIcon,
     ImageIcon,
     MicIcon,
     PaperclipIcon,
@@ -22,10 +23,12 @@ import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
 import type { ConnStatus, RpcService } from "./connection";
+import type { RedPacketService } from "./redpacket";
 import type { SenderService } from "./sender";
 import type { StickersService } from "./stickers";
 import { draftStore } from "./ui-drafts";
-import { showAlert, usePopupClose } from "./ui-shared";
+import { RedPacketCreateDialog } from "./ui-redpacket";
+import { showAlert, showHint, usePopupClose } from "./ui-shared";
 import type { UiService } from "./ui-types";
 
 const EMOJIS = [
@@ -63,6 +66,7 @@ export const uiComposerSetup = async (ctx: Context) => {
     const sender = ctx.get<SenderService>("sender");
     const stickers = ctx.get<StickersService>("stickers");
     const auth = ctx.get<AuthService>("auth");
+    const redpackets = ctx.get<RedPacketService>("redpacket");
     let currentSession = "";
     let uploadLimitMb = 20;
     void rpc
@@ -87,6 +91,8 @@ export const uiComposerSetup = async (ctx: Context) => {
     const Composer = () => {
         const [draft, setDraft] = useState("");
         const [quote, setQuote] = useState<MessageQuote | null>(null);
+        const [packetOpen, setPacketOpen] = useState(false);
+        const [packetBusy, setPacketBusy] = useState(false);
         const [status, setStatus] = useState<ConnStatus>(rpc.status());
         const [sending, setSending] = useState(false);
         const [emojiOpen, setEmojiOpen] = useState(false);
@@ -504,345 +510,377 @@ export const uiComposerSetup = async (ctx: Context) => {
         );
 
         return (
-            <div
-                className={cn(
-                    "relative flex w-full flex-col",
-                    dragOver && "rounded-lg ring-2 ring-primary",
-                )}
-                onDragEnter={(e) => {
-                    if (!hasFiles(e.dataTransfer.types)) return;
-                    e.preventDefault();
-                    dragDepth.current += 1;
-                    setDragOver(true);
-                }}
-                onDragOver={(e) => {
-                    if (hasFiles(e.dataTransfer.types)) e.preventDefault();
-                }}
-                onDragLeave={() => {
-                    dragDepth.current = Math.max(0, dragDepth.current - 1);
-                    if (dragDepth.current === 0) setDragOver(false);
-                }}
-                onDrop={(e) => {
-                    const files = [...e.dataTransfer.files];
-                    if (files.length === 0) return;
-                    e.preventDefault();
-                    dragDepth.current = 0;
-                    setDragOver(false);
-                    void deliverFiles(files);
-                }}
-            >
-                {emojiOpen ? (
-                    <div
-                        ref={emojiPanelRef}
-                        className="absolute bottom-full left-2 z-20 mb-1 w-72 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
-                    >
-                        <div className="flex items-center gap-1 border-b border-border px-2 pt-1">
-                            {(
-                                [
-                                    ["emoji", "表情"],
-                                    ["mine", "我的表情"],
-                                ] as const
-                            ).map(([key, label]) => (
-                                <button
-                                    key={key}
-                                    type="button"
-                                    className={cn(
-                                        "rounded-t-md px-2.5 py-1.5 text-xs",
-                                        stickerTab === key
-                                            ? "border-b-2 border-primary font-medium text-foreground"
-                                            : "text-muted-foreground hover:text-foreground",
-                                    )}
-                                    onClick={() => setStickerTab(key)}
-                                >
-                                    {label}
-                                </button>
-                            ))}
-                        </div>
-                        {stickerTab === "emoji" ? (
-                            <div className="grid max-h-56 grid-cols-8 gap-0.5 overflow-y-auto p-2">
-                                {EMOJIS.map((emoji) => (
+            <>
+                <div
+                    className={cn(
+                        "relative flex w-full flex-col",
+                        dragOver && "rounded-lg ring-2 ring-primary",
+                    )}
+                    onDragEnter={(e) => {
+                        if (!hasFiles(e.dataTransfer.types)) return;
+                        e.preventDefault();
+                        dragDepth.current += 1;
+                        setDragOver(true);
+                    }}
+                    onDragOver={(e) => {
+                        if (hasFiles(e.dataTransfer.types)) e.preventDefault();
+                    }}
+                    onDragLeave={() => {
+                        dragDepth.current = Math.max(0, dragDepth.current - 1);
+                        if (dragDepth.current === 0) setDragOver(false);
+                    }}
+                    onDrop={(e) => {
+                        const files = [...e.dataTransfer.files];
+                        if (files.length === 0) return;
+                        e.preventDefault();
+                        dragDepth.current = 0;
+                        setDragOver(false);
+                        void deliverFiles(files);
+                    }}
+                >
+                    {emojiOpen ? (
+                        <div
+                            ref={emojiPanelRef}
+                            className="absolute bottom-full left-2 z-20 mb-1 w-72 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+                        >
+                            <div className="flex items-center gap-1 border-b border-border px-2 pt-1">
+                                {(
+                                    [
+                                        ["emoji", "表情"],
+                                        ["mine", "我的表情"],
+                                    ] as const
+                                ).map(([key, label]) => (
                                     <button
-                                        key={emoji}
+                                        key={key}
                                         type="button"
-                                        className="rounded-md p-1 text-lg leading-none hover:bg-accent"
-                                        onClick={() => {
-                                            setDraft((prev) => prev + emoji);
-                                            textareaRef.current?.focus();
-                                            requestAnimationFrame(autoGrow);
-                                        }}
+                                        className={cn(
+                                            "rounded-t-md px-2.5 py-1.5 text-xs",
+                                            stickerTab === key
+                                                ? "border-b-2 border-primary font-medium text-foreground"
+                                                : "text-muted-foreground hover:text-foreground",
+                                        )}
+                                        onClick={() => setStickerTab(key)}
                                     >
-                                        {emoji}
+                                        {label}
                                     </button>
                                 ))}
                             </div>
-                        ) : (
-                            <div className="max-h-56 overflow-y-auto p-2">
-                                <div className="grid grid-cols-4 gap-1">
-                                    {myStickers.map((item) => (
-                                        <div
-                                            key={item.url}
-                                            className="group relative"
+                            {stickerTab === "emoji" ? (
+                                <div className="grid max-h-56 grid-cols-8 gap-0.5 overflow-y-auto p-2">
+                                    {EMOJIS.map((emoji) => (
+                                        <button
+                                            key={emoji}
+                                            type="button"
+                                            className="rounded-md p-1 text-lg leading-none hover:bg-accent"
+                                            onClick={() => {
+                                                setDraft(
+                                                    (prev) => prev + emoji,
+                                                );
+                                                textareaRef.current?.focus();
+                                                requestAnimationFrame(autoGrow);
+                                            }}
                                         >
-                                            <button
-                                                type="button"
-                                                title={item.name}
-                                                className="flex h-16 w-full items-center justify-center rounded-md p-1 hover:bg-accent"
-                                                onClick={() =>
-                                                    void sendSticker(item)
-                                                }
-                                            >
-                                                <img
-                                                    src={item.url}
-                                                    alt={item.name}
-                                                    className="max-h-14 max-w-full object-contain"
-                                                />
-                                            </button>
-                                            <button
-                                                type="button"
-                                                title="移除表情"
-                                                className="absolute -top-1 -right-1 hidden size-4 items-center justify-center rounded-full bg-red-500 text-white group-hover:flex"
-                                                onClick={() =>
-                                                    void stickers
-                                                        .remove(item.url)
-                                                        .then(setMyStickers)
-                                                        .catch(() => undefined)
-                                                }
-                                            >
-                                                <XIcon className="size-3" />
-                                            </button>
-                                        </div>
+                                            {emoji}
+                                        </button>
                                     ))}
-                                    <button
-                                        type="button"
-                                        title="上传图片作为表情"
-                                        className="flex h-16 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground hover:bg-accent hover:text-foreground"
-                                        onClick={() =>
-                                            stickerFileRef.current?.click()
-                                        }
-                                    >
-                                        <PlusIcon className="size-5" />
-                                    </button>
                                 </div>
-                                {myStickers.length === 0 ? (
-                                    <p className="pt-2 text-center text-xs text-muted-foreground">
-                                        点击 + 上传图片，收藏为我的表情
-                                    </p>
-                                ) : null}
-                            </div>
-                        )}
-                    </div>
-                ) : null}
+                            ) : (
+                                <div className="max-h-56 overflow-y-auto p-2">
+                                    <div className="grid grid-cols-4 gap-1">
+                                        {myStickers.map((item) => (
+                                            <div
+                                                key={item.url}
+                                                className="group relative"
+                                            >
+                                                <button
+                                                    type="button"
+                                                    title={item.name}
+                                                    className="flex h-16 w-full items-center justify-center rounded-md p-1 hover:bg-accent"
+                                                    onClick={() =>
+                                                        void sendSticker(item)
+                                                    }
+                                                >
+                                                    <img
+                                                        src={item.url}
+                                                        alt={item.name}
+                                                        className="max-h-14 max-w-full object-contain"
+                                                    />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="移除表情"
+                                                    className="absolute -top-1 -right-1 hidden size-4 items-center justify-center rounded-full bg-red-500 text-white group-hover:flex"
+                                                    onClick={() =>
+                                                        void stickers
+                                                            .remove(item.url)
+                                                            .then(setMyStickers)
+                                                            .catch(
+                                                                () => undefined,
+                                                            )
+                                                    }
+                                                >
+                                                    <XIcon className="size-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        <button
+                                            type="button"
+                                            title="上传图片作为表情"
+                                            className="flex h-16 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+                                            onClick={() =>
+                                                stickerFileRef.current?.click()
+                                            }
+                                        >
+                                            <PlusIcon className="size-5" />
+                                        </button>
+                                    </div>
+                                    {myStickers.length === 0 ? (
+                                        <p className="pt-2 text-center text-xs text-muted-foreground">
+                                            点击 + 上传图片，收藏为我的表情
+                                        </p>
+                                    ) : null}
+                                </div>
+                            )}
+                        </div>
+                    ) : null}
 
-                {candidates.length > 0 ? (
-                    <div className="absolute bottom-full left-10 z-20 mb-1 w-48 overflow-hidden rounded-xl border border-border bg-popover py-1 shadow-lg">
-                        <p className="px-3 py-1 text-xs text-muted-foreground">
-                            群成员
-                        </p>
-                        {candidates.map((name, index) => (
-                            <button
-                                key={name}
-                                type="button"
-                                className={cn(
-                                    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm",
-                                    index === mentionIndex
-                                        ? "bg-accent"
-                                        : "hover:bg-accent/60",
-                                )}
-                                onMouseEnter={() => setMentionIndex(index)}
-                                onClick={() => insertMention(name)}
-                            >
-                                <span className="truncate">
-                                    {name === MENTION_ALL_LABEL
-                                        ? `@${MENTION_ALL_LABEL}`
-                                        : name}
-                                </span>
-                                {name === MENTION_ALL_LABEL ? (
-                                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                                        提醒所有人
+                    {candidates.length > 0 ? (
+                        <div className="absolute bottom-full left-10 z-20 mb-1 w-48 overflow-hidden rounded-xl border border-border bg-popover py-1 shadow-lg">
+                            <p className="px-3 py-1 text-xs text-muted-foreground">
+                                群成员
+                            </p>
+                            {candidates.map((name, index) => (
+                                <button
+                                    key={name}
+                                    type="button"
+                                    className={cn(
+                                        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm",
+                                        index === mentionIndex
+                                            ? "bg-accent"
+                                            : "hover:bg-accent/60",
+                                    )}
+                                    onMouseEnter={() => setMentionIndex(index)}
+                                    onClick={() => insertMention(name)}
+                                >
+                                    <span className="truncate">
+                                        {name === MENTION_ALL_LABEL
+                                            ? `@${MENTION_ALL_LABEL}`
+                                            : name}
                                     </span>
-                                ) : null}
+                                    {name === MENTION_ALL_LABEL ? (
+                                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                                            提醒所有人
+                                        </span>
+                                    ) : null}
+                                </button>
+                            ))}
+                        </div>
+                    ) : null}
+
+                    {quote ? (
+                        <div className="mx-1 mb-1 flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-xs text-muted-foreground">
+                            <span className="min-w-0 flex-1 truncate">
+                                回复 {quote.sender}：{quote.content}
+                            </span>
+                            <button
+                                type="button"
+                                title="取消引用"
+                                onClick={() => setQuote(null)}
+                                className="shrink-0 rounded p-0.5 hover:bg-black/10 dark:hover:bg-white/10"
+                            >
+                                <XIcon className="size-3.5" />
                             </button>
-                        ))}
-                    </div>
-                ) : null}
+                        </div>
+                    ) : null}
 
-                {quote ? (
-                    <div className="mx-1 mb-1 flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-xs text-muted-foreground">
-                        <span className="min-w-0 flex-1 truncate">
-                            回复 {quote.sender}：{quote.content}
+                    <div className="flex items-center gap-0.5 px-1">
+                        <span ref={emojiButtonRef} className="inline-flex">
+                            {toolButton(
+                                "表情",
+                                <SmileIcon className="size-5" />,
+                                () => setEmojiOpen((v) => !v),
+                                emojiOpen,
+                                muted,
+                            )}
                         </span>
-                        <button
-                            type="button"
-                            title="取消引用"
-                            onClick={() => setQuote(null)}
-                            className="shrink-0 rounded p-0.5 hover:bg-black/10 dark:hover:bg-white/10"
-                        >
-                            <XIcon className="size-3.5" />
-                        </button>
-                    </div>
-                ) : null}
-
-                <div className="flex items-center gap-0.5 px-1">
-                    <span ref={emojiButtonRef} className="inline-flex">
                         {toolButton(
-                            "表情",
-                            <SmileIcon className="size-5" />,
-                            () => setEmojiOpen((v) => !v),
-                            emojiOpen,
+                            "图片",
+                            <ImageIcon className="size-5" />,
+                            () => {
+                                if (fileRef.current)
+                                    fileRef.current.accept = "image/*";
+                                fileRef.current?.click();
+                            },
+                            false,
                             muted,
                         )}
-                    </span>
-                    {toolButton(
-                        "图片",
-                        <ImageIcon className="size-5" />,
-                        () => {
-                            if (fileRef.current)
-                                fileRef.current.accept = "image/*";
-                            fileRef.current?.click();
-                        },
-                        false,
-                        muted,
-                    )}
-                    {toolButton(
-                        "文件",
-                        <PaperclipIcon className="size-5" />,
-                        () => {
-                            if (fileRef.current)
-                                fileRef.current.accept =
-                                    "audio/*,video/*,.pdf,.zip,.rar,.7z,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
-                            fileRef.current?.click();
-                        },
-                        false,
-                        muted,
-                    )}
-                    {toolButton(
-                        recording ? "停止录音并发送" : "语音消息",
-                        recording ? (
-                            <SquareIcon className="size-5" />
-                        ) : (
-                            <MicIcon className="size-5" />
-                        ),
-                        () => void toggleRecording(),
-                        recording,
-                        muted && !recording,
-                    )}
-                    {recording ? (
-                        <span className="ml-1 animate-pulse text-xs text-red-500">
-                            录音中，点击停止发送
-                        </span>
-                    ) : null}
-                    <input
-                        ref={fileRef}
-                        type="file"
-                        className="hidden"
-                        onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            e.target.value = "";
-                            if (file) void sendFile(file);
-                        }}
-                    />
-                    <input
-                        ref={stickerFileRef}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            e.target.value = "";
-                            if (file) void addSticker(file);
-                        }}
-                    />
-                </div>
+                        {toolButton(
+                            "文件",
+                            <PaperclipIcon className="size-5" />,
+                            () => {
+                                if (fileRef.current)
+                                    fileRef.current.accept =
+                                        "audio/*,video/*,.pdf,.zip,.rar,.7z,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
+                                fileRef.current?.click();
+                            },
+                            false,
+                            muted,
+                        )}
+                        {toolButton(
+                            "红包",
+                            <GiftIcon className="size-5" />,
+                            () => setPacketOpen(true),
+                            false,
+                            muted ||
+                                (!currentSession.startsWith("p2p:") &&
+                                    !currentSession.startsWith("g:")),
+                        )}
+                        {toolButton(
+                            recording ? "停止录音并发送" : "语音消息",
+                            recording ? (
+                                <SquareIcon className="size-5" />
+                            ) : (
+                                <MicIcon className="size-5" />
+                            ),
+                            () => void toggleRecording(),
+                            recording,
+                            muted && !recording,
+                        )}
+                        {recording ? (
+                            <span className="ml-1 animate-pulse text-xs text-red-500">
+                                录音中，点击停止发送
+                            </span>
+                        ) : null}
+                        <input
+                            ref={fileRef}
+                            type="file"
+                            className="hidden"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                e.target.value = "";
+                                if (file) void sendFile(file);
+                            }}
+                        />
+                        <input
+                            ref={stickerFileRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                e.target.value = "";
+                                if (file) void addSticker(file);
+                            }}
+                        />
+                    </div>
 
-                <textarea
-                    ref={textareaRef}
-                    value={draft}
-                    placeholder={
-                        muteReason ??
-                        (status === "open"
-                            ? "输入消息，Enter 发送，Shift+Enter 换行"
-                            : "等待连接...")
-                    }
-                    disabled={status !== "open" || muted}
-                    rows={2}
-                    className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground"
-                    onChange={(e) => {
-                        writeDraft(e.target.value);
-                        autoGrow();
-                        notifyTyping(e.target.value);
-                    }}
-                    onPaste={(e) => {
-                        const files = [...e.clipboardData.files];
-                        if (files.length === 0) return;
-                        e.preventDefault();
-                        void deliverFiles(files);
-                    }}
-                    onKeyDown={(e) => {
-                        if (candidates.length > 0) {
-                            if (e.key === "ArrowDown") {
-                                e.preventDefault();
-                                setMentionIndex(
-                                    (i) => (i + 1) % candidates.length,
-                                );
-                                return;
-                            }
-                            if (e.key === "ArrowUp") {
-                                e.preventDefault();
-                                setMentionIndex(
-                                    (i) =>
-                                        (i - 1 + candidates.length) %
-                                        candidates.length,
-                                );
-                                return;
-                            }
-                            if (e.key === "Enter" || e.key === "Tab") {
-                                e.preventDefault();
-                                insertMention(candidates[mentionIndex]);
-                                return;
-                            }
-                            if (e.key === "Escape") {
-                                e.preventDefault();
-                                writeDraft(`${draft} `);
-                                return;
-                            }
+                    <textarea
+                        ref={textareaRef}
+                        value={draft}
+                        placeholder={
+                            muteReason ??
+                            (status === "open"
+                                ? "输入消息，Enter 发送，Shift+Enter 换行"
+                                : "等待连接...")
                         }
-                        if (e.key === "Enter" && !e.shiftKey) {
+                        disabled={status !== "open" || muted}
+                        rows={2}
+                        className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground"
+                        onChange={(e) => {
+                            writeDraft(e.target.value);
+                            autoGrow();
+                            notifyTyping(e.target.value);
+                        }}
+                        onPaste={(e) => {
+                            const files = [...e.clipboardData.files];
+                            if (files.length === 0) return;
                             e.preventDefault();
-                            void submit();
+                            void deliverFiles(files);
+                        }}
+                        onKeyDown={(e) => {
+                            if (candidates.length > 0) {
+                                if (e.key === "ArrowDown") {
+                                    e.preventDefault();
+                                    setMentionIndex(
+                                        (i) => (i + 1) % candidates.length,
+                                    );
+                                    return;
+                                }
+                                if (e.key === "ArrowUp") {
+                                    e.preventDefault();
+                                    setMentionIndex(
+                                        (i) =>
+                                            (i - 1 + candidates.length) %
+                                            candidates.length,
+                                    );
+                                    return;
+                                }
+                                if (e.key === "Enter" || e.key === "Tab") {
+                                    e.preventDefault();
+                                    insertMention(candidates[mentionIndex]);
+                                    return;
+                                }
+                                if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    writeDraft(`${draft} `);
+                                    return;
+                                }
+                            }
+                            if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                void submit();
+                            }
+                        }}
+                    />
+
+                    <div className="flex items-center justify-end gap-2">
+                        {typingNames.length > 0 ? (
+                            <span className="mr-auto truncate text-xs text-muted-foreground">
+                                {isGroup
+                                    ? `${typingNames.slice(0, 2).join("、")}${typingNames.length > 2 ? " 等" : ""} 正在输入...`
+                                    : "对方正在输入..."}
+                            </span>
+                        ) : muteReason ? (
+                            <span className="mr-auto text-xs text-red-500">
+                                {muteReason}
+                            </span>
+                        ) : null}
+                        <span className="text-xs text-muted-foreground/70">
+                            {muteReason ? "" : "Enter 发送 / Shift+Enter 换行"}
+                        </span>
+                        <Button
+                            size="sm"
+                            className="rounded-md px-4"
+                            disabled={
+                                status !== "open" ||
+                                sending ||
+                                muted ||
+                                !draft.trim()
+                            }
+                            onClick={() => void submit()}
+                        >
+                            {sending ? "发送中" : "发送"}
+                        </Button>
+                    </div>
+                </div>
+                <RedPacketCreateDialog
+                    open={packetOpen}
+                    sessionId={currentSession}
+                    busy={packetBusy}
+                    onClose={() => setPacketOpen(false)}
+                    onSubmit={async (params) => {
+                        setPacketBusy(true);
+                        try {
+                            await redpackets.create(params);
+                            setPacketOpen(false);
+                            setDraft("");
+                            showHint("红包已发出");
+                        } finally {
+                            setPacketBusy(false);
                         }
                     }}
                 />
-
-                <div className="flex items-center justify-end gap-2">
-                    {typingNames.length > 0 ? (
-                        <span className="mr-auto truncate text-xs text-muted-foreground">
-                            {isGroup
-                                ? `${typingNames.slice(0, 2).join("、")}${typingNames.length > 2 ? " 等" : ""} 正在输入...`
-                                : "对方正在输入..."}
-                        </span>
-                    ) : muteReason ? (
-                        <span className="mr-auto text-xs text-red-500">
-                            {muteReason}
-                        </span>
-                    ) : null}
-                    <span className="text-xs text-muted-foreground/70">
-                        {muteReason ? "" : "Enter 发送 / Shift+Enter 换行"}
-                    </span>
-                    <Button
-                        size="sm"
-                        className="rounded-md px-4"
-                        disabled={
-                            status !== "open" ||
-                            sending ||
-                            muted ||
-                            !draft.trim()
-                        }
-                        onClick={() => void submit()}
-                    >
-                        {sending ? "发送中" : "发送"}
-                    </Button>
-                </div>
-            </div>
+            </>
         );
     };
 

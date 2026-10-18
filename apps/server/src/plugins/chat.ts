@@ -46,6 +46,7 @@ const KINDS: MessageKind[] = [
     "video",
     "file",
     "merge",
+    "redpacket",
 ];
 
 const LINK_BUDGET_MS = 2000;
@@ -116,6 +117,7 @@ export const chatPlugin: Plugin = {
             if (payload.kind === "video") return "[视频]";
             if (payload.kind === "merge") return "[合并转发]";
             if (payload.kind === "moment") return "[动态分享]";
+            if (payload.kind === "redpacket") return "[红包]";
             if (payload.kind === "notice") return "[群公告]";
             if (payload.kind === "file")
                 return payload.file?.name
@@ -240,7 +242,8 @@ export const chatPlugin: Plugin = {
         gateway.rpc("message.send", async (raw, conn) => {
             const user = requireUser(conn);
             const params = raw as unknown as SendMessageParams;
-            if (!params.content?.trim()) throw new Error("消息内容不能为空");
+            if (!params.content?.trim() && params.kind !== "redpacket")
+                throw new Error("消息内容不能为空");
             const rawSession = params.session || config.defaultSession;
             const quote =
                 params.quote &&

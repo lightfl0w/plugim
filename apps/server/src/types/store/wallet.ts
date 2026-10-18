@@ -1,3 +1,30 @@
+export interface RedPacketRow {
+    id: string;
+    sessionId: string;
+    senderId: string;
+    type: "normal" | "lucky";
+    totalAmount: number;
+    totalCount: number;
+    remaining: number;
+    remainCount: number;
+    status: "active" | "exhausted" | "expired";
+    message?: string | null;
+    createdAt: string;
+    expiredAt?: string | null;
+}
+
+export interface RedPacketClaimRow {
+    id: string;
+    redPacketId: string;
+    claimerId: string;
+    amount: number;
+    claimedAt: string;
+}
+
+export type RedPacketClaimResult =
+    | { ok: true; packet: RedPacketRow }
+    | { ok: false; reason: "duplicate" | "empty" | "missing" };
+
 export interface RedPacketStore {
     create(input: {
         id: string;
@@ -11,34 +38,23 @@ export interface RedPacketStore {
         expiredAt?: string;
     }): Promise<void>;
 
-    getById(id: string): Promise<null | {
-        id: string;
-        sessionId: string;
-        senderId: string;
-        type: "normal" | "lucky";
-        totalAmount: number;
-        totalCount: number;
-        remaining: number;
-        remainCount: number;
-        status: "active" | "exhausted" | "expired";
-        message?: string;
-        createdAt: string;
-        expiredAt?: string;
-    }>;
+    getById(id: string): Promise<RedPacketRow | null>;
 
-    consumeById(id: string, amount: number): Promise<boolean>;
+    claimedBy(redPacketId: string, claimerId: string): Promise<number | null>;
 
-    markAsExhausted(id: string): Promise<void>;
-    expireIfNeeded(): Promise<string[]>;
-    listRecords(redPacketId: string): Promise<
-        {
-            id: string;
-            claimerId: string;
-            amount: number;
-            claimedAt: string;
-        }[]
-    >;
-    countActive(sessionId: string, senderId: string): Promise<number>;
+    listRecords(redPacketId: string): Promise<RedPacketClaimRow[]>;
+
+    listSession(sessionId: string): Promise<RedPacketRow[]>;
+
+    claim(input: {
+        redPacketId: string;
+        claimerId: string;
+        recordId: string;
+        amount: number;
+        claimedAt: string;
+    }): Promise<RedPacketClaimResult>;
+
+    expireIfNeeded(now: string): Promise<string[]>;
 }
 
 export interface AABillStore {

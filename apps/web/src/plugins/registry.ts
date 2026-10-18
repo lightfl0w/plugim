@@ -6,6 +6,7 @@ import { friendsPlugin } from "./friends";
 import { groupsPlugin } from "./groups";
 import { momentsPlugin } from "./moments";
 import { presencePlugin } from "./presence";
+import { redpacketPlugin } from "./redpacket";
 import { senderPlugin } from "./sender";
 import { settingsPlugin } from "./settings";
 import { stickersPlugin } from "./stickers";
@@ -22,6 +23,7 @@ export const globalPlugins: Plugin[] = [
     presencePlugin,
     cachePlugin,
     stickersPlugin,
+    redpacketPlugin,
     uiViewsPlugin,
 ];
 

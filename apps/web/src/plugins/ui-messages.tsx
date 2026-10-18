@@ -54,7 +54,9 @@ import type { CacheService } from "./cache";
 import type { ConnStatus, RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
+import type { RedPacketService } from "./redpacket";
 import type { PendingEvent, PendingMessage, SenderService } from "./sender";
+import { RedPacketCard, RedPacketOpenDialog } from "./ui-redpacket";
 import {
     formatBytes,
     longPressMenu,
@@ -335,6 +337,8 @@ interface MessageActions {
     jumpToMessage: (id: string) => void;
     openMerge: (payload: MergePayload) => void;
     openMoment: (author: string) => void;
+    openRedPacket: (redPacketId: string) => void;
+    claimedAmounts: Record<string, number>;
 }
 
 interface MessageGroupRowProps {
@@ -642,6 +646,23 @@ const MessageGroupRow = memo(
                                                     {message.content}
                                                 </p>
                                             )
+                                        ) : media === "redpacket" ? (
+                                            message.redPacket ? (
+                                                <RedPacketCard
+                                                    message={message}
+                                                    mine={mine}
+                                                    claimedAmount={
+                                                        actions.claimedAmounts[
+                                                            message.redPacket.id
+                                                        ]
+                                                    }
+                                                    onOpen={
+                                                        actions.openRedPacket
+                                                    }
+                                                />
+                                            ) : (
+                                                <p>{message.content}</p>
+                                            )
                                         ) : media === "file" ? (
                                             <button
                                                 type="button"
@@ -890,6 +911,11 @@ export const uiMessagesSetup = async (ctx: Context) => {
                 { id: mergeSeq.current, payload },
             ]);
         };
+        const redpackets = ctx.get<RedPacketService>("redpacket");
+        const [openPacketId, setOpenPacketId] = useState<string | null>(null);
+        const [claimedAmounts, setClaimedAmounts] = useState<
+            Record<string, number>
+        >({});
         const [essenceIds, setEssenceIds] = useState<Set<string>>(new Set());
         const [groupTitles, setGroupTitles] = useState<Record<string, string>>(
             {},
@@ -1685,24 +1711,25 @@ export const uiMessagesSetup = async (ctx: Context) => {
             jumpToMessage,
             openMerge: (payload) => openMergeStack(payload),
             openMoment: (author) => ctx.emit("ui:moments:open", { author }),
+            openRedPacket: (redPacketId) => setOpenPacketId(redPacketId),
+            claimedAmounts,
         };
-        const actions = useMemo<MessageActions>(
-            () => ({
-                openMenu: (request) => actionsRef.current?.openMenu(request),
-                avatarTap: (username, event) =>
-                    actionsRef.current?.avatarTap(username, event),
-                poke: (username) => actionsRef.current?.poke(username),
-                reEdit: (message) => actionsRef.current?.reEdit(message),
-                toggleSelect: (message) =>
-                    actionsRef.current?.toggleSelect(message),
-                openMedia: (message) => actionsRef.current?.openMedia(message),
-                react: (id, emoji) => actionsRef.current?.react(id, emoji),
-                jumpToMessage: (id) => actionsRef.current?.jumpToMessage(id),
-                openMerge: (payload) => actionsRef.current?.openMerge(payload),
-                openMoment: (author) => actionsRef.current?.openMoment(author),
-            }),
-            [],
-        );
+        const actions: MessageActions = {
+            openMenu: (request) => actionsRef.current?.openMenu(request),
+            avatarTap: (username, event) =>
+                actionsRef.current?.avatarTap(username, event),
+            poke: (username) => actionsRef.current?.poke(username),
+            reEdit: (message) => actionsRef.current?.reEdit(message),
+            toggleSelect: (message) =>
+                actionsRef.current?.toggleSelect(message),
+            openMedia: (message) => actionsRef.current?.openMedia(message),
+            react: (id, emoji) => actionsRef.current?.react(id, emoji),
+            jumpToMessage: (id) => actionsRef.current?.jumpToMessage(id),
+            openMerge: (payload) => actionsRef.current?.openMerge(payload),
+            openMoment: (author) => actionsRef.current?.openMoment(author),
+            openRedPacket: (id) => actionsRef.current?.openRedPacket(id),
+            claimedAmounts,
+        };
 
         const rows = useMemo(() => toRows(messages, me), [messages, me]);
         const lastOwnId = [...messages]
@@ -2378,6 +2405,24 @@ export const uiMessagesSetup = async (ctx: Context) => {
                         </div>
                     </div>
                 ))}
+                <RedPacketOpenDialog
+                    open={openPacketId !== null}
+                    redPacketId={openPacketId ?? ""}
+                    mine={
+                        messages.find((m) => m.redPacket?.id === openPacketId)
+                            ?.sender === me
+                    }
+                    service={redpackets}
+                    onClose={() => setOpenPacketId(null)}
+                    onClaimed={(id, value) => {
+                        if (value === null) return;
+                        setClaimedAmounts((prev) => ({
+                            ...prev,
+                            [id]: value,
+                        }));
+                        setOpenPacketId(null);
+                    }}
+                />
             </>
         );
     };

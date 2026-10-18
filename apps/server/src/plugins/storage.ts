@@ -8,6 +8,7 @@ import type {
     MessageQuote,
     MessageReactions,
     MomentVisibility,
+    RedPacketInfo,
 } from "@plugim/protocol";
 import Database from "better-sqlite3";
 import {
@@ -21,6 +22,7 @@ import {
     inArray,
     isNull,
     lt,
+    lte,
     ne,
     notExists,
     or,
@@ -72,6 +74,9 @@ import type {
     PushStore,
     PushSubscriptionRow,
     ReadsStore,
+    RedPacketClaimResult,
+    RedPacketRow,
+    RedPacketStore,
     SettingsStore,
     UserWithHash,
 } from "../types";
@@ -90,6 +95,7 @@ const messagesSqlite = sqliteTable("messages", {
     file: sqliteText("file"),
     link: sqliteText("link"),
     reactions: sqliteText("reactions"),
+    redPacket: sqliteText("red_packet"),
 });
 
 const messagesPg = pgTable("messages", {
@@ -107,7 +113,68 @@ const messagesPg = pgTable("messages", {
     file: pgText("file"),
     link: pgText("link"),
     reactions: pgText("reactions"),
+    redPacket: pgText("red_packet"),
 });
+
+const redPacketsSqlite = sqliteTable("red_packets", {
+    id: sqliteText("id").primaryKey(),
+    sessionId: sqliteText("session_id").notNull(),
+    senderId: sqliteText("sender_id").notNull(),
+    type: sqliteText("type").notNull(),
+    totalAmount: integer("total_amount").notNull(),
+    totalCount: integer("total_count").notNull(),
+    remaining: integer("remaining").notNull(),
+    remainCount: integer("remain_count").notNull(),
+    status: sqliteText("status").notNull(),
+    message: sqliteText("message"),
+    createdAt: integer("created_at").notNull(),
+    expiredAt: integer("expired_at"),
+});
+
+const redPacketsPg = pgTable("red_packets", {
+    id: pgText("id").primaryKey(),
+    sessionId: pgText("session_id").notNull(),
+    senderId: pgText("sender_id").notNull(),
+    type: pgText("type").notNull(),
+    totalAmount: pgInteger("total_amount").notNull(),
+    totalCount: pgInteger("total_count").notNull(),
+    remaining: pgInteger("remaining").notNull(),
+    remainCount: pgInteger("remain_count").notNull(),
+    status: pgText("status").notNull(),
+    message: pgText("message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+    expiredAt: timestamp("expired_at", { withTimezone: true }),
+});
+
+const redPacketRecordsSqlite = sqliteTable(
+    "red_packet_records",
+    {
+        id: sqliteText("id").primaryKey(),
+        redPacketId: sqliteText("red_packet_id").notNull(),
+        claimerId: sqliteText("claimer_id").notNull(),
+        amount: integer("amount").notNull(),
+        claimedAt: integer("claimed_at").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.redPacketId, table.claimerId] })],
+);
+
+const redPacketRecordsPg = pgTable(
+    "red_packet_records",
+    {
+        id: pgText("id").primaryKey(),
+        redPacketId: pgText("red_packet_id").notNull(),
+        claimerId: pgText("claimer_id").notNull(),
+        amount: pgInteger("amount").notNull(),
+        claimedAt: timestamp("claimed_at", { withTimezone: true })
+            .notNull()
+            .defaultNow(),
+    },
+    (table) => [
+        pgPrimaryKey({ columns: [table.redPacketId, table.claimerId] }),
+    ],
+);
 
 const usersSqlite = sqliteTable("users", {
     id: sqliteText("id").primaryKey(),
@@ -596,7 +663,31 @@ CREATE TABLE IF NOT EXISTS messages (
   kind TEXT,
   file TEXT,
   link TEXT,
-  reactions TEXT
+  reactions TEXT,
+  red_packet TEXT
+);
+CREATE TABLE IF NOT EXISTS red_packets (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  total_amount INTEGER NOT NULL,
+  total_count INTEGER NOT NULL,
+  remaining INTEGER NOT NULL,
+  remain_count INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT,
+  created_at INTEGER NOT NULL,
+  expired_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS red_packets_session_idx ON red_packets (session_id, created_at);
+CREATE TABLE IF NOT EXISTS red_packet_records (
+  id TEXT NOT NULL,
+  red_packet_id TEXT NOT NULL,
+  claimer_id TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  claimed_at INTEGER NOT NULL,
+  PRIMARY KEY (red_packet_id, claimer_id)
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -778,7 +869,31 @@ CREATE TABLE IF NOT EXISTS messages (
   kind TEXT,
   file TEXT,
   link TEXT,
-  reactions TEXT
+  reactions TEXT,
+  red_packet TEXT
+);
+CREATE TABLE IF NOT EXISTS red_packets (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  total_amount INTEGER NOT NULL,
+  total_count INTEGER NOT NULL,
+  remaining INTEGER NOT NULL,
+  remain_count INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expired_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS red_packets_session_idx ON red_packets (session_id, created_at);
+CREATE TABLE IF NOT EXISTS red_packet_records (
+  id TEXT NOT NULL,
+  red_packet_id TEXT NOT NULL,
+  claimer_id TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (red_packet_id, claimer_id)
 );
 CREATE INDEX IF NOT EXISTS messages_session_idx ON messages (session, created_at);
 CREATE TABLE IF NOT EXISTS users (
@@ -1208,7 +1323,19 @@ interface MessageDbRow {
     file: string | null;
     link: string | null;
     reactions: string | null;
+    redPacket: string | null;
 }
+
+const parseRedPacket = (raw: unknown): RedPacketInfo | null => {
+    if (typeof raw !== "string" || !raw) return null;
+    try {
+        const parsed = JSON.parse(raw) as Partial<RedPacketInfo>;
+        if (!parsed.id || !parsed.senderId) return null;
+        return parsed as RedPacketInfo;
+    } catch {
+        return null;
+    }
+};
 
 const messageRowToChat = (row: MessageDbRow) => ({
     id: row.id,
@@ -1223,6 +1350,24 @@ const messageRowToChat = (row: MessageDbRow) => ({
     file: parseFile(row.file),
     link: parseLink(row.link),
     reactions: parseReactions(row.reactions),
+    redPacket: parseRedPacket(row.redPacket),
+});
+
+const pgPacketToRow = (
+    row: typeof redPacketsPg.$inferSelect,
+): RedPacketRow => ({
+    id: row.id,
+    sessionId: row.sessionId,
+    senderId: row.senderId,
+    type: row.type as RedPacketRow["type"],
+    totalAmount: row.totalAmount,
+    totalCount: row.totalCount,
+    remaining: row.remaining,
+    remainCount: row.remainCount,
+    status: row.status as RedPacketRow["status"],
+    message: row.message,
+    createdAt: row.createdAt.toISOString(),
+    expiredAt: row.expiredAt ? row.expiredAt.toISOString() : null,
 });
 
 export const storagePlugin: Plugin = {
@@ -1243,6 +1388,7 @@ export const storagePlugin: Plugin = {
         "moments",
         "departments",
         "audits",
+        "redPackets",
     ],
     inject: ["config"],
     async apply(ctx) {
@@ -1261,6 +1407,7 @@ export const storagePlugin: Plugin = {
         let essences: EssencesStore;
         let departments: DepartmentsStore;
         let audits: AuditStore;
+        let redPackets: RedPacketStore;
 
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
@@ -1321,6 +1468,9 @@ export const storagePlugin: Plugin = {
             );
             await client.unsafe(
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions TEXT",
+            );
+            await client.unsafe(
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS red_packet TEXT",
             );
             await client.unsafe(
                 "ALTER TABLE group_members ADD COLUMN IF NOT EXISTS title TEXT",
@@ -1403,7 +1553,8 @@ export const storagePlugin: Plugin = {
             store = {
                 async save(input) {
                     const id = crypto.randomUUID();
-                    const { quote, mentions, file, link, ...rest } = input;
+                    const { quote, mentions, file, link, redPacket, ...rest } =
+                        input;
                     const rows = await db
                         .insert(messagesPg)
                         .values({
@@ -1413,6 +1564,9 @@ export const storagePlugin: Plugin = {
                             mentions: serializeMentions(mentions),
                             file: file ? JSON.stringify(file) : null,
                             link: link ? JSON.stringify(link) : null,
+                            redPacket: redPacket
+                                ? JSON.stringify(redPacket)
+                                : null,
                         })
                         .returning();
                     return messageRowToChat(rows[0]);
@@ -2899,6 +3053,162 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            redPackets = {
+                async create(input) {
+                    await db.insert(redPacketsPg).values({
+                        id: input.id,
+                        sessionId: input.sessionId,
+                        senderId: input.senderId,
+                        type: input.type,
+                        totalAmount: input.totalAmount,
+                        totalCount: input.totalCount,
+                        remaining: input.totalAmount,
+                        remainCount: input.totalCount,
+                        status: "active",
+                        message: input.message ?? null,
+                        createdAt: new Date(input.createdAt),
+                        expiredAt: input.expiredAt
+                            ? new Date(input.expiredAt)
+                            : null,
+                    });
+                },
+                async getById(id) {
+                    const rows = await db
+                        .select()
+                        .from(redPacketsPg)
+                        .where(eq(redPacketsPg.id, id))
+                        .limit(1);
+                    return rows[0] ? pgPacketToRow(rows[0]) : null;
+                },
+                async claimedBy(redPacketId, claimerId) {
+                    const rows = await db
+                        .select({ amount: redPacketRecordsPg.amount })
+                        .from(redPacketRecordsPg)
+                        .where(
+                            and(
+                                eq(redPacketRecordsPg.redPacketId, redPacketId),
+                                eq(redPacketRecordsPg.claimerId, claimerId),
+                            ),
+                        )
+                        .limit(1);
+                    return rows[0] ? rows[0].amount : null;
+                },
+                async listRecords(redPacketId) {
+                    const rows = await db
+                        .select()
+                        .from(redPacketRecordsPg)
+                        .where(eq(redPacketRecordsPg.redPacketId, redPacketId))
+                        .orderBy(asc(redPacketRecordsPg.claimedAt));
+                    return rows.map((row) => ({
+                        id: row.id,
+                        redPacketId: row.redPacketId,
+                        claimerId: row.claimerId,
+                        amount: row.amount,
+                        claimedAt: row.claimedAt.toISOString(),
+                    }));
+                },
+                async listSession(sessionId) {
+                    const rows = await db
+                        .select()
+                        .from(redPacketsPg)
+                        .where(eq(redPacketsPg.sessionId, sessionId))
+                        .orderBy(desc(redPacketsPg.createdAt))
+                        .limit(100);
+                    return rows.map(pgPacketToRow);
+                },
+                async claim(input) {
+                    return db.transaction(async (tx) => {
+                        const locked = await tx
+                            .select()
+                            .from(redPacketsPg)
+                            .where(eq(redPacketsPg.id, input.redPacketId))
+                            .for("update");
+                        const packet = locked[0];
+                        if (!packet)
+                            return {
+                                ok: false as const,
+                                reason: "missing" as const,
+                            };
+                        const dup = await tx
+                            .select({ id: redPacketRecordsPg.id })
+                            .from(redPacketRecordsPg)
+                            .where(
+                                and(
+                                    eq(
+                                        redPacketRecordsPg.redPacketId,
+                                        input.redPacketId,
+                                    ),
+                                    eq(
+                                        redPacketRecordsPg.claimerId,
+                                        input.claimerId,
+                                    ),
+                                ),
+                            )
+                            .limit(1);
+                        if (dup)
+                            return {
+                                ok: false as const,
+                                reason: "duplicate" as const,
+                            };
+                        if (
+                            packet.status !== "active" ||
+                            packet.remainCount <= 0 ||
+                            packet.remaining < input.amount
+                        )
+                            return {
+                                ok: false as const,
+                                reason: "empty" as const,
+                            };
+                        await tx.insert(redPacketRecordsPg).values({
+                            id: input.recordId,
+                            redPacketId: input.redPacketId,
+                            claimerId: input.claimerId,
+                            amount: input.amount,
+                            claimedAt: new Date(input.claimedAt),
+                        });
+                        const remainCount = packet.remainCount - 1;
+                        const remaining = packet.remaining - input.amount;
+                        const exhausted = remainCount <= 0 || remaining <= 0;
+                        const status = exhausted ? "exhausted" : packet.status;
+                        await tx
+                            .update(redPacketsPg)
+                            .set({ remainCount, remaining, status })
+                            .where(eq(redPacketsPg.id, input.redPacketId));
+                        return {
+                            ok: true as const,
+                            packet: {
+                                ...pgPacketToRow(packet),
+                                remainCount,
+                                remaining,
+                                status: status as RedPacketRow["status"],
+                            },
+                        };
+                    });
+                },
+                async expireIfNeeded(now) {
+                    const rows = await db
+                        .select({ id: redPacketsPg.id })
+                        .from(redPacketsPg)
+                        .where(
+                            and(
+                                eq(redPacketsPg.status, "active"),
+                                lte(redPacketsPg.expiredAt, new Date(now)),
+                            ),
+                        );
+                    if (rows.length === 0) return [];
+                    await db
+                        .update(redPacketsPg)
+                        .set({ status: "expired" })
+                        .where(
+                            inArray(
+                                redPacketsPg.id,
+                                rows.map((row) => row.id),
+                            ),
+                        );
+                    return rows.map((row) => row.id);
+                },
+            };
+
             ctx.log.info(`storage driver: postgres (${config.dbUrl})`);
         } else {
             const file = resolve(process.cwd(), config.dbFile);
@@ -2922,6 +3232,7 @@ export const storagePlugin: Plugin = {
                 "file",
                 "link",
                 "reactions",
+                "red_packet",
             ]) {
                 if (!messageColumns.some((item) => item.name === col)) {
                     const type = col === "recalled_at" ? "INTEGER" : "TEXT";
@@ -3058,6 +3369,7 @@ export const storagePlugin: Plugin = {
                         mentions,
                         file: meta,
                         link,
+                        redPacket,
                         ...rest
                     } = input;
                     await db.insert(messagesSqlite).values({
@@ -3067,6 +3379,7 @@ export const storagePlugin: Plugin = {
                         mentions: serializeMentions(mentions),
                         file: meta ? JSON.stringify(meta) : null,
                         link: link ? JSON.stringify(link) : null,
+                        redPacket: redPacket ? JSON.stringify(redPacket) : null,
                         createdAt: now,
                     });
                     return {
@@ -3076,6 +3389,7 @@ export const storagePlugin: Plugin = {
                         mentions: mentions ?? null,
                         file: meta ?? null,
                         link: link ?? null,
+                        redPacket: redPacket ?? null,
                         createdAt: new Date(now).toISOString(),
                         recalledAt: null,
                     };
@@ -4669,6 +4983,230 @@ export const storagePlugin: Plugin = {
                 },
             };
 
+            redPackets = {
+                async create(input) {
+                    await db.insert(redPacketsSqlite).values({
+                        id: input.id,
+                        sessionId: input.sessionId,
+                        senderId: input.senderId,
+                        type: input.type,
+                        totalAmount: input.totalAmount,
+                        totalCount: input.totalCount,
+                        remaining: input.totalAmount,
+                        remainCount: input.totalCount,
+                        status: "active",
+                        message: input.message ?? null,
+                        createdAt: new Date(input.createdAt).getTime(),
+                        expiredAt: input.expiredAt
+                            ? new Date(input.expiredAt).getTime()
+                            : null,
+                    });
+                },
+                async getById(id) {
+                    const rows = await db
+                        .select()
+                        .from(redPacketsSqlite)
+                        .where(eq(redPacketsSqlite.id, id))
+                        .limit(1);
+                    const row = rows[0];
+                    return row
+                        ? {
+                              id: row.id,
+                              sessionId: row.sessionId,
+                              senderId: row.senderId,
+                              type: row.type as "normal" | "lucky",
+                              totalAmount: row.totalAmount,
+                              totalCount: row.totalCount,
+                              remaining: row.remaining,
+                              remainCount: row.remainCount,
+                              status: row.status as RedPacketRow["status"],
+                              message: row.message,
+                              createdAt: new Date(row.createdAt).toISOString(),
+                              expiredAt:
+                                  row.expiredAt === null
+                                      ? null
+                                      : new Date(row.expiredAt).toISOString(),
+                          }
+                        : null;
+                },
+                async claimedBy(redPacketId, claimerId) {
+                    const rows = await db
+                        .select({ amount: redPacketRecordsSqlite.amount })
+                        .from(redPacketRecordsSqlite)
+                        .where(
+                            and(
+                                eq(
+                                    redPacketRecordsSqlite.redPacketId,
+                                    redPacketId,
+                                ),
+                                eq(redPacketRecordsSqlite.claimerId, claimerId),
+                            ),
+                        )
+                        .limit(1);
+                    return rows[0] ? rows[0].amount : null;
+                },
+                async listRecords(redPacketId) {
+                    const rows = await db
+                        .select()
+                        .from(redPacketRecordsSqlite)
+                        .where(
+                            eq(redPacketRecordsSqlite.redPacketId, redPacketId),
+                        )
+                        .orderBy(asc(redPacketRecordsSqlite.claimedAt));
+                    return rows.map((row) => ({
+                        id: row.id,
+                        redPacketId: row.redPacketId,
+                        claimerId: row.claimerId,
+                        amount: row.amount,
+                        claimedAt: new Date(row.claimedAt).toISOString(),
+                    }));
+                },
+                async listSession(sessionId) {
+                    const rows = await db
+                        .select()
+                        .from(redPacketsSqlite)
+                        .where(eq(redPacketsSqlite.sessionId, sessionId))
+                        .orderBy(desc(redPacketsSqlite.createdAt))
+                        .limit(100);
+                    return rows.map((row) => ({
+                        id: row.id,
+                        sessionId: row.sessionId,
+                        senderId: row.senderId,
+                        type: row.type as "normal" | "lucky",
+                        totalAmount: row.totalAmount,
+                        totalCount: row.totalCount,
+                        remaining: row.remaining,
+                        remainCount: row.remainCount,
+                        status: row.status as RedPacketRow["status"],
+                        message: row.message,
+                        createdAt: new Date(row.createdAt).toISOString(),
+                        expiredAt:
+                            row.expiredAt === null
+                                ? null
+                                : new Date(row.expiredAt).toISOString(),
+                    }));
+                },
+                async claim(input) {
+                    return db.transaction((tx): RedPacketClaimResult => {
+                        const packet = tx
+                            .select()
+                            .from(redPacketsSqlite)
+                            .where(eq(redPacketsSqlite.id, input.redPacketId))
+                            .get() as
+                            | typeof redPacketsSqlite.$inferSelect
+                            | undefined;
+                        if (!packet)
+                            return {
+                                ok: false as const,
+                                reason: "missing" as const,
+                            };
+                        const dup = tx
+                            .select({ id: redPacketRecordsSqlite.id })
+                            .from(redPacketRecordsSqlite)
+                            .where(
+                                and(
+                                    eq(
+                                        redPacketRecordsSqlite.redPacketId,
+                                        input.redPacketId,
+                                    ),
+                                    eq(
+                                        redPacketRecordsSqlite.claimerId,
+                                        input.claimerId,
+                                    ),
+                                ),
+                            )
+                            .get();
+                        if (dup)
+                            return {
+                                ok: false as const,
+                                reason: "duplicate" as const,
+                            };
+                        if (
+                            packet.status !== "active" ||
+                            packet.remainCount <= 0
+                        )
+                            return {
+                                ok: false as const,
+                                reason: "empty" as const,
+                            };
+                        if (packet.remaining < input.amount)
+                            return {
+                                ok: false as const,
+                                reason: "empty" as const,
+                            };
+                        tx.insert(redPacketRecordsSqlite)
+                            .values({
+                                id: input.recordId,
+                                redPacketId: input.redPacketId,
+                                claimerId: input.claimerId,
+                                amount: input.amount,
+                                claimedAt: new Date(input.claimedAt).getTime(),
+                            })
+                            .run();
+                        const remainCount = packet.remainCount - 1;
+                        const remaining = packet.remaining - input.amount;
+                        const exhausted = remainCount <= 0 || remaining <= 0;
+                        tx.update(redPacketsSqlite)
+                            .set({
+                                remainCount,
+                                remaining,
+                                status: exhausted ? "exhausted" : packet.status,
+                            })
+                            .where(eq(redPacketsSqlite.id, input.redPacketId))
+                            .run();
+                        return {
+                            ok: true as const,
+                            packet: {
+                                id: packet.id,
+                                sessionId: packet.sessionId,
+                                senderId: packet.senderId,
+                                type: packet.type as "normal" | "lucky",
+                                totalAmount: packet.totalAmount,
+                                totalCount: packet.totalCount,
+                                remaining,
+                                remainCount,
+                                status: (exhausted
+                                    ? "exhausted"
+                                    : packet.status) as RedPacketRow["status"],
+                                message: packet.message,
+                                createdAt: new Date(
+                                    packet.createdAt,
+                                ).toISOString(),
+                                expiredAt:
+                                    packet.expiredAt === null
+                                        ? null
+                                        : new Date(
+                                              packet.expiredAt,
+                                          ).toISOString(),
+                            },
+                        };
+                    });
+                },
+                async expireIfNeeded(now) {
+                    const at = new Date(now).getTime();
+                    const rows = await db
+                        .select({ id: redPacketsSqlite.id })
+                        .from(redPacketsSqlite)
+                        .where(
+                            and(
+                                eq(redPacketsSqlite.status, "active"),
+                                lte(redPacketsSqlite.expiredAt, at),
+                            ),
+                        );
+                    if (rows.length === 0) return [];
+                    await db
+                        .update(redPacketsSqlite)
+                        .set({ status: "expired" })
+                        .where(
+                            inArray(
+                                redPacketsSqlite.id,
+                                rows.map((row) => row.id),
+                            ),
+                        );
+                    return rows.map((row) => row.id);
+                },
+            };
+
             ctx.log.info(`storage driver: sqlite (${file})`);
         }
 
@@ -4686,6 +5224,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<MomentsStore>("moments", moments);
         ctx.provide<DepartmentsStore>("departments", departments);
         ctx.provide<AuditStore>("audits", audits);
+        ctx.provide<RedPacketStore>("redPackets", redPackets);
         return undefined;
     },
 };

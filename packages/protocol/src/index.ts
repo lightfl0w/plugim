@@ -11,6 +11,7 @@ export type MessageKind =
     | "file"
     | "merge"
     | "moment"
+    | "redpacket"
     | "system"
     | "notice";
 
@@ -326,6 +327,7 @@ export type ServerEventName =
     | "screen:signal"
     | "group:call"
     | "group:call:signal"
+    | "redpacket:update"
     | "moment:update";
 
 export interface TypingEvent {
@@ -588,9 +590,35 @@ export interface RedPacketInfo {
     status: "active" | "exhausted" | "expired";
     remaining: number;
     remainCount: number;
-    message?: string;
+    message?: string | null;
     createdAt: string;
-    expiredAt?: string;
+    expiredAt?: string | null;
+}
+
+export interface RedPacketSummary {
+    id: string;
+    sessionId: string;
+    senderId: string;
+    type: "normal" | "lucky";
+    totalAmount: number;
+    totalCount: number;
+    remaining: number;
+    remainCount: number;
+    status: "active" | "exhausted" | "expired";
+    message?: string | null;
+    createdAt: string;
+    claimedCount: number;
+    myAmount?: number | null;
+}
+
+export interface RedPacketDetail {
+    packet: RedPacketSummary;
+    records: {
+        userId: string;
+        username: string;
+        amount: number;
+        claimedAt: string;
+    }[];
 }
 
 export interface RedPacketRecord {
@@ -644,6 +672,14 @@ export interface RedPacketCreateParams {
 }
 
 export interface RedPacketClaimParams {
+    redPacketId: string;
+}
+
+export interface RedPacketDetailParams {
+    redPacketId: string;
+}
+
+export interface RedPacketRecordsParams {
     redPacketId: string;
 }
 

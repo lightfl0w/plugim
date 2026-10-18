@@ -67,6 +67,9 @@ export type {
 } from "./store/settings";
 export type {
     AABillStore,
+    RedPacketClaimResult,
+    RedPacketClaimRow,
+    RedPacketRow,
     RedPacketStore,
     TransferStore,
 } from "./store/wallet";

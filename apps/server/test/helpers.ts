@@ -17,6 +17,7 @@ import { linkPreviewPlugin } from "../src/plugins/link-preview";
 import { momentsPlugin } from "../src/plugins/moments";
 import { orgPlugin } from "../src/plugins/org";
 import { pushPlugin } from "../src/plugins/push";
+import { redpacketPlugin } from "../src/plugins/redpacket";
 import { screenPlugin } from "../src/plugins/screen";
 import { storagePlugin } from "../src/plugins/storage";
 import { tasksPlugin } from "../src/plugins/tasks";
@@ -142,6 +143,7 @@ export const createTestApp = async (
     ctx.plugin(groupFilesPlugin);
     ctx.plugin(pushPlugin);
     ctx.plugin(chatPlugin);
+    ctx.plugin(redpacketPlugin);
     ctx.plugin(linkPreviewPlugin);
     ctx.plugin(momentsPlugin);
     ctx.plugin(screenPlugin);
