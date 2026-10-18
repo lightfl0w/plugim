@@ -36,3 +36,18 @@ export interface ReadsStore {
     ): Promise<{ userId: string; at: string; seq: number }[]>;
     cursorsOf(userId: string): Promise<Record<string, number>>;
 }
+
+export interface SessionMetaRow {
+    session: string;
+    pinned: boolean;
+}
+
+export interface SessionMetaStore {
+    of(userId: string): Promise<SessionMetaRow[]>;
+    set(
+        userId: string,
+        session: string,
+        patch: { pinned?: boolean },
+    ): Promise<SessionMetaRow>;
+    ofSession(userId: string, session: string): Promise<SessionMetaRow | null>;
+}

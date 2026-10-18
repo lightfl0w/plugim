@@ -403,10 +403,16 @@ export interface SessionSummary {
     readSeq: number;
     unread: number;
     lastMessage: ChatMessage | null;
+    pinned: boolean;
 }
 
 export interface SessionListParams {
     sessions?: string[];
+}
+
+export interface SessionMetaParams {
+    session: string;
+    pinned?: boolean;
 }
 
 export interface DeltaCursor {
@@ -516,6 +522,9 @@ export interface UserInfoResult {
 export interface MessageSearchParams {
     keyword: string;
     session?: string;
+    sender?: string;
+    from?: string;
+    to?: string;
     offset?: number;
     limit?: number;
 }

@@ -89,6 +89,7 @@ import type {
     RedPacketClaimResult,
     RedPacketRow,
     RedPacketStore,
+    SessionMetaStore,
     SettingsStore,
     TransferCreateResult,
     TransferRow,
@@ -465,6 +466,26 @@ const readsPg = pgTable(
         session: pgText("session").notNull(),
         readAt: timestamp("read_at", { withTimezone: true }).notNull(),
         seq: pgInteger("seq").notNull().default(0),
+    },
+    (table) => [pgPrimaryKey({ columns: [table.userId, table.session] })],
+);
+
+const sessionMetaSqlite = sqliteTable(
+    "session_meta",
+    {
+        userId: sqliteText("user_id").notNull(),
+        session: sqliteText("session").notNull(),
+        pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
+    },
+    (table) => [primaryKey({ columns: [table.userId, table.session] })],
+);
+
+const sessionMetaPg = pgTable(
+    "session_meta",
+    {
+        userId: pgText("user_id").notNull(),
+        session: pgText("session").notNull(),
+        pinned: pgBoolean("pinned").notNull().default(false),
     },
     (table) => [pgPrimaryKey({ columns: [table.userId, table.session] })],
 );
@@ -1028,6 +1049,12 @@ CREATE TABLE IF NOT EXISTS reads (
   read_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, session)
 );
+CREATE TABLE IF NOT EXISTS session_meta (
+  user_id TEXT NOT NULL,
+  session TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, session)
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -1310,6 +1337,12 @@ CREATE TABLE IF NOT EXISTS reads (
   user_id TEXT NOT NULL,
   session TEXT NOT NULL,
   read_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (user_id, session)
+);
+CREATE TABLE IF NOT EXISTS session_meta (
+  user_id TEXT NOT NULL,
+  session TEXT NOT NULL,
+  pinned BOOLEAN NOT NULL DEFAULT FALSE,
   PRIMARY KEY (user_id, session)
 );
 CREATE TABLE IF NOT EXISTS settings (
@@ -1885,6 +1918,7 @@ export const storagePlugin: Plugin = {
         "groups",
         "essences",
         "reads",
+        "sessionMeta",
         "settings",
         "pushes",
         "mediaFiles",
@@ -1906,6 +1940,7 @@ export const storagePlugin: Plugin = {
         let friends: FriendsStore;
         let groups: GroupsStore;
         let reads: ReadsStore;
+        let sessionMeta: SessionMetaStore;
         let settings: SettingsStore;
         let pushes: PushStore;
         let mediaFiles: MediaFilesStore;
@@ -2343,6 +2378,18 @@ export const storagePlugin: Plugin = {
                     }
                     if (params.sender)
                         conds.push(eq(messagesPg.sender, params.sender));
+                    if (params.from) {
+                        const from = Date.parse(params.from);
+                        if (Number.isFinite(from))
+                            conds.push(
+                                gte(messagesPg.createdAt, new Date(from)),
+                            );
+                    }
+                    if (params.to) {
+                        const to = Date.parse(params.to);
+                        if (Number.isFinite(to))
+                            conds.push(lte(messagesPg.createdAt, new Date(to)));
+                    }
                     if (params.media) conds.push(ne(messagesPg.kind, "text"));
                     if (params.keyword)
                         conds.push(
@@ -3467,6 +3514,64 @@ export const storagePlugin: Plugin = {
                     return Object.fromEntries(
                         rows.map((row) => [row.session, row.seq]),
                     );
+                },
+            };
+
+            sessionMeta = {
+                async of(userId) {
+                    const rows = await db
+                        .select()
+                        .from(sessionMetaPg)
+                        .where(eq(sessionMetaPg.userId, userId));
+                    return rows.map((row) => ({
+                        session: row.session,
+                        pinned: row.pinned,
+                    }));
+                },
+                async ofSession(userId, session) {
+                    const rows = await db
+                        .select()
+                        .from(sessionMetaPg)
+                        .where(
+                            and(
+                                eq(sessionMetaPg.userId, userId),
+                                eq(sessionMetaPg.session, session),
+                            ),
+                        )
+                        .limit(1);
+                    const row = rows[0];
+                    return row
+                        ? {
+                              session: row.session,
+                              pinned: row.pinned,
+                          }
+                        : null;
+                },
+                async set(userId, session, patch) {
+                    const rows = await db
+                        .insert(sessionMetaPg)
+                        .values({
+                            userId,
+                            session,
+                            pinned: patch.pinned ?? false,
+                        })
+                        .onConflictDoUpdate({
+                            target: [
+                                sessionMetaPg.userId,
+                                sessionMetaPg.session,
+                            ],
+                            set: {
+                                ...(patch.pinned === undefined
+                                    ? {}
+                                    : { pinned: patch.pinned }),
+                            },
+                        })
+                        .returning();
+                    const row = rows[0];
+                    return {
+                        session: row.session,
+                        pinned: row.pinned,
+                    };
                 },
             };
 
@@ -4751,6 +4856,39 @@ export const storagePlugin: Plugin = {
                 ) + 1
                 WHERE messages.seq = 0`,
             );
+            let ftsEnabled = false;
+            try {
+                client.exec(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, message_id UNINDEXED, tokenize = 'trigram')",
+                );
+                client.exec(`
+                    CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+                        INSERT INTO messages_fts(content, message_id) VALUES (new.content, new.id);
+                    END
+                `);
+                client.exec(`
+                    CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+                        DELETE FROM messages_fts WHERE message_id = old.id;
+                    END
+                `);
+                client.exec(`
+                    CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content ON messages BEGIN
+                        DELETE FROM messages_fts WHERE message_id = old.id;
+                        INSERT INTO messages_fts(content, message_id) VALUES (new.content, new.id);
+                    END
+                `);
+                client.exec(`
+                    INSERT INTO messages_fts(content, message_id)
+                    SELECT content, id FROM messages
+                    WHERE id NOT IN (SELECT message_id FROM messages_fts)
+                `);
+                ftsEnabled = true;
+            } catch (err) {
+                ctx.log.warn(
+                    "sqlite fts5 trigram unavailable, fallback to LIKE",
+                    err,
+                );
+            }
             const userColumns = client.pragma("table_info(users)") as Array<{
                 name: string;
             }>;
@@ -5140,12 +5278,35 @@ export const storagePlugin: Plugin = {
                     }
                     if (params.sender)
                         conds.push(eq(messagesSqlite.sender, params.sender));
+                    if (params.from) {
+                        const from = Date.parse(params.from);
+                        if (Number.isFinite(from))
+                            conds.push(gte(messagesSqlite.createdAt, from));
+                    }
+                    if (params.to) {
+                        const to = Date.parse(params.to);
+                        if (Number.isFinite(to))
+                            conds.push(lte(messagesSqlite.createdAt, to));
+                    }
                     if (params.media)
                         conds.push(ne(messagesSqlite.kind, "text"));
-                    if (params.keyword)
-                        conds.push(
-                            likeKeyword(messagesSqlite.content, params.keyword),
-                        );
+                    if (params.keyword) {
+                        const kw = params.keyword;
+                        const useFts =
+                            ftsEnabled &&
+                            Array.from(kw).length >= 3 &&
+                            !/\s/.test(kw);
+                        if (useFts) {
+                            conds.push(
+                                sql`id IN (
+                                    SELECT message_id FROM messages_fts
+                                    WHERE messages_fts MATCH ${`"${kw.replace(/"/g, '""')}"`}
+                                )`,
+                            );
+                        } else {
+                            conds.push(likeKeyword(messagesSqlite.content, kw));
+                        }
+                    }
                     const where = and(...conds);
                     const counted = await db
                         .select({ id: messagesSqlite.id })
@@ -6327,6 +6488,64 @@ export const storagePlugin: Plugin = {
                     return Object.fromEntries(
                         rows.map((row) => [row.session, row.seq]),
                     );
+                },
+            };
+
+            sessionMeta = {
+                async of(userId) {
+                    const rows = await db
+                        .select()
+                        .from(sessionMetaSqlite)
+                        .where(eq(sessionMetaSqlite.userId, userId));
+                    return rows.map((row) => ({
+                        session: row.session,
+                        pinned: row.pinned,
+                    }));
+                },
+                async ofSession(userId, session) {
+                    const rows = await db
+                        .select()
+                        .from(sessionMetaSqlite)
+                        .where(
+                            and(
+                                eq(sessionMetaSqlite.userId, userId),
+                                eq(sessionMetaSqlite.session, session),
+                            ),
+                        )
+                        .limit(1);
+                    const row = rows[0];
+                    return row
+                        ? {
+                              session: row.session,
+                              pinned: row.pinned,
+                          }
+                        : null;
+                },
+                async set(userId, session, patch) {
+                    const rows = await db
+                        .insert(sessionMetaSqlite)
+                        .values({
+                            userId,
+                            session,
+                            pinned: patch.pinned ?? false,
+                        })
+                        .onConflictDoUpdate({
+                            target: [
+                                sessionMetaSqlite.userId,
+                                sessionMetaSqlite.session,
+                            ],
+                            set: {
+                                ...(patch.pinned === undefined
+                                    ? {}
+                                    : { pinned: patch.pinned }),
+                            },
+                        })
+                        .returning();
+                    const row = rows[0];
+                    return {
+                        session: row.session,
+                        pinned: row.pinned,
+                    };
                 },
             };
 
@@ -7649,6 +7868,7 @@ export const storagePlugin: Plugin = {
         ctx.provide<GroupsStore>("groups", groups);
         ctx.provide<EssencesStore>("essences", essences);
         ctx.provide<ReadsStore>("reads", reads);
+        ctx.provide<SessionMetaStore>("sessionMeta", sessionMeta);
         ctx.provide<SettingsStore>("settings", settings);
         ctx.provide<PushStore>("pushes", pushes);
         ctx.provide<MediaFilesStore>("mediaFiles", mediaFiles);

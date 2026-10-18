@@ -61,6 +61,7 @@ import type { AAService, TransferService } from "./money";
 import type { RedPacketService } from "./redpacket";
 import type { PendingEvent, PendingMessage, SenderService } from "./sender";
 import type { SessionsService } from "./sessions";
+import { Highlight } from "./ui-layout";
 import {
     AABillCard,
     AABillOpenDialog,
@@ -960,6 +961,29 @@ export const uiMessagesSetup = async (ctx: Context) => {
         const [newCount, setNewCount] = useState(0);
         const [searchQuery, setSearchQuery] = useState<string | null>(null);
         const [searchResults, setSearchResults] = useState<ChatMessage[]>([]);
+        const [searchSender, setSearchSender] = useState("");
+        const [searchRange, setSearchRange] = useState<
+            "all" | "day" | "week" | "month"
+        >("all");
+        const filteredResults = useMemo(() => {
+            if (searchQuery === null) return [];
+            const from =
+                searchRange === "all"
+                    ? 0
+                    : Date.now() -
+                      (searchRange === "day"
+                          ? 86_400_000
+                          : searchRange === "week"
+                            ? 7 * 86_400_000
+                            : 30 * 86_400_000);
+            const sender = searchSender.trim().toLowerCase();
+            return searchResults.filter(
+                (message) =>
+                    (!sender ||
+                        message.sender.toLowerCase().includes(sender)) &&
+                    (!from || Date.parse(message.createdAt) >= from),
+            );
+        }, [searchResults, searchSender, searchRange, searchQuery]);
         const [searchBusy, setSearchBusy] = useState(false);
         const [jumpTarget, setJumpTarget] = useState<{
             session: string;
@@ -1239,6 +1263,8 @@ export const uiMessagesSetup = async (ctx: Context) => {
                     return;
                 }
                 setSearchQuery(query);
+                setSearchSender("");
+                setSearchRange("all");
                 setSearchBusy(true);
                 void rpc
                     .call("message.search", {
@@ -2011,9 +2037,32 @@ export const uiMessagesSetup = async (ctx: Context) => {
         if (searchQuery !== null) {
             return (
                 <div className="flex min-h-0 flex-1 flex-col">
-                    <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-2 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-background px-4 py-2 text-xs text-muted-foreground">
+                        <span>“{searchQuery}”</span>
+                        <input
+                            value={searchSender}
+                            onChange={(e) => setSearchSender(e.target.value)}
+                            placeholder="按发送者过滤"
+                            className="h-6 w-28 rounded-md bg-muted px-2 outline-none placeholder:text-muted-foreground"
+                        />
+                        <select
+                            value={searchRange}
+                            onChange={(e) =>
+                                setSearchRange(
+                                    e.target.value as typeof searchRange,
+                                )
+                            }
+                            className="h-6 rounded-md bg-muted px-1.5 outline-none"
+                        >
+                            <option value="all">全部时间</option>
+                            <option value="day">今天</option>
+                            <option value="week">近 7 天</option>
+                            <option value="month">近 30 天</option>
+                        </select>
                         <span>
-                            “{searchQuery}” 的搜索结果 {searchResults.length} 条
+                            {searchBusy
+                                ? "搜索中..."
+                                : `${searchResults.length} 条`}
                         </span>
                         <button
                             type="button"
@@ -2033,7 +2082,7 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                 {searchBusy ? "正在搜索..." : "没有匹配的消息"}
                             </p>
                         ) : (
-                            searchResults.map((message) => (
+                            filteredResults.map((message) => (
                                 <button
                                     key={message.id}
                                     type="button"
@@ -2050,7 +2099,10 @@ export const uiMessagesSetup = async (ctx: Context) => {
                                         {formatStamp(message.createdAt)}
                                     </span>
                                     <span className="truncate text-sm">
-                                        {contentPreview(message)}
+                                        <Highlight
+                                            text={contentPreview(message)}
+                                            keyword={searchQuery}
+                                        />
                                     </span>
                                 </button>
                             ))

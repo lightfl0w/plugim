@@ -31,6 +31,8 @@ interface CallState {
     seconds: number;
     muted: boolean;
     camOff: boolean;
+    weak: boolean;
+    net: string;
 }
 
 export const uiCallSetup = async (ctx: Context) => {
@@ -46,6 +48,8 @@ export const uiCallSetup = async (ctx: Context) => {
         seconds: 0,
         muted: false,
         camOff: false,
+        weak: false,
+        net: "",
     };
     const subs = new Set<() => void>();
     const set = (patch: Partial<CallState>) => {
@@ -71,6 +75,10 @@ export const uiCallSetup = async (ctx: Context) => {
     let remoteDescSet = false;
     let errorTimer: ReturnType<typeof setTimeout> | undefined;
     let tickTimer: ReturnType<typeof setInterval> | undefined;
+    let statsTimer: ReturnType<typeof setInterval> | undefined;
+    let restartCount = 0;
+    let disconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let weakStreak = 0;
 
     const flashError = (message: string) => {
         set({ error: message });
@@ -126,31 +134,136 @@ export const uiCallSetup = async (ctx: Context) => {
             })),
         });
         peer.onicecandidate = (e) => {
-            if (e.candidate)
-                void sendSignal({
-                    callId,
-                    type: "ice",
-                    candidate: e.candidate.toJSON(),
-                }).catch(() => undefined);
+            if (!e.candidate) return;
+            const c = e.candidate;
+            if (c.candidate.includes("typ relay"))
+                trace("local candidate: relay (TURN)");
+            void sendSignal({
+                callId,
+                type: "ice",
+                candidate: c.toJSON(),
+            }).catch(() => undefined);
         };
         peer.ontrack = (e) => {
             trace(`ontrack kind=${e.track.kind}`);
             remoteStream = e.streams[0] ?? new MediaStream([e.track]);
             bindMedia();
         };
+        peer.oniceconnectionstatechange = () => {
+            const st = peer.iceConnectionState;
+            trace(`iceConnectionState=${st}`);
+            if (st === "disconnected") {
+                clearTimeout(disconnectTimer);
+                disconnectTimer = setTimeout(() => {
+                    if (
+                        pc &&
+                        (pc.iceConnectionState === "disconnected" ||
+                            pc.iceConnectionState === "failed")
+                    )
+                        void restartIce();
+                }, 3000);
+            }
+            if (st === "failed") void restartIce();
+        };
         peer.onconnectionstatechange = () => {
             trace(`connectionState=${peer.connectionState}`);
-            if (
-                peer.connectionState === "failed" ||
-                peer.connectionState === "closed"
-            )
-                teardown();
+            if (peer.connectionState === "closed") teardown();
+            if (peer.connectionState === "failed") void restartIce();
         };
         return peer;
     };
 
     const VIDEO_MAX_BITRATE = 900_000;
     const AUDIO_MAX_BITRATE = 48_000;
+    let currentVideoBitrate = VIDEO_MAX_BITRATE;
+
+    const restartIce = async () => {
+        if (!pc || state.phase !== "active") return;
+        if (restartCount >= 2) {
+            flashError("网络不稳定，请尝试重新拨打");
+            return;
+        }
+        restartCount += 1;
+        weakStreak = 0;
+        trace(`ice restart #${restartCount}`);
+        try {
+            const offer = await pc.createOffer({ iceRestart: true });
+            await pc.setLocalDescription(offer);
+            applyEncodings();
+            await sendSignal({ callId, type: "offer", sdp: offer.sdp });
+        } catch (err) {
+            trace(`ice restart failed: ${String(err)}`);
+        }
+    };
+
+    const sampleStats = async () => {
+        if (!pc || state.phase !== "active") return;
+        try {
+            const report = await pc.getStats();
+            let rtt: number | null = null;
+            let relay = false;
+            let lost = 0;
+            let recv = 0;
+            const pairs: Record<string, unknown>[] = [];
+            report.forEach((stat) => {
+                const item = stat as unknown as Record<string, unknown>;
+                if (item.type === "candidate-pair") pairs.push(item);
+                if (
+                    item.type === "inbound-rtp" &&
+                    (item.kind === "video" || item.mediaType === "video")
+                ) {
+                    lost += Number(item.packetsLost ?? 0);
+                    recv += Number(item.packetsReceived ?? 0);
+                }
+            });
+            const pair =
+                pairs.find((item) => item.selected === true) ??
+                pairs.find(
+                    (item) =>
+                        item.state === "succeeded" && item.nominated === true,
+                );
+            if (pair) {
+                if (pair.currentRoundTripTime != null)
+                    rtt = Number(pair.currentRoundTripTime) * 1000;
+                const local = report.get(
+                    pair.localCandidateId as string,
+                ) as unknown as Record<string, unknown> | undefined;
+                relay = local?.candidateType === "relay";
+            }
+            const lossPct = recv + lost > 0 ? (lost / (recv + lost)) * 100 : 0;
+            const weak = (rtt ?? 0) > 400 || lossPct > 8;
+            if (weak) weakStreak += 1;
+            else weakStreak = 0;
+            if (weakStreak >= 3 && currentVideoBitrate > 300_000) {
+                currentVideoBitrate = 300_000;
+                applyEncodings();
+                trace("weak network: video bitrate -> 300kbps");
+            }
+            const parts: string[] = [];
+            if (relay) parts.push("中继");
+            if (rtt != null) parts.push(`RTT ${Math.round(rtt)}ms`);
+            if (recv + lost > 0) parts.push(`丢包 ${lossPct.toFixed(1)}%`);
+            set({ weak, net: parts.join(" · ") });
+        } catch {
+            void 0;
+        }
+    };
+
+    const startMonitor = () => {
+        stopMonitor();
+        statsTimer = setInterval(() => void sampleStats(), 2000);
+    };
+
+    const stopMonitor = () => {
+        clearInterval(statsTimer);
+        statsTimer = undefined;
+        clearTimeout(disconnectTimer);
+        disconnectTimer = undefined;
+        weakStreak = 0;
+        restartCount = 0;
+        currentVideoBitrate = VIDEO_MAX_BITRATE;
+        set({ weak: false, net: "" });
+    };
 
     const applyEncodings = () => {
         for (const sender of pc?.getSenders() ?? []) {
@@ -161,7 +274,7 @@ export const uiCallSetup = async (ctx: Context) => {
                 params.encodings = [{}];
             const [encoding] = params.encodings;
             if (track.kind === "video") {
-                encoding.maxBitrate = VIDEO_MAX_BITRATE;
+                encoding.maxBitrate = currentVideoBitrate;
                 encoding.maxFramerate = 24;
             } else {
                 encoding.maxBitrate = AUDIO_MAX_BITRATE;
@@ -229,6 +342,7 @@ export const uiCallSetup = async (ctx: Context) => {
 
     const teardown = () => {
         trace(`teardown from phase=${state.phase}`);
+        stopMonitor();
         clearInterval(tickTimer);
         tickTimer = undefined;
         pc?.close();
@@ -249,6 +363,8 @@ export const uiCallSetup = async (ctx: Context) => {
             seconds: 0,
             muted: false,
             camOff: false,
+            weak: false,
+            net: "",
         });
     };
 
@@ -281,6 +397,7 @@ export const uiCallSetup = async (ctx: Context) => {
                 sdp: offer.sdp,
             });
             startTick();
+            startMonitor();
             set({ phase: "active" });
         } catch (err) {
             trace(`beginCall failed: ${String(err)}`);
@@ -398,7 +515,8 @@ export const uiCallSetup = async (ctx: Context) => {
                 break;
             }
             case "offer": {
-                if (isCaller || !pc || !signal.sdp) return;
+                if (!pc || !signal.sdp) return;
+                if (isCaller && !remoteDescSet) return;
                 await pc.setRemoteDescription(
                     new RTCSessionDescription({
                         type: "offer",
@@ -416,6 +534,7 @@ export const uiCallSetup = async (ctx: Context) => {
                     sdp: answer.sdp,
                 });
                 startTick();
+                startMonitor();
                 break;
             }
             case "answer": {
@@ -600,6 +719,18 @@ export const uiCallSetup = async (ctx: Context) => {
                                 ? "等待对方接听..."
                                 : fmt(s.seconds)}
                         </p>
+                        {s.net ? (
+                            <p
+                                className={cn(
+                                    "text-[11px]",
+                                    s.weak
+                                        ? "text-amber-600 dark:text-amber-400"
+                                        : "text-muted-foreground",
+                                )}
+                            >
+                                {s.net}
+                            </p>
+                        ) : null}
                         <div className="flex items-center gap-3">
                             <button
                                 type="button"
@@ -633,6 +764,18 @@ export const uiCallSetup = async (ctx: Context) => {
                 {showVideoPanel ? (
                     <div className="pointer-events-auto absolute right-3 bottom-3 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl md:right-4 md:bottom-4">
                         <div className="relative">
+                            {s.net ? (
+                                <div
+                                    className={cn(
+                                        "pointer-events-none absolute top-2 left-2 z-10 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                                        s.weak
+                                            ? "bg-amber-500/90 text-white"
+                                            : "bg-black/50 text-white/90",
+                                    )}
+                                >
+                                    {s.net}
+                                </div>
+                            ) : null}
                             <video
                                 ref={videoRef}
                                 autoPlay

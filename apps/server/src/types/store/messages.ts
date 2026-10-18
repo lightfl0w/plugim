@@ -76,6 +76,8 @@ export interface MessageStore {
         session?: string;
         sessions?: string[];
         sender?: string;
+        from?: string;
+        to?: string;
         media?: boolean;
         offset: number;
         limit: number;

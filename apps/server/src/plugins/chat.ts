@@ -17,6 +17,7 @@ import type {
     RecallParams,
     SendMessageParams,
     SessionListParams,
+    SessionMetaParams,
     SyncDeltaParams,
     SyncDeltaSession,
     TypingEvent,
@@ -36,6 +37,7 @@ import type {
     MessageStore,
     ReadsStore,
     RedPacketStore,
+    SessionMetaStore,
 } from "../types";
 import type { BotsService } from "./bots";
 import type { AppConfig } from "./config";
@@ -78,6 +80,7 @@ export const chatPlugin: Plugin = {
         "friendships",
         "groups",
         "reads",
+        "sessionMeta",
         "push",
         "link-preview",
         "redPackets",
@@ -92,6 +95,7 @@ export const chatPlugin: Plugin = {
         const groups = ctx.get<GroupsStore>("groups");
         const redPackets = ctx.get<RedPacketStore>("redPackets");
         const reads = ctx.get<ReadsStore>("reads");
+        const sessionMeta = ctx.get<SessionMetaStore>("sessionMeta");
         const push = ctx.get<PushService>("push");
         const linkPreview = ctx.get<LinkPreviewService>("link-preview");
         const bots = ctx.get<BotsService>("botEvents");
@@ -862,10 +866,22 @@ export const chatPlugin: Plugin = {
                 for (const group of await groups.groupsOf(user.id))
                     visible.push(`g:${group.id}`);
             }
+            const sender = String(params.sender ?? "").trim() || undefined;
+            const rangeFrom = Date.parse(String(params.from ?? ""));
+            const rangeTo = Date.parse(String(params.to ?? ""));
             const result = await store.search({
                 keyword,
                 session,
                 sessions: visible,
+                sender,
+                from:
+                    params.from && Number.isFinite(rangeFrom)
+                        ? new Date(rangeFrom).toISOString()
+                        : undefined,
+                to:
+                    params.to && Number.isFinite(rangeTo)
+                        ? new Date(rangeTo).toISOString()
+                        : undefined,
                 offset,
                 limit,
             });
@@ -1063,10 +1079,34 @@ export const chatPlugin: Plugin = {
                 username: user.username,
                 sessions,
             });
-            return rows.map((row) => ({
-                ...row,
-                session: rawOf(user.username, row.session),
-            }));
+            const meta = await sessionMeta.of(user.id);
+            const metaBy = new Map(meta.map((item) => [item.session, item]));
+            return rows.map((row) => {
+                const m = metaBy.get(row.session);
+                return {
+                    ...row,
+                    session: rawOf(user.username, row.session),
+                    pinned: m?.pinned ?? false,
+                };
+            });
+        });
+
+        gateway.rpc("chat.session.meta", async (raw, conn) => {
+            const user = requireUser(conn);
+            const params = raw as unknown as SessionMetaParams;
+            const rawSession = String(params.session ?? "").trim();
+            if (!rawSession) throw new Error("缺少会话");
+            const storage = await storageSessionOf(user, rawSession);
+            const patch: { pinned?: boolean } = {};
+            if (typeof params.pinned === "boolean")
+                patch.pinned = params.pinned;
+            if (Object.keys(patch).length === 0)
+                throw new Error("没有需要修改的项");
+            const row = await sessionMeta.set(user.id, storage, patch);
+            return {
+                session: rawSession,
+                pinned: row.pinned,
+            };
         });
 
         gateway.rpc("sync.delta", async (raw, conn) => {

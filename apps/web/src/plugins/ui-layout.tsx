@@ -18,6 +18,38 @@ export const pillClass = (on: boolean) =>
 export const codeClass =
     "block overflow-x-auto rounded-lg bg-muted/60 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-foreground/80";
 
+export const Highlight = ({
+    text,
+    keyword,
+}: {
+    text: string;
+    keyword: string;
+}) => {
+    const kw = keyword.trim();
+    if (!kw) return text;
+    const lower = text.toLowerCase();
+    const needle = kw.toLowerCase();
+    const parts: ReactNode[] = [];
+    let from = 0;
+    let idx = lower.indexOf(needle);
+    let key = 0;
+    while (idx !== -1) {
+        if (idx > from) parts.push(text.slice(from, idx));
+        parts.push(
+            <mark
+                key={`hl-${key++}`}
+                className="rounded-sm bg-amber-300/60 px-0.5 text-inherit dark:bg-amber-500/40"
+            >
+                {text.slice(idx, idx + needle.length)}
+            </mark>,
+        );
+        from = idx + needle.length;
+        idx = lower.indexOf(needle, from);
+    }
+    if (from < text.length) parts.push(text.slice(from));
+    return parts;
+};
+
 export const Field = ({
     title,
     desc,

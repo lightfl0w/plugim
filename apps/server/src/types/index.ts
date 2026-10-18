@@ -71,6 +71,8 @@ export type {
     PushStore,
     PushSubscriptionRow,
     ReadsStore,
+    SessionMetaRow,
+    SessionMetaStore,
     SettingsStore,
 } from "./store/settings";
 export type {

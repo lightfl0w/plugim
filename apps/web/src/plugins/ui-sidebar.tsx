@@ -47,6 +47,7 @@ import type { SessionsService } from "./sessions";
 import type { AdminService } from "./ui-admin";
 import { draftKey, draftStore } from "./ui-drafts";
 import type { InstallService } from "./ui-install";
+import { Highlight } from "./ui-layout";
 import {
     clientSessionOf,
     currentChatTarget,
@@ -483,6 +484,10 @@ export const uiSidebarSetup = async (ctx: Context) => {
             draftStore.snapshot,
         );
         const [query, setQuery] = useState("");
+        const [searchSender, setSearchSender] = useState("");
+        const [searchRange, setSearchRange] = useState<
+            "all" | "day" | "week" | "month"
+        >("all");
         const [hits, setHits] = useState<ChatMessage[]>([]);
         const [hitsTotal, setHitsTotal] = useState(0);
         const [searching, setSearching] = useState(false);
@@ -516,6 +521,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
         const unreadRef = useRef<Record<string, number>>({});
         const previewsRef = useRef<Record<string, SessionPreview>>({});
         const dndRef = useRef<string[]>([]);
+        const pinnedRef = useRef<string[]>([]);
         const plusWrapRef = useRef<HTMLDivElement>(null);
         const createCardRef = useRef<HTMLDivElement>(null);
         const sessionMenuRef = useRef<HTMLDivElement>(null);
@@ -595,15 +601,19 @@ export const uiSidebarSetup = async (ctx: Context) => {
 
         const togglePin = useCallback(
             (session: string) => {
-                setPinned((prev) => {
-                    const next = prev.includes(session)
-                        ? prev.filter((s) => s !== session)
-                        : [...prev, session];
-                    if (me)
-                        void cache.setPinned(me, next).catch(() => undefined);
-                    showHint(next.includes(session) ? "已置顶" : "已取消置顶");
-                    return next;
-                });
+                const next = pinnedRef.current.includes(session)
+                    ? pinnedRef.current.filter((s) => s !== session)
+                    : [...pinnedRef.current, session];
+                pinnedRef.current = next;
+                setPinned(next);
+                if (me) void cache.setPinned(me, next).catch(() => undefined);
+                void rpc
+                    .call("chat.session.meta", {
+                        session,
+                        pinned: next.includes(session),
+                    })
+                    .catch(() => undefined);
+                showHint(next.includes(session) ? "已置顶" : "已取消置顶");
             },
             [me],
         );
@@ -646,11 +656,31 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 .catch(() => undefined);
             void cache
                 .getPinned(me)
-                .then(setPinned)
+                .then((next) => {
+                    pinnedRef.current = next;
+                    setPinned(next);
+                })
                 .catch(() => undefined);
+            const syncMeta = () => {
+                const rows = Object.values(sessions.summaries());
+                if (rows.length === 0) return;
+                const srvPinned = rows
+                    .filter((row) => row.pinned)
+                    .map((row) => row.session);
+                if (
+                    srvPinned.some((x) => !pinnedRef.current.includes(x)) ||
+                    pinnedRef.current.some((x) => !srvPinned.includes(x))
+                ) {
+                    pinnedRef.current = srvPinned;
+                    setPinned(srvPinned);
+                }
+            };
+            syncMeta();
+            const offMeta = sessions.onUpdate(syncMeta);
             const savedDnd = loadDnd(me);
             dndRef.current = savedDnd;
             setDnd(savedDnd);
+            return () => offMeta();
         }, [me, applyUnread]);
 
         useEffect(() => {
@@ -832,8 +862,24 @@ export const uiSidebarSetup = async (ctx: Context) => {
             }
             setSearching(true);
             searchTimerRef.current = setTimeout(() => {
+                const from =
+                    searchRange === "all"
+                        ? undefined
+                        : new Date(
+                              Date.now() -
+                                  (searchRange === "day"
+                                      ? 86_400_000
+                                      : searchRange === "week"
+                                        ? 7 * 86_400_000
+                                        : 30 * 86_400_000),
+                          ).toISOString();
                 void rpc
-                    .call("message.search", { keyword, limit: 50 })
+                    .call("message.search", {
+                        keyword,
+                        sender: searchSender.trim() || undefined,
+                        from,
+                        limit: 50,
+                    })
                     .then((result) => {
                         const data = result as {
                             hits: ChatMessage[];
@@ -849,7 +895,7 @@ export const uiSidebarSetup = async (ctx: Context) => {
                     .finally(() => setSearching(false));
             }, 250);
             return () => clearTimeout(searchTimerRef.current);
-        }, [query]);
+        }, [query, searchSender, searchRange]);
 
         const openSession = (session: string, label: string) => {
             openChat(ctx, { session, title: label });
@@ -1093,11 +1139,36 @@ export const uiSidebarSetup = async (ctx: Context) => {
                 <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-2">
                     {query.trim() ? (
                         <>
-                            <p className="px-2.5 py-2 text-[11px] text-muted-foreground">
-                                {searching
-                                    ? "正在搜索..."
-                                    : `找到 ${hitsTotal} 条消息`}
-                            </p>
+                            <div className="flex items-center gap-1.5 px-2.5 py-2">
+                                <input
+                                    value={searchSender}
+                                    onChange={(e) =>
+                                        setSearchSender(e.target.value)
+                                    }
+                                    placeholder="发送者"
+                                    className="h-6 w-20 rounded-md bg-muted px-2 text-[11px] outline-none placeholder:text-muted-foreground"
+                                />
+                                <select
+                                    value={searchRange}
+                                    onChange={(e) =>
+                                        setSearchRange(
+                                            e.target
+                                                .value as typeof searchRange,
+                                        )
+                                    }
+                                    className="h-6 rounded-md bg-muted px-1.5 text-[11px] outline-none"
+                                >
+                                    <option value="all">全部时间</option>
+                                    <option value="day">今天</option>
+                                    <option value="week">近 7 天</option>
+                                    <option value="month">近 30 天</option>
+                                </select>
+                                <span className="ml-auto text-[11px] text-muted-foreground">
+                                    {searching
+                                        ? "正在搜索..."
+                                        : `${hitsTotal} 条`}
+                                </span>
+                            </div>
                             {hits.map((hit) => {
                                 const client = clientSessionOf(hit.session, me);
                                 const label = labelOf(client);
@@ -1128,11 +1199,14 @@ export const uiSidebarSetup = async (ctx: Context) => {
                                         </span>
                                         <span className="truncate text-xs text-muted-foreground">
                                             {hit.sender}：
-                                            {previewText(
-                                                hit.content,
-                                                hit.kind,
-                                                hit.file?.name,
-                                            )}
+                                            <Highlight
+                                                text={previewText(
+                                                    hit.content,
+                                                    hit.kind,
+                                                    hit.file?.name,
+                                                )}
+                                                keyword={query}
+                                            />
                                         </span>
                                     </button>
                                 );
