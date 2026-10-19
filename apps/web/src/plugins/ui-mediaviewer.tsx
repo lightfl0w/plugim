@@ -2,6 +2,7 @@ import type { Context } from "@plugim/core";
 import type { ChatMessage } from "@plugim/protocol";
 import { DownloadIcon, FileIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { fileUrl } from "./auth";
 import type { UiService } from "./ui-types";
 
 const mimeOf = (dataUrl: string) => {
@@ -44,15 +45,15 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
 
         if (!message) return null;
 
-        const fileUrl = /^\/files\/[a-f0-9]{32}$/.test(message.content)
-            ? message.content
+        const fileKey = /^\/files\/[a-f0-9]{32}$/.test(message.content)
+            ? message.content.slice("/files/".length)
             : "";
         const dataImage = /^data:image\/(?:png|jpe?g|gif|webp);base64,/.test(
             message.content,
         )
             ? message.content
             : "";
-        const src = fileUrl || dataImage;
+        const src = fileKey ? fileUrl(fileKey) : dataImage;
         const mime = message.file?.mime || mimeOf(src);
         const isVideo =
             Boolean(src) &&
@@ -63,7 +64,7 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
         const isImage =
             Boolean(src) &&
             (message.kind === "image" || mime.startsWith("image/"));
-        const isPdf = Boolean(fileUrl) && mime === "application/pdf";
+        const isPdf = Boolean(fileKey) && mime === "application/pdf";
 
         return (
             <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6">
@@ -125,7 +126,7 @@ export const uiMediaViewerSetup = async (ctx: Context) => {
                         </div>
                     ) : isPdf ? (
                         <iframe
-                            src={fileUrl}
+                            src={fileUrl(fileKey)}
                             title={message.file?.name ?? "PDF 预览"}
                             className="h-[80vh] w-full rounded-lg bg-white"
                         />

@@ -120,23 +120,32 @@ export const transferPlugin: Plugin = {
             }
 
             const row = result.transfer;
-            const sent = await chat.sendTo(me, rawSession, {
-                content: message || "转账",
-                quote: null,
-                mentions: null,
-                kind: "transfer",
-                file: null,
-                transfer: {
-                    id: row.id,
-                    fromId: row.fromId,
-                    toId: row.toId,
-                    amount: row.amount,
-                    message: row.message ?? undefined,
-                    state: row.state,
-                    createdAt: row.createdAt,
-                    expiredAt: row.expiredAt,
-                },
-            });
+            const sent = await chat
+                .sendTo(me, rawSession, {
+                    content: message || "转账",
+                    quote: null,
+                    mentions: null,
+                    kind: "transfer",
+                    file: null,
+                    transfer: {
+                        id: row.id,
+                        fromId: row.fromId,
+                        toId: row.toId,
+                        amount: row.amount,
+                        message: row.message ?? undefined,
+                        state: row.state,
+                        createdAt: row.createdAt,
+                        expiredAt: row.expiredAt,
+                    },
+                })
+                .catch(async (err: unknown) => {
+                    const refunded = await wallet.transferCancelRefund(row.id);
+                    if (refunded)
+                        ctx.log.warn(
+                            `transfer ${row.id} message send failed, refunded to sender`,
+                        );
+                    throw err;
+                });
             return { transfer: await summarize(row, me), message: sent };
         });
 

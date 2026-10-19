@@ -54,6 +54,7 @@ import {
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
+import { fileUrl } from "./auth";
 import type { CacheService } from "./cache";
 import type { ConnStatus, RpcService } from "./connection";
 import type { FriendsService } from "./friends";
@@ -660,7 +661,9 @@ const MessageGroupRow = memo(
                                                     ) : null}
                                                     {share.image ? (
                                                         <img
-                                                            src={`/files/${share.image}`}
+                                                            src={fileUrl(
+                                                                share.image,
+                                                            )}
                                                             alt=""
                                                             loading="lazy"
                                                             className="max-h-40 w-full rounded object-cover"

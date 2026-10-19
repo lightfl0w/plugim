@@ -22,15 +22,28 @@ describe("media files", () => {
         expect(uploaded.name).toBe("报告 2026.pdf");
         expect(uploaded.size).toBe(32);
 
-        const res = await app.app.request(`/files/${uploaded.key}`);
+        const res = await app.app.request(
+            `/files/${uploaded.key}?token=${root.token}`,
+        );
         expect(res.status).toBe(200);
         expect(res.headers.get("content-type")).toBe("application/pdf");
         expect(res.headers.get("content-length")).toBe("32");
         expect((await res.arrayBuffer()).byteLength).toBe(32);
 
-        const missing = await app.app.request(`/files/${"a".repeat(32)}`);
+        const anon = await app.app.request(`/files/${uploaded.key}`);
+        expect(anon.status).toBe(401);
+        const anonBad = await app.app.request(
+            `/files/${uploaded.key}?token=bad`,
+        );
+        expect(anonBad.status).toBe(401);
+
+        const missing = await app.app.request(
+            `/files/${"a".repeat(32)}?token=${root.token}`,
+        );
         expect(missing.status).toBe(404);
-        const bad = await app.app.request("/files/../../etc/passwd");
+        const bad = await app.app.request(
+            `/files/../../etc/passwd?token=${root.token}`,
+        );
         expect(bad.status).toBe(404);
     });
 
@@ -194,21 +207,29 @@ describe("media files", () => {
             12,
         );
 
-        const htmlRes = await app.app.request(`/files/${html.key}`);
+        const htmlRes = await app.app.request(
+            `/files/${html.key}?token=${root.token}`,
+        );
         expect(htmlRes.headers.get("content-disposition")).toContain(
             "attachment",
         );
         expect(htmlRes.headers.get("x-content-type-options")).toBe("nosniff");
 
-        const svgRes = await app.app.request(`/files/${svg.key}`);
+        const svgRes = await app.app.request(
+            `/files/${svg.key}?token=${root.token}`,
+        );
         expect(svgRes.headers.get("content-disposition")).toContain(
             "attachment",
         );
 
-        const pdfRes = await app.app.request(`/files/${pdf.key}`);
+        const pdfRes = await app.app.request(
+            `/files/${pdf.key}?token=${root.token}`,
+        );
         expect(pdfRes.headers.get("content-disposition")).toContain("inline");
 
-        const pngRes = await app.app.request(`/files/${png.key}`);
+        const pngRes = await app.app.request(
+            `/files/${png.key}?token=${root.token}`,
+        );
         expect(pngRes.headers.get("content-disposition")).toContain("inline");
         expect(pngRes.headers.get("cache-control")).toContain("immutable");
     });

@@ -147,6 +147,7 @@ export interface WalletStore {
         id: string,
         action: "accept" | "reject",
     ): Promise<TransferSettleResult>;
+    transferCancelRefund(id: string): Promise<boolean>;
     transferExpireIfNeeded(): Promise<string[]>;
     transferListForUser(userId: string): Promise<TransferRow[]>;
     transferListSession(sessionId: string): Promise<TransferRow[]>;

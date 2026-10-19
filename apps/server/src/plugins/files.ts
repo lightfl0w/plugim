@@ -331,6 +331,18 @@ export const filesPlugin: Plugin = {
         });
 
         app.get("/files/:key", async (c) => {
+            const header = c.req.header("authorization");
+            const bearer = header?.startsWith("Bearer ")
+                ? header.slice(7)
+                : null;
+            const user = await gateway.verify(
+                bearer ?? new URL(c.req.url).searchParams.get("token"),
+            );
+            if (!user)
+                return c.json(
+                    { ok: false, message: "未登录或登录已过期" },
+                    401,
+                );
             const key = c.req.param("key");
             if (!KEY_RE.test(key))
                 return c.json({ ok: false, message: "文件不存在" }, 404);

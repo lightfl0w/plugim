@@ -4,6 +4,14 @@ import { parseJsonResponse } from "./ui-shared";
 
 export const TOKEN_KEY = "plugim_token";
 
+export const fileUrl = (key: string, download = false): string => {
+    const params = new URLSearchParams({
+        token: localStorage.getItem(TOKEN_KEY) ?? "",
+    });
+    if (download) params.set("download", "1");
+    return `/files/${key}?${params.toString()}`;
+};
+
 export interface RegisterPolicy {
     requireInvite: boolean;
     open: boolean;

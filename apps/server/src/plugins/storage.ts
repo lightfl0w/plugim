@@ -49,6 +49,7 @@ import {
     text as sqliteText,
 } from "drizzle-orm/sqlite-core";
 import postgres from "postgres";
+import { migrations } from "../migrations";
 import type {
     AABillRow,
     AAPaymentRow,
@@ -1958,6 +1959,21 @@ export const storagePlugin: Plugin = {
         if (config.dbDriver === "postgres") {
             const client = postgres(config.dbUrl);
             await client.unsafe(CREATE_PG);
+            await client.begin(async (tx) => {
+                await tx.unsafe(
+                    "CREATE TABLE IF NOT EXISTS _migrations (id TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+                );
+                const appliedRows =
+                    (await tx`SELECT id FROM _migrations`) as Array<{
+                        id: string;
+                    }>;
+                const applied = new Set(appliedRows.map((row) => row.id));
+                for (const migration of migrations) {
+                    if (applied.has(migration.id)) continue;
+                    if (migration.sql !== null) await tx.unsafe(migration.sql);
+                    await tx`INSERT INTO _migrations (id) VALUES (${migration.id})`;
+                }
+            });
             await client.unsafe(
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS recalled_at TIMESTAMPTZ",
             );
@@ -4609,6 +4625,24 @@ export const storagePlugin: Plugin = {
                         };
                     });
                 },
+                async transferCancelRefund(id) {
+                    return db.transaction(async (tx) => {
+                        const rows = await tx
+                            .select()
+                            .from(transfersPg)
+                            .where(eq(transfersPg.id, id))
+                            .limit(1)
+                            .for("update");
+                        const row = rows[0];
+                        if (row?.state !== "pending") return false;
+                        await pgAddBalance(tx, row.fromId, row.amount);
+                        await tx
+                            .update(transfersPg)
+                            .set({ state: "refunded" })
+                            .where(eq(transfersPg.id, id));
+                        return true;
+                    });
+                },
                 async transferExpireIfNeeded() {
                     const rows = await db
                         .select()
@@ -4836,6 +4870,29 @@ export const storagePlugin: Plugin = {
             client.pragma("busy_timeout = 5000");
             client.pragma("wal_autocheckpoint = 1000");
             client.exec(CREATE_SQLITE);
+            client.exec(
+                "CREATE TABLE IF NOT EXISTS _migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+            );
+            const appliedIds = new Set(
+                (
+                    client
+                        .prepare("SELECT id FROM _migrations")
+                        .all() as Array<{
+                        id: string;
+                    }>
+                ).map((row) => row.id),
+            );
+            for (const migration of migrations) {
+                if (appliedIds.has(migration.id)) continue;
+                client.transaction(() => {
+                    if (migration.sql !== null) client.exec(migration.sql);
+                    client
+                        .prepare(
+                            "INSERT INTO _migrations (id, applied_at) VALUES (?, ?)",
+                        )
+                        .run(migration.id, new Date().toISOString());
+                })();
+            }
             const messageColumns = client.pragma(
                 "table_info(messages)",
             ) as Array<{
@@ -7706,6 +7763,25 @@ export const storagePlugin: Plugin = {
                             ok: true as const,
                             transfer: sqTransferRowOf({ ...row, state: next }),
                         };
+                    });
+                },
+                async transferCancelRefund(id) {
+                    return db.transaction((tx) => {
+                        const row = tx
+                            .select()
+                            .from(transfersSqlite)
+                            .where(eq(transfersSqlite.id, id))
+                            .limit(1)
+                            .get() as
+                            | typeof transfersSqlite.$inferSelect
+                            | undefined;
+                        if (row?.state !== "pending") return false;
+                        sqAddBalance(tx, row.fromId, row.amount);
+                        tx.update(transfersSqlite)
+                            .set({ state: "refunded" })
+                            .where(eq(transfersSqlite.id, id))
+                            .run();
+                        return true;
                     });
                 },
                 async transferExpireIfNeeded() {

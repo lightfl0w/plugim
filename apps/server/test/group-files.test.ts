@@ -189,7 +189,10 @@ describe("group files", () => {
         const media = app.ctx.get<MediaFilesStore>("mediaFiles");
         expect(await store.countByKey(shared.key)).toBe(1);
         expect((await listOf(app, second.id, owner.user)).total).toBe(1);
-        expect((await app.app.request(shared.url)).status).toBe(200);
+        expect(
+            (await app.app.request(`${shared.url}?token=${owner.token}`))
+                .status,
+        ).toBe(200);
         const afterNotice = await app.call(
             "group.file.delete",
             { groupId: second.id, key: shared.key },
@@ -198,7 +201,10 @@ describe("group files", () => {
         expect(afterNotice).toBe(true);
         expect(await store.countByKey(shared.key)).toBe(0);
         expect(await media.byKey(shared.key)).toBeTruthy();
-        expect((await app.app.request(shared.url)).status).toBe(200);
+        expect(
+            (await app.app.request(`${shared.url}?token=${owner.token}`))
+                .status,
+        ).toBe(200);
     });
 
     it("removes the blob once nothing references it", async () => {
@@ -227,7 +233,10 @@ describe("group files", () => {
         );
         const media = app.ctx.get<MediaFilesStore>("mediaFiles");
         expect(await media.byKey(uploaded.key)).toBeNull();
-        expect((await app.app.request(uploaded.url)).status).toBe(404);
+        expect(
+            (await app.app.request(`${uploaded.url}?token=${owner.token}`))
+                .status,
+        ).toBe(404);
     });
 
     it("spares group files from the orphan sweep", async () => {
@@ -336,7 +345,10 @@ describe("group files", () => {
         expect(await media.byKey(uploaded.key)).toBeTruthy();
         await app.call("admin.files.delete", { key: uploaded.key }, root.user);
         expect(await media.byKey(uploaded.key)).toBeNull();
-        expect((await app.app.request(uploaded.url)).status).toBe(404);
+        expect(
+            (await app.app.request(`${uploaded.url}?token=${owner.token}`))
+                .status,
+        ).toBe(404);
     });
 
     it("requires a session", async () => {

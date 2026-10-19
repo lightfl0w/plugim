@@ -32,6 +32,7 @@ import { Textarea } from "../components/ui/textarea";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
+import { fileUrl } from "./auth";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
 import type { MomentsService } from "./moments";
@@ -578,7 +579,7 @@ export const createMomentsPage = (ctx: Context): FC => {
                                 className="relative aspect-square overflow-hidden rounded-lg bg-muted"
                             >
                                 <img
-                                    src={`/files/${key}`}
+                                    src={fileUrl(key)}
                                     alt=""
                                     className="size-full object-cover"
                                 />
@@ -601,7 +602,7 @@ export const createMomentsPage = (ctx: Context): FC => {
                 {video ? (
                     <div className="relative mt-2 overflow-hidden rounded-lg bg-black">
                         <video
-                            src={`/files/${video}`}
+                            src={fileUrl(video)}
                             controls
                             playsInline
                             className="max-h-72 w-full"
@@ -920,7 +921,7 @@ export const createMomentsPage = (ctx: Context): FC => {
                                 onClick={() => openMedia(key, index, "image")}
                             >
                                 <img
-                                    src={`/files/${key}`}
+                                    src={fileUrl(key)}
                                     alt=""
                                     loading="lazy"
                                     className={cn(
@@ -942,7 +943,7 @@ export const createMomentsPage = (ctx: Context): FC => {
                         onClick={() => openMedia(video, 0, "video")}
                     >
                         <video
-                            src={`/files/${video}`}
+                            src={fileUrl(video)}
                             preload="metadata"
                             muted
                             playsInline
@@ -1286,7 +1287,7 @@ export const createMomentCard = (ctx: Context): FC<{ post: MomentPost }> => {
                             onClick={() => openMedia(key, index, "image", post)}
                         >
                             <img
-                                src={`/files/${key}`}
+                                src={fileUrl(key)}
                                 alt=""
                                 loading="lazy"
                                 className={cn(
@@ -1310,7 +1311,7 @@ export const createMomentCard = (ctx: Context): FC<{ post: MomentPost }> => {
                     }
                 >
                     <video
-                        src={`/files/${post.video}`}
+                        src={fileUrl(post.video as string)}
                         preload="metadata"
                         muted
                         playsInline

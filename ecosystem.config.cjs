@@ -2,7 +2,8 @@ module.exports = {
     apps: [
         {
             name: "plugim",
-            script: "apps/server/dist/index.js",
+            script: "node",
+            args: "apps/server/node_modules/tsx/dist/cli.mjs apps/server/src/index.ts",
             cwd: __dirname,
             instances: 1,
             exec_mode: "fork",

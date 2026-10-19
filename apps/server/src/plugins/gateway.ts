@@ -144,7 +144,9 @@ export const gatewayPlugin: Plugin = {
                 payload,
             };
             if (name.startsWith("message:")) metrics()?.addMessage();
-            for (const ws of sockets) sendFrame(ws, frame);
+            for (const [ws, user] of identities) {
+                if (user) sendFrame(ws, frame);
+            }
         };
 
         const emitToUser = (userId: string, name: string, payload: unknown) => {

@@ -32,7 +32,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
-import { TOKEN_KEY } from "./auth";
+import { fileUrl, TOKEN_KEY } from "./auth";
 import type { RpcService } from "./connection";
 import type { AdminService } from "./ui-admin";
 import type { AppMode, InstallService } from "./ui-install";
@@ -2026,7 +2026,7 @@ export const createAdminPage = (ctx: Context): FC => {
                                                 {formatStamp(row.createdAt)}
                                             </span>
                                             <a
-                                                href={`/files/${row.key}?download=1`}
+                                                href={fileUrl(row.key, true)}
                                                 download={row.name}
                                                 title="下载"
                                                 className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"

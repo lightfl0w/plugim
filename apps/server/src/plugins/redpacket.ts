@@ -211,27 +211,35 @@ export const redpacketPlugin: Plugin = {
             });
             const row = await redPackets.getById(id);
             if (!row) throw new Error("红包创建失败");
-            const sent = await chat.sendTo(me, resolved.session, {
-                content: blessing || DEFAULT_MESSAGE,
-                quote: null,
-                mentions: null,
-                kind: "redpacket",
-                file: null,
-                redPacket: {
-                    id: row.id,
-                    senderId: row.senderId,
-                    sessionId: row.sessionId,
-                    type: row.type,
-                    totalAmount: row.totalAmount,
-                    totalCount: row.totalCount,
-                    status: row.status,
-                    remaining: row.remaining,
-                    remainCount: row.remainCount,
-                    message: row.message,
-                    createdAt: row.createdAt,
-                    expiredAt: row.expiredAt,
-                },
-            });
+            const sent = await chat
+                .sendTo(me, resolved.session, {
+                    content: blessing || DEFAULT_MESSAGE,
+                    quote: null,
+                    mentions: null,
+                    kind: "redpacket",
+                    file: null,
+                    redPacket: {
+                        id: row.id,
+                        senderId: row.senderId,
+                        sessionId: row.sessionId,
+                        type: row.type,
+                        totalAmount: row.totalAmount,
+                        totalCount: row.totalCount,
+                        status: row.status,
+                        remaining: row.remaining,
+                        remainCount: row.remainCount,
+                        message: row.message,
+                        createdAt: row.createdAt,
+                        expiredAt: row.expiredAt,
+                    },
+                })
+                .catch(async (err: unknown) => {
+                    await redPackets.claimBack(id, {
+                        at: new Date().toISOString(),
+                    });
+                    ctx.log.warn(`redpacket ${id} message send failed, voided`);
+                    throw err;
+                });
             return { packet: await summarize(row, me.id), message: sent };
         });
 

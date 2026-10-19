@@ -36,6 +36,7 @@ import { Switch } from "../components/ui/switch";
 import { UserAvatar } from "../components/ui/user-avatar";
 import { cn } from "../lib/utils";
 import type { AuthService } from "./auth";
+import { fileUrl } from "./auth";
 import type { RpcService } from "./connection";
 import type { FriendsService } from "./friends";
 import type { GroupsService } from "./groups";
@@ -659,7 +660,7 @@ export const uiGroupPanelSetup = async (ctx: Context) => {
                                             <a
                                                 title="下载"
                                                 className="rounded-md p-1.5 text-muted-foreground hover:bg-accent"
-                                                href={`/files/${file.key}?download=1`}
+                                                href={fileUrl(file.key, true)}
                                                 download={file.name}
                                             >
                                                 <DownloadIcon className="size-4" />
