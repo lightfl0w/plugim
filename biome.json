@@ -1,7 +1,15 @@
 {
     "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
     "files": {
-        "includes": ["**", "!**/dist", "!**/data", "!**/*.css"]
+        "includes": [
+            "**",
+            "!**/dist",
+            "!**/data",
+            "!**/node_modules",
+            "!**/target",
+            "!**/.vitepress",
+            "!**/*.css"
+        ]
     },
     "formatter": {
         "enabled": true,

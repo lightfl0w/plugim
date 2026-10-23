@@ -4,17 +4,17 @@
 
 ### 自动备份
 
-用 SQLite 时自带备份任务：
+用任意一种数据库都自带备份任务：
 
-- 位置：`data/backups/plugim-YYYY-MM-DD-HH-MM-SS.db`，同时留一份最新的 `install.json`
+- 位置：`data/backups/`，SQLite 是 `plugim-YYYY-MM-DD-HH-MM-SS.db`，PostgreSQL 是 `plugim-YYYY-MM-DD-HH-MM-SS.sql`（`pg_dump --no-owner --no-privileges` 导出），同时留一份最新的 `install.json`
 - 保留份数：`PLUGIM_BACKUP_KEEP`，默认 7
 - 备份目录：`PLUGIM_BACKUP_DIR`，默认 `data/backups`
 
-在后台「定时任务」页能看到 `数据库备份` 这条，可以改执行周期、停用或立即执行一次，页面显示上次执行时间和结果。用 PostgreSQL 时这条任务会直接跳过。
+在后台「定时任务」页能看到 `数据库备份` 这条，可以改执行周期、停用或立即执行一次，页面显示上次执行时间和结果。SQLite 用 `VACUUM INTO` 生成一致性快照，写入不受影响；PostgreSQL 需要运行环境里有 `pg_dump`（官方镜像与仓库自带的 Dockerfile 都装了 `postgresql-client`）。
 
 ### SQLite
 
-所有数据都在一个文件里（默认 `data/plugim.db`，以安装向导里实际填的为准）。数据库默认开启 WAL，目录里会出现同名的 `-wal`/`-shm` 文件，属正常现象。热备份用 sqlite3 的 backup API，不要直接拷正在写的文件：
+所有数据都在一个文件里（默认 `data/plugim.db`，以安装向导里实际填的为准）。数据库默认开启 WAL，目录里会出现同名的 `-wal`/`-shm` 文件，属正常现象。热备份用 sqlite3 的 backup API 或 `VACUUM INTO`，不要直接拷正在写的文件：
 
 ```bash
 sqlite3 /opt/plugim/data/plugim.db ".backup '/backup/plugim-$(date +%F).db'"

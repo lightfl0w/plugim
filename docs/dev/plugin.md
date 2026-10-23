@@ -1,6 +1,10 @@
 # 插件模型
 
-后端和前端共用 `@plugim/core` 的 `Context`。一个插件就是四段声明加一个 `apply`：
+前端用 `@plugim/core` 的 `Context` 装配界面与客户端状态；后端是 Rust 里一组按 RPC 方法名注册的 handler 模块，两种模型都强调「声明依赖、各自启停」。
+
+## 前端插件
+
+一个插件就是四段声明加一个 `apply`：
 
 ```ts
 interface Plugin {
@@ -53,79 +57,68 @@ off();
 - `ctx.disable(name)` 连同依赖它的插件一起停，`ctx.enable(name)` 等依赖都可用时再启动。
 - `apply` 里注册的监听、定时器、连接都要在 `Dispose` 里清理，`ctx.stop()` 按登记的反序调用。
 
-## 写一个后端插件
+## 写一个后端 handler
 
-服务端插件都在 `apps/server/src/plugins/` 下，一个插件一个文件。下面这个插件提供一个服务和一条 RPC：
+后端在 `apps/server/src/plugins/` 下，一个模块一组方法。下面这个模块加一条 RPC：
 
-```ts
-import type { Plugin } from "@plugim/core";
-import type { ConnInfo, GatewayService } from "../types";
+```rust
+use serde_json::{json, Value};
 
-export const greetPlugin: Plugin = {
-    name: "greet",
-    description: "问候",
-    provides: ["greet"],
-    inject: ["gateway"],
-    async apply(ctx) {
-        const gateway = ctx.get<GatewayService>("gateway");
+use crate::plugins::auth::require_user;
+use crate::state::{handler, Registry};
 
-        const hello = (username: string) => `你好，${username}`;
-
-        gateway.rpc("greet.hello", (_params, conn: ConnInfo) => {
-            if (!conn.user) throw new Error("未登录或登录已过期");
-            return { message: hello(conn.user.username) };
-        });
-
-        ctx.provide("greet", { hello });
-        return undefined;
-    },
-};
+pub fn register(registry: &mut Registry) {
+    registry.add(
+        "greet.hello",
+        handler(|_state, conn, _params| async move {
+            let me = require_user(&conn)?;
+            Ok(json!({ "message": format!("你好，{}", me.username) }))
+        }),
+    );
+}
 ```
 
-RPC 处理器的签名是 `(params, conn)`：
+handler 的签名是 `Fn(SharedState, Conn, Value) -> impl Future<Output = Result<Value, String>>`，用 `state::{handler, Registry}` 里的 `handler()` 包一层就能直接用 `async` 块：
 
-- `params` 是前端传来的对象，服务端自己做类型校验和取范围限制。
-- `conn.user` 是 `AuthUser | null`，登录态由网关在连接建立时校验 token 得出，前端伪造不了身份。
-- 处理器抛出的错误会变成 `rpc:err` 回给前端，`message` 就是错误文案。
-- 返回值作为 `rpc:ok` 的 result 发回，参数与返回值的类型定义放在 `@plugim/protocol`。
+- `params` 是前端传来的 JSON 对象，取值与范围校验在 handler 里自己做。
+- `conn.user` 是 `Option<AuthUser>`，登录态由网关在连接建立时校验 token 得出，前端伪造不了身份。要登录态的用 `require_user(&conn)?`。
+- 返回的 `Err(String)` 会变成 `rpc:err` 的 `message`，`Ok(Value)` 作为 `rpc:ok` 的 result。
+- 参数与返回值的类型定义放在 `@plugim/protocol`，前端 import 同一份。
 
-推事件用 `gateway.emitToUser(userId, name, payload)` 或 `gateway.broadcast(name, payload)`，前者发给这个用户的所有连接，后者发给所有连接。事件名取协议里的 `ServerEventName`，前端收到的是 `server:<name>` 的 Context 事件，由前端 connection 插件转发。
+推事件用 `state.hub.emit_to_user(user_id, name, payload).await`、`emit_to_users(&ids, ..)` 或 `broadcast(name, payload).await`。事件名取协议里的 `ServerEventName`，前端收到的是 `server:<name>` 的 Context 事件，由前端 connection 插件转发。
+
+发消息不要直接调 hub：一律走 `services::send_to(state, &user, session, payload)`，它负责会话键推导、成员校验、seq 分配、未读与离线推送。
 
 ## 装进 plugim
 
-把上面的代码存成 `apps/server/src/plugins/greet.ts`，再在 `apps/server/src/index.ts` 里登记：
-
-```ts
-import { greetPlugin } from "./plugins/greet";
-
-ctx.plugin(greetPlugin);
-```
-
-登记写在文件哪个位置都行，每行只把插件记进清单，`ctx.start()` 时统一按 `inject` 算出启动顺序。
+1. 把上面的代码存成 `apps/server/src/plugins/greet.rs`
+2. 在 `src/plugins/mod.rs` 里加 `pub mod greet;`，并在 `install()` 里调 `greet::register(registry);`
+3. 冒烟脚本里补一条用例
 
 跑起来验证：
 
 ```sh
 pnpm dev:server
+pnpm smoke          # SQLite
+pnpm smoke:pg       # PostgreSQL
 ```
 
-`dev:server` 是 `tsx watch`，存盘自动重启；生产上是 `pnpm build` 之后 `pnpm start`。服务端没有插件管理页，插件是否起来看启动日志。
-
-不想写前端时，浏览器控制台就能试这条 RPC，前端的 Context 挂在 `window.__ctx` 上：
+服务端没有插件管理页，方法是否注册上看启动日志。不想写前端时，浏览器控制台就能试这条 RPC：
 
 ```js
 await window.__ctx.get("rpc").call("greet.hello", {})
 ```
 
-服务端侧的用例写法见[测试与校验](/dev/test)。
-
 ## 加一张表
 
-存储集中在 `apps/server/src/plugins/storage.ts`，sqlite 与 postgres 各一套：
+建表语句在 `apps/server/src/store.rs`，`DDL` 是 SQLite、`PG_DDL` 是 PostgreSQL，加表时两边都写，并且只用一份能在两种库上跑的 SQL：
 
-- 建表语句是 `CREATE_SQLITE` 与 `CREATE_PG` 两段常量，加表时两边都写。时间戳在 sqlite 里是整数毫秒，在 pg 里是 `timestamptz`。
-- drizzle 表定义同样两份，`sqliteTable` 与 `pgTable` 各一份，供查询用。
-- Store 的接口声明在 `apps/server/src/types.ts`。插件之间只依赖接口，不关心底层驱动，测试里也常替换成假实现。
+- 布尔列两边都存 `BIGINT 0/1`，不要用 PG 原生 `BOOLEAN`，否则所有 `VALUES (..., 0, ...)` 直接报类型不匹配
+- 时间戳统一是整数毫秒，用 `BIGINT` 而不是 `INTEGER`（`INTEGER` 存不下毫秒时间戳）
+- 占位符一律是 `$N`（SQLite 驱动也认），动态拼 `IN` 列表时按 `binds.len() + 1` 现算编号
+- 避开 SQLite 专有写法：两参 `max(a, b)`、`date(ms, 'unixepoch')`、未加引号的驼峰别名（PG 会转成小写）、`INSERT OR REPLACE`
+
+取值统一走 `RowExt`（`get_str` / `get_i64` / `get_bool` / `get_opt_str` …），它把两种驱动的类型差异吃掉。
 
 ## 协议
 

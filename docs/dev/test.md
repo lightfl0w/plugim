@@ -5,35 +5,43 @@
 从仓库根跑：
 
 ```bash
-pnpm test
-pnpm typecheck
-pnpm lint
+pnpm typecheck     # 前端 tsc --noEmit + cargo check
+pnpm test          # 前端与 core 的 vitest
+pnpm lint          # Biome
+pnpm smoke         # 后端端到端冒烟（SQLite）
+pnpm smoke:pg      # 后端端到端冒烟（PostgreSQL）
 ```
 
-`pnpm test` 按包依次跑 vitest：core 测 Context 的依赖与生命周期，server 测 RPC 与存储，web 测前端里的纯服务。单跑一个包用 `pnpm --filter @plugim/server test`。`pnpm typecheck` 是各包的 `tsc --noEmit`，`pnpm lint` 是 Biome，改动提交前三个都跑一遍。
+改动提交前建议全跑一遍。后端没有 Rust 单元测试，行为全部压在冒烟脚本上 —— 它起的是真实服务进程、真实数据库、真实 WebSocket，比重型 mock 更贴近线上。
 
-## 服务端测试
+## 后端冒烟
 
-`apps/server/test/helpers.ts` 的 `createTestApp()` 起一个真实的 Context：gateway 换成假实现，事件记进数组，其余插件都是真身，SQLite 落在 `mkdtemp` 出来的临时目录，用例之间互不影响。
+`scripts/smoke.mjs` 是唯一的用例文件，`scripts/smoke-sqlite.sh` 与 `scripts/smoke-pg.sh` 负责准备环境：
 
-```ts
-const app = await createTestApp({ admins: ["root"] });
-const root = await app.register("root");
-const bob = await app.register("bob");
-
-await app.call("friend.request", { username: "bob" }, root.user);
-expect(app.eventsFor(bob.user.id, "friend:update")).toHaveLength(1);
+```bash
+bash scripts/smoke-sqlite.sh    # 临时目录 + 临时库，PORT=3999
+bash scripts/smoke-pg.sh        # 重建 plugim_smoke 库后跑同一套用例
 ```
 
-帮手清单：
+两个脚本都会把临时目录、端口、`install.json` 传给 `smoke.mjs`，所以切换驱动时方言问题会立刻暴露 —— 目前 SQLite 315 项、PostgreSQL 317 项（多两条 PG 专用用例）。
 
-- `app.call(method, params, user)` 直接调 RPC 处理器，`user` 传 `null` 表示未登录。未知方法会抛 `unknown method`。
-- `app.register` 与 `app.login` 建号并返回 `{ user, token }`，默认密码 `Passw0rd!`。
-- `app.eventsFor(userId, name)` 取发给某个用户的事件，`name` 省略则取全部。
-- `app.setOnline(user)` 与 `app.goOffline(userId)` 控制在线状态，用来测离线推送、通话清理这类分支。
-- `uploadFile(app, token, name, mime, bytes)` 走真实的 `/upload` 路由。
+脚本自带的几个 mock 服务让外部依赖可控，不联网也能跑：
 
-完整用例可以看 `apps/server/test/group-files.test.ts`：建群、上传、把文件加进群、断言成员收到 `group:update`、断言陌生人被拒。
+| mock | 用途 |
+| --- | --- |
+| `/hook` | 机器人 webhook 回调 |
+| `/push` | Web Push 接收端，用独立实现解 RFC 8291 载荷、验 VAPID 签名 |
+| `/og`、`/og-redirect`、`/og-plain` | 链接预览抓取（含重定向与非 HTML 响应） |
+| S3 mock | 完整重算 SigV4 签名，验密钥与 canonical headers |
+
+写新用例时照抄 `check(name, cond, detail)` 的形状，断言文案用英文短句，`detail` 里塞原始返回，失败时会直接打出来：
+
+```js
+const res = await alice.rpc("greet.hello", {});
+check("greet returns message", res.message === "你好，alice", res);
+```
+
+`PLUGIM_SMOKE_PG_URL` 存在时脚本才会跑 PostgreSQL 专用断言（`install.testdb` 的 postgres 分支），SQLite 模式下自动跳过。
 
 ## 前端测试
 
@@ -52,3 +60,5 @@ const presence = ctx.get<PresenceService>("presence");
 ```
 
 服务端推来的事件用 `ctx.emit("server:presence:update", { username: "bob", online: true })` 模拟，这也是前端唯一接触事件的地方。参照 `apps/web/test/presence.test.ts`。
+
+`@plugim/core` 自己有一套用例，测的是 Context 的依赖等待、启停顺序与失败隔离，改插件运行时先跑它。

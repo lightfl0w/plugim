@@ -4,7 +4,7 @@
 
 ## 特性
 
-- 一切皆插件：后端模块与前端界面挂载在同一个 `@plugim/core` 插件模型上，声明依赖即自动等待，按拓扑顺序启动
+- 一切皆插件：前端界面挂载在 `@plugim/core` 的插件模型上，声明依赖即自动等待，按拓扑顺序启动
 - 前后端解耦：单一 wire protocol，WebSocket 事件流加 RPC，两端共享 `@plugim/protocol` 类型
 - 账号体系：注册登录、改密、管理员重置，argon2 密码哈希加 JWT，WS 与 HTTP 双通道鉴权，消息身份由服务端绑定
 - 关系链：好友申请、同意、拒绝、删除、屏蔽，备注只对自己可见
@@ -13,35 +13,30 @@
 - 消息：文本、图片、语音、文件、引用回复、单条与合并转发、@提及与 @全体成员、服务端搜索、已读回执、输入中状态、免打扰
 - 通话：语音、视频、屏幕共享、群组通话，信令走 WebSocket，媒体走 WebRTC
 - 客户端：桌面双栏、移动端 H5 响应式布局、独立聊天小窗、PWA 与离线 Web Push
-- 运维：安装向导、单端口生产部署、管理后台覆盖用户、消息检索、文件管理、定时任务与数据统计，媒体可存本地磁盘或 S3 兼容对象存储
+- 运维：安装向导、单端口生产部署、Prometheus 指标、管理后台覆盖用户、消息检索、文件管理、定时任务与数据统计，媒体可存本地磁盘或 S3 兼容对象存储，数据库支持 SQLite 与 PostgreSQL
 
 ## 目录结构
 
 ```
 plugim/
 ├── packages/
-│   ├── core/          插件运行时：Context、服务注册表、事件总线、插件生命周期
+│   ├── core/          前端插件运行时：Context、服务注册表、事件总线、插件生命周期
 │   └── protocol/      共享协议：envelope 帧定义 event / rpc / rpc:ok / rpc:err
 ├── apps/
-│   ├── server/        Hono + @hono/node-ws + Drizzle
-│   │   └── src/plugins/
-│   │       ├── config.ts        环境配置：数据库、端口、JWT 密钥、VAPID、存储驱动
-│   │       ├── gateway.ts       WS Hub、RPC 注册表、连接身份与心跳保活
-│   │       ├── storage.ts       sqlite 与 postgres 双驱动，建表与全部 Store
-│   │       ├── auth.ts          argon2 加 JWT 注册登录，改密与重置后旧 token 失效
-│   │       ├── friends.ts       好友关系链与备注 RPC
-│   │       ├── group.ts         群组、成员、禁言、邀请码与互加好友管控
-│   │       ├── group-files.ts   群文件列表、添加与删除
-│   │       ├── chat.ts          发消息、历史分页、服务端搜索、转发、输入中
-│   │       ├── screen.ts        单聊与群聊的音视频、屏幕共享信令
-│   │       ├── files.ts         上传接口、文件托管，本地磁盘或 S3
-│   │       ├── push.ts          VAPID 密钥与 Web Push 投递
-│   │       ├── tasks.ts         定时任务：过期消息清理与孤儿媒体清扫
-│   │       ├── admin.ts         管理后台 RPC
-│   │       ├── org.ts           部门架构、企业通讯录、部门群与成员职位
-│   │       ├── audit.ts         审计日志：记录、分类筛选与查询
-│   │       ├── install.ts       安装向导 RPC
-│   │       └── web.ts           前端静态托管与 SPA fallback
+│   ├── server/        Rust 后端（Cargo 工程）
+│   │   └── src/
+│   │       ├── main.rs        路由、WebSocket 循环、静态托管、优雅关闭
+│   │       ├── config.rs      配置解析（install.json > 环境变量 > .env）
+│   │       ├── state.rs       AppState、RPC 注册表、连接与分发
+│   │       ├── hub.rs         连接表、广播、踢下线、掉线钩子
+│   │       ├── store.rs       全部 SQL（AnyPool 双驱动、RowExt 兼容层）
+│   │       ├── services.rs    会话键推导、好友/群校验、发送与广播
+│   │       ├── scheduler.rs   定时任务：消息清理、孤儿媒体清扫、数据库备份
+│   │       ├── metrics.rs     /metrics 与 /metrics.json
+│   │       ├── logger.rs      按天按体积轮转的日志文件
+│   │       ├── linkpreview.rs 链接卡片抓取（含 SSRF 防护）
+│   │       ├── util.rs        JWT、argon2、TOTP、时间与参数工具
+│   │       └── plugins/       auth / friends / group / chat / files / moments / org ...
 │   └── web/           Vite + React + Tailwind
 │       └── src/
 │           ├── host.tsx            ui 服务、导航栏与路由宿主
@@ -57,16 +52,20 @@ plugim/
 │               ├── ui-views.tsx         全部界面段，按槽位注册
 │               └── ui-*.tsx             单个界面模块，由 ui-views 挂载
 ├── docs/              VitePress 部署与开发文档
+├── scripts/           冒烟测试与运维脚本
+├── Dockerfile
 ├── biome.json
 └── pnpm-workspace.yaml
 ```
 
 ## 快速开始
 
+开发环境需要 Node 22+、pnpm 与 Rust 工具链：
+
 ```sh
 pnpm install
-pnpm dev:server
-pnpm dev:web
+pnpm dev:server     # cargo run，改 .rs 自动重编
+pnpm dev:web        # Vite dev server，接口代理到 3000
 ```
 
 首次打开站点进入安装向导。
@@ -78,7 +77,7 @@ pnpm dev:web
 | `PORT` | `3000` | 服务端口，页面、RPC 与 WebSocket 共用 |
 | `PLUGIM_DB_DRIVER` | `sqlite` | 设为 `postgres` 切换驱动 |
 | `PLUGIM_DB_FILE` | `data/plugim.db` | SQLite 文件路径 |
-| `DATABASE_URL` | `postgres://localhost:5432/plugim` | Postgres 连接串 |
+| `DATABASE_URL` | 空 | PostgreSQL 连接串，`PLUGIM_DB_DRIVER=postgres` 时必填 |
 | `PLUGIM_JWT_SECRET` | 内置开发密钥 | 生产环境必须改 |
 
 完整清单与优先级见 [docs/config/env.md](docs/config/env.md)，安装向导写入的 `data/install.json` 优先级最高。
@@ -87,13 +86,15 @@ pnpm dev:web
 
 | 命令 | 说明 |
 |------|------|
-| `pnpm dev:server` / `pnpm dev:web` | 开发模式，服务端带 watch |
-| `pnpm build` | 构建前端与后端产物 |
+| `pnpm dev:server` / `pnpm dev:web` | 开发模式 |
+| `pnpm build` | 构建前端产物与 release 二进制 |
 | `pnpm start` | 单端口生产启动，需先 `pnpm build` |
-| `pnpm test` | 全部 vitest |
-| `pnpm typecheck` | 全仓 tsc --noEmit |
+| `pnpm check:server` | `cargo check` |
+| `pnpm test` | 前端与 core 的 vitest |
+| `pnpm typecheck` | 前端 tsc --noEmit + cargo check |
 | `pnpm lint` / `pnpm lint:fix` | Biome 检查 / 自动修复 |
-| `pnpm docs:dev` / `pnpm docs:build` | VitePress 文档站，含部署与开发两部分 |
+| `pnpm smoke` / `pnpm smoke:pg` | 后端端到端冒烟，SQLite / PostgreSQL 各一套 |
+| `pnpm docs:dev` / `pnpm docs:build` | VitePress 文档站 |
 
 ## 路线图
 
@@ -108,5 +109,4 @@ pnpm dev:web
 - [x] 管理后台、安装向导与定时清理
 - [x] PWA 与离线 Web Push
 - [x] 企业版：组织架构、企业通讯录、部门群、强制改密与审计日志
-- [ ] Postgres 部署联调
 - [ ] Redis 缓存层

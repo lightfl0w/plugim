@@ -38,6 +38,7 @@ export default defineConfig({
                 {
                     text: "开发",
                     items: [
+                        { text: "后端结构", link: "/dev/backend" },
                         { text: "插件模型", link: "/dev/plugin" },
                         { text: "界面插件", link: "/dev/ui" },
                         { text: "测试与校验", link: "/dev/test" },

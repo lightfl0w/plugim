@@ -1,8 +1,5 @@
 export type Dispose = () => void | Promise<void>;
 
-export * from "./container";
-export * from "./plugins";
-
 export interface Logger {
     info(...args: unknown[]): void;
     warn(...args: unknown[]): void;
@@ -41,6 +38,7 @@ export interface PluginInfo {
 export interface ContextOptions {
     log?: Logger;
     disabled?: string[];
+    bootTimeoutMs?: number;
 }
 
 export class ServiceNotFoundError extends Error {
@@ -74,13 +72,19 @@ export class Context {
     private changeListeners = new Set<ChangeFn>();
     private booting = false;
     private readonly disabledNames: Set<string>;
+    private readonly bootTimeoutMs: number;
 
     constructor(options: ContextOptions = {}) {
         this.log = options.log ?? defaultLogger;
         this.disabledNames = new Set(options.disabled ?? []);
+        this.bootTimeoutMs = options.bootTimeoutMs ?? 30_000;
     }
 
     provide<T>(name: string, value: T): void {
+        if (this.services.has(name))
+            this.log.warn(
+                `service "${name}" provided again, previous value overwritten`,
+            );
         this.services.set(name, value);
         this.unavailable.delete(name);
         const pending = this.waiters.get(name);
@@ -236,12 +240,32 @@ export class Context {
         this.notifyChange();
     }
 
+    private waitForWithTimeout(name: string): Promise<unknown> {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(
+                () =>
+                    reject(
+                        new Error(
+                            `等待服务 "${name}" 超时(${this.bootTimeoutMs}ms)，可能存在插件循环依赖或提供方启动失败`,
+                        ),
+                    ),
+                this.bootTimeoutMs,
+            );
+        });
+        return Promise.race([this.waitFor(name), timeout]).finally(() => {
+            if (timer) clearTimeout(timer);
+        });
+    }
+
     private async startEntry(entry: PluginEntry): Promise<PluginState> {
         if (entry.state !== "enabled") return entry.state;
         try {
             if (entry.plugin.inject?.length) {
                 await Promise.all(
-                    entry.plugin.inject.map((name) => this.waitFor(name)),
+                    entry.plugin.inject.map((name) =>
+                        this.waitForWithTimeout(name),
+                    ),
                 );
             }
             const dispose = await entry.plugin.apply(this);

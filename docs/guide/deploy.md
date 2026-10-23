@@ -23,17 +23,20 @@
 2. 进程环境变量
 3. `.env` 文件
 
-`.env` 会从当前工作目录、`apps/server`、仓库根等位置向上查找，加载时不会覆盖已存在的环境变量。全部变量见[环境变量参考](/config/env)。
+`.env` 会从当前工作目录、`apps/server`、仓库根等位置向上查找，也会读 `/etc/plugim/.env`，加载时不会覆盖已存在的环境变量。全部变量见[环境变量参考](/config/env)。
 
 ## 最小生产示例
 
 ```bash
 cd /opt/plugim
 cp .env.example .env
-openssl rand -hex 32
+openssl rand -hex 32          # 填进 .env 的 PLUGIM_JWT_SECRET
 pnpm install && pnpm build
 pnpm start
 ```
+
+只用二进制运行时连 Node 都不需要，把 `apps/web/dist` 与 `apps/server/target/release/plugim-server`
+拷到目标机即可（见下面的容器与 systemd 示例）。
 
 ::: danger
 不设置 `PLUGIM_JWT_SECRET` 时用的是内置开发密钥，启动日志会打印告警。拿到这个密钥就能伪造任意用户的会话，公网部署必须设置。
@@ -54,7 +57,7 @@ Type=simple
 User=plugim
 WorkingDirectory=/opt/plugim
 EnvironmentFile=/opt/plugim/.env
-ExecStart=/usr/bin/node apps/server/dist/index.js
+ExecStart=/opt/plugim/apps/server/target/release/plugim-server
 Restart=always
 RestartSec=3
 KillSignal=SIGTERM
@@ -88,9 +91,42 @@ pm2 save
 pm2 startup
 ```
 
-`ecosystem.config.cjs` 里已经配好单实例 fork 模式、崩溃自动重启、`kill_timeout` 15 秒等待、内存超过 512 MB 重启。改完配置用 `pm2 reload plugim` 生效，日志默认走 `data/logs/pm2-*.log`。
+`ecosystem.config.cjs` 直接拉起编译好的二进制，配好单实例 fork 模式、崩溃自动重启、`kill_timeout` 15 秒等待，
+日志默认走 `data/logs/pm2-*.log`。
 
-`instances` 必须是 1：WebSocket 连接和 SQLite 都绑在单进程上，开 cluster 会各有各的内存状态。
+`instances` 必须是 1：WebSocket 连接状态都在单进程内存里，开 cluster 会各有各的连接表。
+
+## Docker
+
+仓库自带 `Dockerfile`（三段构建：Node 构建前端 → Rust 构建后端 → Debian slim 运行时）和
+`docker-compose.yml`：
+
+```bash
+docker compose up -d --build          # SQLite，数据在 plugim-data 卷
+docker compose --profile pg up -d     # 额外起一个 PostgreSQL
+```
+
+容器内的约定：
+
+| 变量 | 值 |
+| --- | --- |
+| `PLUGIM_WEB_DIST` | `/app/web`（镜像内已放好前端产物） |
+| `PLUGIM_INSTALL_FILE` | `/app/data/install.json` |
+| 数据库 | `/app/data/plugim.db` |
+| 存储 | `/app/data/uploads` |
+| 日志 | `/app/data/logs` |
+| 备份 | `/app/data/backups` |
+
+`/app/data` 是数据卷，重建容器不会丢数据。要连 compose 里的 PostgreSQL，在仓库根建一个 `.env`（compose 会自动读取）：
+
+```bash
+PLUGIM_DB_DRIVER=postgres
+DATABASE_URL=postgres://plugim:plugim@postgres:5432/plugim
+```
+
+也可以直接写进 `app` 服务的 `environment`。装完向导写入的 `install.json` 优先级最高，用过向导之后以向导的选择为准。
+
+镜像里带 `postgresql-client`，所以「数据库备份」定时任务在容器内也能用 `pg_dump`。
 
 ## 前端产物路径
 
@@ -128,14 +164,15 @@ grep 'slow rpc' data/logs/server-*.log
 
 - 不配置日志目录：日志走 stdout，交给 journald 或容器日志驱动。
 - 配置了日志目录（向导里填的，或 `PLUGIM_LOG_DIR`）：额外按天写一份到 `<logDir>/server-YYYY-MM-DD.log`，跨天自动切到新文件，进程不用重启。
-- 单文件超过 `PLUGIM_LOG_MAX_MB`（默认 8 MB）切成 `server-YYYY-MM-DD.1.log`、`.2.log`，避免一份日志无限涨。
+- 单文件超过 `PLUGIM_LOG_MAX_BYTES`（默认 8 MiB）切成 `server-YYYY-MM-DD.1.log`、`.2.log`，避免一份日志无限涨。
 - 超过 `PLUGIM_LOG_KEEP_DAYS`（默认 14 天）和超过 `PLUGIM_LOG_KEEP_FILES`（默认 200 份）的旧文件，在启动和每次切分时清掉。
+- 无论是否配置日志目录，日志都会同时写 stdout，容器与 journald 都能照常收集。
 
 ## 数据库
 
 个人或 50 人以下的内网环境用 SQLite 就够，数据全在一个文件里，备份就是拷文件。多人、公网环境建议 PostgreSQL，连接串形如 `postgres://user:pass@host:5432/db`。
 
-SQLite 默认开 WAL、`synchronous=NORMAL`、`busy_timeout=5000`，写入不会因为备份或读操作直接报 `database is locked`。备份走 SQLite 的在线备份接口，见[备份与升级](/guide/backup#自动备份)。
+SQLite 默认开 WAL、`synchronous=NORMAL`、`busy_timeout=5000`，写入不会因为备份或读操作直接报 `database is locked`。备份走 `VACUUM INTO` 生成一致性快照，PostgreSQL 走 `pg_dump`，见[备份与升级](/guide/backup#自动备份)。
 
 表结构在启动时自动创建和补齐，不用手工跑迁移。
 
@@ -147,7 +184,7 @@ SQLite 默认开 WAL、`synchronous=NORMAL`、`busy_timeout=5000`，写入不会
 - 群组管理：查看群主与人数，解散任意群
 - 消息检索：按关键字、发送者查询，支持分页
 - 文件管理：媒体文件列表，含上传者、大小与占用合计；可以下载、删除单个文件，也能在这里切换本地磁盘与 S3 存储、改单文件上限，改完点「检测存储」确认可读写
-- 定时任务：过期消息清理、孤儿文件清理两个任务，可以改执行周期、停用或立即执行，页面显示上次执行时间和结果
+- 定时任务：过期消息清理、孤儿文件清理、数据库备份三个任务，可以改执行周期、停用或立即执行，页面显示上次执行时间和结果
 - 系统设置：注册用户、群组、在线连接、消息总数、媒体占用、按天消息量与活跃用户趋势图；消息保留天数，0 表示不限制；站点名称与图标；系统更新
 
 ## 一键更新
@@ -156,7 +193,7 @@ SQLite 默认开 WAL、`synchronous=NORMAL`、`busy_timeout=5000`，写入不会
 
 1. 派生一个脱离服务进程的 `scripts/self-update.sh` 执行更新，服务本身继续响应
 2. 更新器依次执行 `git fetch`、`git merge --ff-only origin/main`、`pnpm install`、`pnpm build`，进度写在 `data/update-status.json`，后台每 2 秒轮询展示
-3. 构建成功后重启服务：pm2 用 `pm2 restart plugim`，systemd 用 `systemctl restart plugim.service`，都没有时对旧进程发 `SIGTERM`，裸 node 场景会自行拉起新进程
+3. 构建成功后重启服务：pm2 用 `pm2 restart plugim`，systemd 用 `systemctl restart plugim.service`，都没有时对旧进程发 `SIGTERM`，再以 `nohup` 拉起新的二进制
 4. 客户端重连后比对 `/version` 的 `buildId`（git short hash），与本地记录不一致就自动刷新，拿到新的前端产物
 
 构建失败会自动 `git checkout` 回滚到原 commit 并上报错误，不会留下半更新状态。
@@ -165,6 +202,8 @@ SQLite 默认开 WAL、`synchronous=NORMAL`、`busy_timeout=5000`，写入不会
 
 - 必须是 git 克隆部署，且仓库配置了远端；用 tarball 或 dist-only 部署时卡片会说明原因并禁用更新
 - 更新拉取固定的 `origin/main`，本地有未提交改动时会拒绝更新，避免冲突
+- **服务器需要 Rust 工具链**：更新器会执行 `pnpm build`，其中包含 `cargo build --release`。只装二进制的部署方式不能自更新
+- 容器部署同理：镜像里不含 `.git` 与 `scripts/`，一键更新会自动降级禁用，改用拉取新镜像重启
 - 服务重启期间有几十秒短暂不可用，客户端会显示维护横幅
 - 首次拉取依赖可能较慢，期间不要重复点击；进度与历史记录见 `data/update.log`
 - 生产环境建议先备份数据库，见[备份与升级](/guide/backup)

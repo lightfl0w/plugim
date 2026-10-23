@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP 监听端口，页面、RPC、WebSocket 共用 |
 | `PLUGIM_WEB_DIST` | 自动探测 | 前端静态目录；探测不到 `index.html` 时只跑接口 |
-| `PLUGIM_LOG_DIR` | 空（不写文件） | 日志目录，按天写 `server-YYYY-MM-DD.log`；向导里的 `logDir` 优先 |
+| `PLUGIM_LOG_DIR` | 空（不写文件） | 日志目录，按天写 `server-YYYY-MM-DD.log`；该变量优先于向导写的 `logDir` |
 
 ## 数据库
 
@@ -18,16 +18,18 @@
 | --- | --- | --- |
 | `PLUGIM_DB_DRIVER` | `sqlite` | `sqlite` 或 `postgres`；向导写入的 `install.json` 优先 |
 | `PLUGIM_DB_FILE` | `data/plugim.db` | SQLite 文件路径，相对进程工作目录 |
-| `DATABASE_URL` | `postgres://localhost:5432/plugim` | PostgreSQL 连接串，仅 `dbDriver=postgres` 时使用 |
+| `DATABASE_URL` | 空 | PostgreSQL 连接串，形如 `postgres://user:pass@host:5432/plugim`；`dbDriver=postgres` 时必填 |
+| `PLUGIM_INSTALL_FILE` | `data/install.json` | 安装锁定文件路径 |
+
+驱动只看 `PLUGIM_DB_DRIVER`（或 `install.json` 的 `dbDriver`），不会因为 `DATABASE_URL` 有值就自动切到 PostgreSQL——本地开发时常有这个变量指向测试库。
 
 ## 运行时与备份
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PLUGIM_LOG_MAX_MB` | `8` | 单个日志文件上限，超过切成 `server-YYYY-MM-DD.N.log` |
+| `PLUGIM_LOG_MAX_BYTES` | `8388608`（8 MiB） | 单个日志文件上限，超过切成 `server-YYYY-MM-DD.N.log`；下限 64 KiB |
 | `PLUGIM_LOG_KEEP_DAYS` | `14` | 日志保留天数，超期文件在启动和切分时删除 |
 | `PLUGIM_LOG_KEEP_FILES` | `200` | 日志文件总份数上限，超出时按日期删最旧的 |
-| `PLUGIM_SHUTDOWN_TIMEOUT_MS` | `15000` | 收到 `SIGTERM`/`SIGINT` 后等待插件关闭的最长时间，到点强制退出 |
 | `PLUGIM_BACKUP_DIR` | `data/backups` | 自动备份目录，相对进程工作目录 |
 | `PLUGIM_BACKUP_KEEP` | `7` | 自动备份保留份数，1 到 365 |
 | `PLUGIM_SLOW_RPC_MS` | `1500` | RPC 耗时超过该毫秒数时打 `slow rpc` 警告，0 表示关闭 |
@@ -82,6 +84,7 @@
 | --- | --- | --- |
 | `PLUGIM_LINK_ALLOW_HOSTS` | 空 | 逗号分隔的白名单。留空表示不限制；填了之后只有列表里的域名及其子域名能被抓取 |
 | `PLUGIM_LINK_DENY_HOSTS` | 空 | 逗号分隔的黑名单，命中即拒，优先级高于白名单 |
+| `PLUGIM_LINK_ALLOW_PRIVATE` | `false` | 放行内网地址。只给本地开发和冒烟测试用，生产环境不要打开 |
 
 抓取约束：只走 http 和 https，URL 不能带账号密码，响应 `content-type` 必须含 `text/html`，超时 5 秒，最多读 512 KB，重定向手动跟随且不超过 3 跳。每一跳都会重新解析并校验主机：解析结果里只要有一个地址落在 127.0.0.0/8、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16、100.64.0.0/10、0.0.0.0/8、`::1`、fc00::/7、fe80::/10、ff00::/8 之内，或者主机名是 localhost、`.local`、`.internal`、`.home.arpa`、不带点的单段名字，一律拒绝并提示不支持访问内网地址。
 
@@ -109,11 +112,12 @@
 {
   "dbDriver": "sqlite",
   "dbFile": "data/plugim.db",
+  "databaseUrl": "",
   "logDir": "logs"
 }
 ```
 
-由安装向导写入。`savedb` 这一步会先测连接，通过后写入文件并自动重启进程。手工改过之后重启生效。
+用 PostgreSQL 时把 `dbDriver` 改成 `postgres` 并填 `databaseUrl`。由安装向导写入。`savedb` 这一步会先测连接（SQLite 建库试写，PostgreSQL 建连并执行一次查询），通过后写入文件并自动重启进程。手工改过之后重启生效。
 
 ## .env 模板
 

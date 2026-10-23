@@ -1,6 +1,7 @@
 node_modules
 dist
 data
+apps/server/target
 *.tsbuildinfo
 .env
 .env.local

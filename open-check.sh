@@ -2,7 +2,7 @@
 set -u
 cd /root/plugim
 
-pkill -f 'tsx watch src/index.ts' 2>/dev/null
+pkill -f 'plugim-server' 2>/dev/null
 pkill -f 'vite' 2>/dev/null
 sleep 2
 
@@ -11,7 +11,7 @@ rm -rf "$T"
 mkdir -p "$T"
 printf '{"dbDriver":"sqlite","dbFile":"%s/p.db","logDir":"%s/log"}\n' "$T" "$T" > "$T/install.json"
 
-PLUGIM_INSTALL_FILE=$T/install.json PORT=3000 pnpm --filter @plugim/server start > "$T/server.log" 2>&1 &
+PLUGIM_INSTALL_FILE=$T/install.json PORT=3000 /root/plugim/apps/server/target/debug/plugim-server > "$T/server.log" 2>&1 &
 cd /root/plugim/apps/web && pnpm exec vite --port 5173 --strictPort > "$T/vite.log" 2>&1 &
 
 for i in $(seq 1 60); do

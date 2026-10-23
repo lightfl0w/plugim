@@ -5,7 +5,7 @@ REPO="${PLUGIM_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 STATUS="${PLUGIM_STATUS:-$REPO/data/update-status.json}"
 BRANCH="${PLUGIM_BRANCH:-main}"
 PID="${PLUGIM_PID:-0}"
-ENTRY="${PLUGIM_ENTRY:-apps/server/dist/index.js}"
+ENTRY="${PLUGIM_ENTRY:-apps/server/target/release/plugim-server}"
 LOG="${PLUGIM_UPDATE_LOG:-$REPO/data/update.log}"
 
 mkdir -p "$(dirname "$STATUS")" "$(dirname "$LOG")"
@@ -35,6 +35,21 @@ run() {
     if ! "$@" >>"$LOG" 2>&1; then
         return 1
     fi
+    return 0
+}
+
+wait_for_exit() {
+    local target="$1" waited=0
+    while kill -0 "$target" 2>/dev/null; do
+        if [ "$waited" -ge 200 ]; then
+            log "process $target still alive after 20s, sending SIGKILL"
+            kill -KILL "$target" 2>/dev/null
+            sleep 1
+            return 1
+        fi
+        sleep 0.1
+        waited=$((waited + 1))
+    done
     return 0
 }
 
@@ -85,6 +100,10 @@ fi
 
 write_status "building" "正在构建前端与服务端…" "$OLD_COMMIT" "$TARGET_COMMIT"
 
+if [ -f "$REPO/apps/server/Cargo.toml" ] && ! command -v cargo >/dev/null 2>&1; then
+    fail "未找到 cargo 命令，无法构建 Rust 服务端，请先安装 Rust 工具链"
+fi
+
 if [ "$PKG_MGR" = "npm" ]; then
     run npm run build || BUILD_FAILED=1
 else
@@ -94,7 +113,13 @@ fi
 if [ "${BUILD_FAILED:-0}" = "1" ]; then
     log "build failed, rolling back to $OLD_COMMIT"
     git checkout --force "$OLD_COMMIT" >>"$LOG" 2>&1
-    [ "$PKG_MGR" = "npm" ] && npm install --no-audit --no-fund >>"$LOG" 2>&1 || run pnpm install --prefer-offline
+    if [ "$PKG_MGR" = "npm" ]; then
+        npm install --no-audit --no-fund >>"$LOG" 2>&1
+        npm run build >>"$LOG" 2>&1 || log "rollback build failed, artifacts may be inconsistent"
+    else
+        run pnpm install --prefer-offline
+        run pnpm run build || log "rollback build failed, artifacts may be inconsistent"
+    fi
     fail "构建失败，已回滚到原版本 $OLD_COMMIT，请查看 $LOG"
 fi
 
@@ -111,20 +136,19 @@ if [ "$PID" -gt 0 ] 2>/dev/null && kill -0 "$PID" 2>/dev/null; then
 
     if [ "$MANAGED_BY" = "pm2" ]; then
         pm2 restart plugim --update-env >>"$LOG" 2>&1 || log "pm2 restart failed, falling back to signal"
-        kill -TERM "$PID" 2>/dev/null
     elif [ "$MANAGED_BY" = "systemd" ]; then
         systemctl restart plugim.service >>"$LOG" 2>&1 || log "systemctl restart failed, falling back to signal"
     else
         log "no process manager detected, sending SIGTERM to $PID"
         kill -TERM "$PID" 2>/dev/null
-        sleep 1
-        nohup node "$REPO/$ENTRY" >>"$LOG" 2>&1 &
+        wait_for_exit "$PID"
+        nohup "$REPO/$ENTRY" >>"$LOG" 2>&1 &
         disown 2>/dev/null || true
     fi
     log "restart dispatched (manager=$MANAGED_BY)"
 else
     log "server process $PID not running, starting directly"
-    nohup node "$REPO/$ENTRY" >>"$LOG" 2>&1 &
+    nohup "$REPO/$ENTRY" >>"$LOG" 2>&1 &
     disown 2>/dev/null || true
 fi
 

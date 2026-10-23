@@ -1,0 +1,39 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: plugim:latest
+    container_name: plugim
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      TZ: "Asia/Shanghai"
+      PLUGIM_DB_DRIVER: "${PLUGIM_DB_DRIVER:-sqlite}"
+      DATABASE_URL: "${DATABASE_URL:-}"
+    volumes:
+      - plugim-data:/app/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: plugim-db
+    profiles: ["pg"]
+    environment:
+      POSTGRES_USER: plugim
+      POSTGRES_PASSWORD: plugim
+      POSTGRES_DB: plugim
+      TZ: "Asia/Shanghai"
+    volumes:
+      - plugim-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plugim -d plugim"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  plugim-data:
+  plugim-pg:
